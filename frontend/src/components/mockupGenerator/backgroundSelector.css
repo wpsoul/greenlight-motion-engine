@@ -1,0 +1,107 @@
+/* Styles for BackgroundSelector, imported by the component itself.
+   BackgroundSelector renders outside the Mockup Generator too (video editor
+   project background, render options panel), and mockupGenerator.css only
+   loads with the lazy MockupGenerator chunk — so the rules it needs must not
+   live there. Kept as mg-* names because OptionsPanel shares mg-range/mg-info. */
+
+.mg-bg-selector { display: flex; flex-direction: column; gap: 4px; }
+
+.mg-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; max-height: 140px; overflow-y: auto; }
+
+/* Presets header row with the "Save current gradient" button. Neutral greys on
+   purpose — panel controls don't use the accent colours. */
+.mg-preset-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mg-preset-save-btn {
+  border: 1px solid #3a3a3a; background: #1f1f22; color: #cfd3d0;
+  font-size: 10px; font-weight: 600; padding: 2px 9px; border-radius: 5px; cursor: pointer;
+}
+.mg-preset-save-btn:hover:not(:disabled) { background: #2a2a2e; }
+.mg-preset-save-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Custom preset swatches: same tile, plus a hover ✕ to remove. */
+.mg-swatch-wrap { position: relative; }
+.mg-swatch-wrap .mg-swatch { display: block; width: 100%; }
+.mg-swatch-x {
+  position: absolute; top: 2px; right: 2px; width: 15px; height: 15px;
+  display: none; align-items: center; justify-content: center; padding: 0;
+  border-radius: 50%; border: none; background: rgba(12, 12, 14, 0.75);
+  color: #d6dad7; font-size: 11px; line-height: 1; cursor: pointer;
+}
+.mg-swatch-wrap:hover .mg-swatch-x { display: flex; }
+.mg-swatch-x:hover { background: rgba(12, 12, 14, 0.95); color: #fff; }
+.mg-swatch { height: 32px; border-radius: 6px; border: none; cursor: pointer; transition: all 0.15s; }
+.mg-swatch:hover { border-color: #555; }
+.mg-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+.mg-range {
+  width: 100%; height: 4px; appearance: none; background: var(--bg-elevated);
+  border-radius: 2px; outline: none; margin: 0;
+}
+.mg-range::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer; border: 2px solid #1a1a1a;
+  box-shadow: 0 0 4px rgba(139, 92, 246, 0.3);
+}
+
+.mg-info {
+  font-size: 11px; color: #ca8a04; background: rgba(202, 138, 4, 0.08);
+  border: 1px solid rgba(202, 138, 4, 0.2); border-radius: 6px; padding: 8px 10px;
+}
+
+/* Toggle switch (base rules; moved here from videoEditor.css). Used by this
+   component's "Animated gradient" row and by video-editor panels + the Mockup
+   Generator OptionsPanel. VE-only variants (.keyframed) stay in videoEditor.css. */
+.ve-dof-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ve-dof-row-toggle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.ve-dof-switch-track {
+  display: inline-block;
+  width: 32px;
+  height: 18px;
+  background: var(--bg-primary);
+  border-radius: 9px;
+  position: relative;
+  transition: background 0.2s;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ve-dof-switch-track.active {
+  background: var(--accent);
+}
+.ve-dof-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--bg-elevated);
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.ve-dof-switch-track.active .ve-dof-switch-thumb {
+  transform: translateX(14px);
+}
+
+/* Shader looks: one-click named param sets. Neutral grey for the picked chip —
+   which-option-is-picked chrome in the editor panel never uses the accent. */
+.mg-look-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.mg-look-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px 4px 4px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.03);
+  color: inherit; font: inherit; font-size: 11.5px; line-height: 1.2;
+  transition: background-color 0.14s, border-color 0.14s;
+}
+.mg-look-chip:hover { background: rgba(255, 255, 255, 0.07); }
+.mg-look-chip.active { border-color: #6b6b73; background: rgba(255, 255, 255, 0.08); }
+.mg-look-sw { width: 15px; height: 15px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18); }

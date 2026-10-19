@@ -1,0 +1,23 @@
+GreenLight Motion Engine
+Copyright 2026 WPSOUL
+
+This product includes software developed by WPSOUL (https://greenlightdash.pro/).
+
+Portions of the background shader presets (frontend/src/utils/shaderPresetsLab.js) are ported from the
+`shaders` package (https://shaders.com), Copyright (c) 2026 Shader Effects Inc., MIT License.
+
+The device mockup frames (frontend/src/components/videoEditor/assets/mockupFrames/) are artwork by
+Rafael Fernandez from Wikimedia Commons, licensed CC BY-SA (imac-27.svg: CC BY-SA 3.0,
+https://commons.wikimedia.org/wiki/File:IMac_vector.svg; iphone-17.svg: CC BY-SA 4.0,
+https://commons.wikimedia.org/wiki/File:IPhone_17_Vector.svg). They stay under CC BY-SA, not the Apache
+License.
+
+The third-party libraries inside the engine bundle, with their licences, are listed in
+THIRD_PARTY_LICENSES.md.
+
+Files the engine downloads from the GreenLight CDN when a project uses them (sounds, 3D device presets,
+lighting environments) are not part of this software and are not covered by the Apache License; see
+legal/THIRD_PARTY_ASSETS.md and legal/README.md.
+
+"GreenLight", "GreenLight Dash", "GLEA" and "GreenLight Motion" are trademarks of WPSOUL. The Apache
+License does not grant permission to use them; see legal/TRADEMARKS.md.

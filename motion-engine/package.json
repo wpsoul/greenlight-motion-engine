@@ -1,0 +1,61 @@
+{
+  "name": "greenlight-motion",
+  "version": "0.1.0",
+  "description": "GreenLight Motion Engine: AI agents make motion-design videos (3D, camera, effects, transitions, text animation, particles, motion blur) with the GreenLight Dash Video Editor's own engine, in the user's browser.",
+  "keywords": [
+    "video",
+    "motion-design",
+    "motion-graphics",
+    "animation",
+    "webgpu",
+    "ai-agents",
+    "claude",
+    "after-effects",
+    "video-editor",
+    "mp4",
+    "templates"
+  ],
+  "homepage": "https://greenlightdash.pro/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wpsoul/greenlight-motion-engine.git",
+    "directory": "motion-engine"
+  },
+  "bugs": {
+    "email": "support@greenlightdash.pro"
+  },
+  "author": "WPSOUL",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "greenlight-motion": "cli/index.mjs"
+  },
+  "scripts": {
+    "prepack": "npm --prefix ../frontend run build"
+  },
+  "main": "dist/greenlight-motion.mjs",
+  "exports": {
+    ".": "./dist/greenlight-motion.mjs",
+    "./iife": "./dist/greenlight-motion.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "cli",
+    "schema",
+    "skill",
+    "examples",
+    "README.md",
+    "legal",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.md",
+    "CONTRIBUTING.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "playwright-core": "1.60.0"
+  }
+}

@@ -1,0 +1,183 @@
+{
+  "name": "Starter",
+  "videoSize": {
+    "w": 1920,
+    "h": 1080
+  },
+  "background": {
+    "type": "solid",
+    "solidColor": "#0f1418"
+  },
+  "clips": [
+    {
+      "id": "c-title",
+      "mediaType": "text",
+      "name": "Title",
+      "duration": 4
+    },
+    {
+      "id": "c-subtitle",
+      "mediaType": "text",
+      "name": "Subtitle",
+      "duration": 4
+    },
+    {
+      "id": "c-accent",
+      "mediaType": "shape",
+      "name": "Accent line",
+      "duration": 4
+    }
+  ],
+  "channels": [
+    {
+      "id": "ch-title",
+      "items": [
+        {
+          "id": "title",
+          "clipId": "c-title",
+          "trimStart": 0,
+          "trimEnd": 4,
+          "textContent": "Your headline",
+          "textFontSize": 132,
+          "textFontWeight": 800,
+          "textLetterSpacing": -2,
+          "panY": -6,
+          "propertyKeyframes": {
+            "yPercent": [
+              {
+                "position": 0,
+                "value": "6",
+                "easing": "AE Out"
+              },
+              {
+                "position": 32,
+                "value": "0",
+                "easing": "Linear"
+              }
+            ],
+            "opacity": [
+              {
+                "position": 0,
+                "value": "0",
+                "easing": "Ease Out"
+              },
+              {
+                "position": 22,
+                "value": "1",
+                "easing": "Linear"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ch-subtitle",
+      "items": [
+        {
+          "id": "subtitle",
+          "clipId": "c-subtitle",
+          "trimStart": 0,
+          "trimEnd": 4,
+          "textContent": "One line that says why it matters",
+          "textFontSize": 54,
+          "textColor": "#9fb0a8",
+          "panY": 9,
+          "propertyKeyframes": {
+            "opacity": [
+              {
+                "position": 14,
+                "value": "0",
+                "easing": "Ease Out"
+              },
+              {
+                "position": 38,
+                "value": "1",
+                "easing": "Linear"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ch-accent",
+      "items": [
+        {
+          "id": "accent",
+          "clipId": "c-accent",
+          "trimStart": 0,
+          "trimEnd": 4,
+          "shapeType": "rectangle",
+          "shapeFillColor": "#3ddc84",
+          "shapeWidthPct": 10,
+          "shapeHeightPct": 1,
+          "shapeRadiusPct": 50,
+          "panY": 18,
+          "propertyKeyframes": {
+            "scaleX": [
+              {
+                "position": 18,
+                "value": "0",
+                "easing": "AE Smooth"
+              },
+              {
+                "position": 48,
+                "value": "1",
+                "easing": "Linear"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "template": {
+    "title": "Starter",
+    "fields": [
+      {
+        "key": "title",
+        "label": "Headline",
+        "type": "text",
+        "targets": [
+          {
+            "itemId": "title",
+            "path": "textContent"
+          }
+        ]
+      },
+      {
+        "key": "subtitle",
+        "label": "Subtitle",
+        "type": "text",
+        "targets": [
+          {
+            "itemId": "subtitle",
+            "path": "textContent"
+          }
+        ]
+      },
+      {
+        "key": "accent",
+        "label": "Accent colour",
+        "type": "color",
+        "targets": [
+          {
+            "itemId": "accent",
+            "path": "shapeFillColor"
+          }
+        ]
+      },
+      {
+        "key": "background",
+        "label": "Background",
+        "type": "color",
+        "targets": [
+          {
+            "path": "background.solidColor"
+          }
+        ]
+      }
+    ]
+  }
+}

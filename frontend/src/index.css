@@ -1,0 +1,141 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg-primary: #111111;
+  --bg-secondary: #222326;
+  --bg-toolbar:rgb(22 23 24 / 90%);
+  --bg-tertiary: #2a2a2f;
+  --bg-elevated: #323238;
+  --bg-surface: #2e2e34;
+  --border: #3a3a40e3;
+  --border-toolbar: rgb(218 220 224 / 13%);
+  --border-light: #48484f;
+  --text-primary: #ededf0;
+  --text-secondary: #a0a0aa;
+  --text-muted: #8e8ea4;
+  --accent: #33efab;
+  --accent-hover: #5cf3bd;
+  --accent-soft: rgba(51, 239, 171, 0.2);
+  --accent-glow: rgba(51, 239, 171, 0.34);
+  --accent-text: #0f1115;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --youtube: #ff0000;
+  --instagram: #e1306c;
+  --tiktok: #00f2ea;
+  --facebook: #1877f2;
+  --note-bg: #28282e;
+  --note-border: #3a3a42;
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-accent: 0 0 0 2px var(--accent-glow);
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-sm: 6px;
+  --transition: 0.15s ease;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+}
+
+/* Form controls take the app's font. Chromium otherwise draws them in its own
+   form-control font (Arial), so on a machine whose Arial is missing or broken
+   every button label went blank: menus showed only their icons. */
+button, input, select, textarea {
+  font-family: inherit;
+}
+
+/* Use native overlay scrollbars on macOS; thin auto-hiding on other platforms */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+/* Selected text keeps its own colour inside notes: a custom dark text colour
+   must not flip to white the moment it is highlighted. Chromium's highlight
+   pseudos INHERIT from the parent's ::selection, so excluding notes from the
+   global rule is not enough — currentColor (the originating element's own
+   colour) has to be set explicitly on every run inside a note. */
+.element-note-editable::selection,
+.element-note-editable *::selection,
+.element-note-display::selection,
+.element-note-display *::selection {
+  color: currentColor;
+}
+
+/* ── Text size + Contrast (header Aa, App settings ▸ Appearance) ─────────────
+   utils/uiScale.js sets --gl-* on <html>; scripts/uiScalePostcss.js made every
+   stylesheet read them. Content keeps its own look: the board, the video
+   preview, previews of designs and templates, terminals. Resetting the
+   properties on their roots makes everything inside compute to today's values
+   whatever its selector. The grey text tokens resolve on :root, so they are
+   declared again here (the build lifts these declarations too, and inside a
+   content root they resolve with Contrast off). */
+.canvas-content,
+.ve-player-stage,
+.uik-t,
+.ve-uikit-card-thumb,
+.ve-preset-card-thumb,
+.rpp-card-preview,
+.mg-canvas-inner,
+.mf-export-frame-wrap,
+.mf-cavalry-canvas,
+.fb-render-stage,
+.xterm {
+  --gl-text-k: 1;
+  --gl-text-floor: 0px;
+  --gl-space-k: 1;
+  --gl-lh-k: 1;
+  --gl-c-mix: 0;
+  --gl-c-target: 0;
+  --gl-c-op: 0;
+  --text-secondary: #a0a0aa;
+  --text-muted: #8e8ea4;
+  --ve-field-label: #868d8b;
+}
+/* The editor's two left rails keep today's size and room; Contrast still reaches them. */
+.ve-sidebar-rail,
+.ve-ltab-rail {
+  --gl-text-k: 1;
+  --gl-text-floor: 0px;
+  --gl-space-k: 1;
+  --gl-lh-k: 1;
+}
+
+/* ⌘⌥+ / ⌘⌥− feedback */
+.gl-ui-scale-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 100000;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(24, 24, 27, 0.96);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 6px);
+  transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.gl-ui-scale-toast.is-in {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
