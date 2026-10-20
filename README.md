@@ -47,14 +47,15 @@ Then ask for a video, for example *"Make a 10-second opening-day video for my co
    is weak and builds the next version. **Polish it** asks for another round.
 4. **Your notes.** Press **Notes**, mark a spot on the frame and write what should change, then **Send to Claude**
    (or **Send N notes**). The model gets your words and a picture of each marked moment.
-5. **Pictures, video, music.** Drop your files on the page (or press **Add files**). A file whose name the video
-   asks for goes straight in, and the model sees the rest. The model adds files too, with `add_file`:
-   - an image or video from a generator it's connected to;
-   - a link you give it;
-   - SVG art it draws itself.
+5. **Pictures, video, music.** Nothing you own is uploaded to or kept on the GreenLight Motion server.
+   - **Your own files:** drop them on the page (or press **Add files**). They stay in your browser, and the next
+     version finds them there. The model only learns their names and sizes.
+   - **Links:** the model uses a link, such as an image or video from a generator it's connected to, or a link you
+     gave it. The video plays the link through the server without keeping a copy, so the link has to stay reachable.
+   - **Drawn art:** SVG the model draws goes into the project itself.
 
-   It then places and animates them: picture and video layers, a video behind a scene, a music track, its own
-   keyframes.
+   The model then places and animates them: picture and video layers, a video behind a scene, a music track, its
+   own keyframes.
 6. **Saving.**
    - **Render MP4** saves the file through the chat app.
    - **Open in GreenLight Dash** gives a `.glvideo` file.
@@ -64,8 +65,7 @@ Then ask for a video, for example *"Make a 10-second opening-day video for my co
 |---|---|
 | `get_motion_guide` | how to write a scene script, what makes a video look made, the catalogues of presets, transitions, effects and sounds |
 | `build_video` | a scene script → a full project, opened in the chat; `replaces` makes the next version |
-| `add_file` | a picture, video or sound for the video: from a link (an image or video generator's result), base64 data, or SVG the model draws |
-| `look_at_video` | the frames your browser rendered, your option changes, your notes and the files you added, for the model to review |
+| `look_at_video` | the frames your browser rendered, your option changes, your notes and the names of the files you added, for the model to review |
 | `show_video` / `check_video` | open or check a full project the model wrote by hand (3D mockups, particles, paths) |
 | `share_video` | a link to the video and its `.glvideo` |
 | `get_motion_reference` | the project format, topic by topic |
@@ -76,9 +76,11 @@ Limits:
   moment you added it.
 - **The model only sees what your browser renders.** It has no screen of its own: it sees the frames the page in
   the chat rendered. With the page closed, there is nothing to look at.
-- **Files are kept for 30 days.** Files you or the model add stay on the GreenLight Motion server for 30 days.
-  That is what lets every version, the share link and the model use them. Pictures go up to 20 MB, video up to
-  60 MB, sound up to 30 MB.
+- **Your files.** Your files never leave your browser. A share link, or another browser, asks for them again.
+- **Frames.** The six frames the model reviews are kept for one hour, then deleted.
+- **ChatGPT.**
+  - Its chat can't show files from your computer, and the page can't save files there.
+  - In ChatGPT the page opens the video in a browser tab instead, where it plays your files and Render MP4 saves it.
 - **App-only layers.** HTML layers, MotionFast templates and effect packages with their own files play in
   GreenLight Dash only.
 
