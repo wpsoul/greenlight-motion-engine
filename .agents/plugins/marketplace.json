@@ -1,0 +1,20 @@
+{
+  "name": "greenlight-motion-engine",
+  "interface": {
+    "displayName": "GreenLight Motion"
+  },
+  "plugins": [
+    {
+      "name": "greenlight-motion",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

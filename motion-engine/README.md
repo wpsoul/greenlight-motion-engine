@@ -35,11 +35,34 @@ catalog).
 
 Read **[skill/SKILL.md](skill/SKILL.md)**. It covers the workflow, the project format, templates,
 sound cues, plugins and how to make motion look made rather than generated. The format references
-are in `skill/references/`. To install the skill for Claude Code:
+are in `skill/references/`.
 
-```bash
-mkdir -p ~/.claude/skills && cp -R node_modules/greenlight-motion/skill ~/.claude/skills/greenlight-motion
-```
+Setup for each agent is in the
+[repository README](https://github.com/wpsoul/greenlight-motion-engine#ways-to-use-it):
+
+- **Claude or ChatGPT:** add the connector `https://mcp.greenlightdash.pro/motion`. The video plays in the chat,
+  and the model reviews the frames your browser renders.
+- **Claude Code:**
+
+  ```bash
+  claude plugin marketplace add wpsoul/greenlight-motion-engine
+  claude plugin install greenlight-motion@greenlight-motion-engine
+  ```
+
+- **Codex:**
+
+  ```bash
+  codex plugin marketplace add wpsoul/greenlight-motion-engine
+  codex plugin add greenlight-motion@greenlight-motion-engine
+  ```
+
+- **Only the skill:**
+
+  ```bash
+  mkdir -p ~/.claude/skills && cp -R node_modules/greenlight-motion/skill ~/.claude/skills/greenlight-motion
+  ```
+
+  For Codex, copy it to `~/.agents/skills/greenlight-motion` instead.
 
 ## In a web page or a Claude artifact
 

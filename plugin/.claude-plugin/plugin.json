@@ -1,0 +1,21 @@
+{
+  "name": "greenlight-motion",
+  "version": "0.1.0",
+  "description": "Make motion-design videos with the GreenLight Motion Engine: the agent writes project.json, checks it, looks at stills and renders the MP4 with npx greenlight-motion (WebGPU, in your browser).",
+  "author": {
+    "name": "WPSOUL",
+    "email": "support@greenlightdash.pro",
+    "url": "https://greenlightdash.pro/"
+  },
+  "homepage": "https://github.com/wpsoul/greenlight-motion-engine",
+  "repository": "https://github.com/wpsoul/greenlight-motion-engine",
+  "license": "Apache-2.0",
+  "keywords": [
+    "video",
+    "motion-design",
+    "animation",
+    "mp4",
+    "webgpu",
+    "3d"
+  ]
+}
