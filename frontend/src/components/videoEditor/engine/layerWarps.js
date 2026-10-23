@@ -21,12 +21,26 @@ import { ensureMotionTrailMaterial } from './effectPasses';
 
 const fxBoxVec = new THREE.Vector3();
 
+// The box an effect works in, in the mesh's local units. Normally the quad itself;
+// a video's quad is only its fitted picture, and its effects, masks and pins keep the
+// frame-sized box they were authored against (layerMesh.js `fxFrame`).
+function layerBoxBounds(mesh) {
+  const bb = mesh.geometry.boundingBox;
+  const k = mesh.userData?.fxFrame;
+  if (!k) return bb;
+  const cx = (bb.min.x + bb.max.x) / 2;
+  const cy = (bb.min.y + bb.max.y) / 2;
+  const hx = ((bb.max.x - bb.min.x) / 2) * k[0];
+  const hy = ((bb.max.y - bb.min.y) / 2) * k[1];
+  return { min: { x: cx - hx, y: cy - hy }, max: { x: cx + hx, y: cy + hy } };
+}
+
 export function computeLayerBox(mesh, camera, pixelW, pixelH) {
   if (!mesh || !camera || !mesh.geometry) return null;
   const geo = mesh.geometry;
   if (!geo.boundingBox) geo.computeBoundingBox();
-  const bb = geo.boundingBox;
-  if (!bb) return null;
+  if (!geo.boundingBox) return null;
+  const bb = layerBoxBounds(mesh);
   mesh.updateWorldMatrix(true, false);
   const project = (lx, ly) => {
     fxBoxVec.set(lx, ly, 0).applyMatrix4(mesh.matrixWorld).project(camera);
@@ -231,7 +245,7 @@ const _pbVec = new THREE.Vector3();
 const _pbScale = new THREE.Vector3();
 export function layerPlaneBox(mesh, camera, pixelH) {
   if (!mesh || !camera || !mesh.geometry?.boundingBox) return null;
-  const bb = mesh.geometry.boundingBox;
+  const bb = layerBoxBounds(mesh);
   const project = (lx, ly) => {
     _pbVec.set(lx, ly, 0).applyMatrix4(mesh.matrixWorld).project(camera);
     return [_pbVec.x * 0.5 + 0.5, _pbVec.y * 0.5 + 0.5];

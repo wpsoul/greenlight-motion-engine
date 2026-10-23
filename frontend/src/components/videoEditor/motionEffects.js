@@ -917,80 +917,10 @@ vec4 fx(vec2 uv){
    * shipped in PLANS/EFFECTS_REMAINING_ROADMAP.md. New runner
    * facilities these use: `pass.scale` (downsampled targets), `pass.nearest` +
    * `pass.poolSlot` (the jump-flood ping-pong). Deferred vs the prototype:
-   * Directional Smear's Follow Motion (needs the runner to hand over the
-   * layer's transform velocity) and Vector Field Warp's imported map (needs a
-   * media picker + third texture unit, same as Turbulent Displace's).
+   * Vector Field Warp's imported map (needs a media picker + third texture
+   * unit, same as Turbulent Displace's). The prototype's Directional Smear was
+   * removed; Motion Blur, Motion Trail and Fast Blur cover streaks.
    */
-
-  {
-    id: 'directionalSmear',
-    name: 'Directional Smear',
-    group: 'Motion',
-    scopes: ['layer', 'adjustment'],
-    animated: false,
-    layerMatte: 'expand',
-    params: [
-      { key: 'length', slot: 0, label: 'Length', min: 0, max: 600, step: 1, default: 208, suffix: 'px' },
-      { key: 'direction', slot: 1, label: 'Direction', min: 0, max: 360, step: 1, default: 64, suffix: '°' },
-      { key: 'centerBias', slot: 2, label: 'Center Bias', min: -100, max: 100, step: 1, default: 72, suffix: '%' },
-      { key: 'falloff', slot: 3, label: 'Falloff', min: 5, max: 300, step: 5, default: 20, suffix: '%' },
-      { key: 'samples', slot: 4, label: 'Samples', min: 8, max: 64, step: 1, default: 24 },
-      { key: 'highlightBoost', slot: 5, label: 'Highlight Boost', min: 0, max: 200, step: 1, default: 74, suffix: '%' },
-      { key: 'edgeRepeat', slot: 6, label: 'Edge Repeat', type: 'select', default: 0, options: [
-        { value: 0, label: 'Transparent' }, { value: 1, label: 'Clamp' }, { value: 2, label: 'Mirror' }] },
-    ],
-    colorPresets: [
-      { name: 'Whip Right', colors: [], params: { length: 260, direction: 0, centerBias: 80, falloff: 70, samples: 40, highlightBoost: 0, edgeRepeat: 0 } },
-      { name: 'Vertical Launch', colors: [], params: { length: 340, direction: 90, centerBias: 90, falloff: 55, samples: 44, highlightBoost: 20, edgeRepeat: 0 } },
-      { name: 'Soft Drag', colors: [], params: { length: 90, direction: 0, centerBias: 0, falloff: 160, samples: 28, highlightBoost: 0, edgeRepeat: 1 } },
-      { name: 'Highlight Streak', colors: [], params: { length: 220, direction: 25, centerBias: 0, falloff: 60, samples: 48, highlightBoost: 160, edgeRepeat: 0 } },
-      { name: 'Anime Speed', colors: [], params: { length: 420, direction: 0, centerBias: 70, falloff: 40, samples: 56, highlightBoost: 60, edgeRepeat: 0 } },
-      { name: 'Reverse Pull', colors: [], params: { length: 300, direction: 180, centerBias: 85, falloff: 45, samples: 40, highlightBoost: 30, edgeRepeat: 0 } },
-    ],
-    fragment: /* glsl */ `
-vec4 smearTap(vec2 uv, float mode){
-  if (mode < 0.5) return sampleClamped(uTexture, uv);            // transparent
-  if (mode < 1.5) return texture2D(uTexture, clamp(uv, 0.0, 1.0)); // clamp
-  // Mirror tiles in the LAYER's box, so the wrap seam rides the artwork.
-  vec2 m = abs(fract(fxLocal(uv) * 0.5) * 2.0 - 1.0);
-  return texture2D(uTexture, fxFrame(m));
-}
-vec4 fx(vec2 uv){
-  float ref = fxRes().y / 1080.0;
-  float len = uParams[0] * ref;
-  if (len < 0.5) return texture2D(uTexture, uv);
-  // Direction is authored in the layer's own frame — fxDir keeps the streak
-  // stuck to a rotated layer instead of always smearing screen-horizontal.
-  vec2 dir = vec2(cos(radians(uParams[1])), sin(radians(uParams[1])));
-  float bias = clamp(uParams[2] / 100.0, -1.0, 1.0);
-  float fall = max(uParams[3] / 100.0, 0.05);
-  float taps = max(5.0, floor(uParams[4] * (uQuality < 0.75 ? 0.5 : 1.0)));
-  float boost = uParams[5] / 100.0;
-  float edgeMode = uParams[6];
-  float t0 = -(0.5 + 0.5 * bias);
-  float t1 =  (0.5 - 0.5 * bias);
-  float span = max(max(abs(t0), abs(t1)), 1e-3);
-  vec4 acc = vec4(0.0);
-  float ws = 0.0;
-  for (int i = 0; i < 64; i++){
-    if (float(i) >= taps) break;
-    float k = float(i) / (taps - 1.0);
-    float t = mix(t0, t1, k);
-    float w = pow(max(1.0 - abs(t) / span, 0.0), 1.0 / fall);
-    vec4 s = smearTap(uv + fxDir(dir * (t * len) / fxRes()), edgeMode);
-    if (boost > 0.001){
-      float l = luma(unpremult(s)) * s.a;
-      w *= 1.0 + boost * l * l * 3.0;   // bright pixels drag longer streaks
-    }
-    acc += s * w;
-    ws += w;
-  }
-  vec4 res = acc / max(ws, 1e-4);
-  res.rgb = min(res.rgb, vec3(res.a)); // premultiplied invariant
-  return res;
-}
-`,
-  },
 
   {
     // Ported from html/fast-camera-wiggle-lab.html (the lab is the source of truth

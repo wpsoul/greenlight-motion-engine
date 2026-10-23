@@ -31,9 +31,13 @@ export function ensureTextTexture(cacheRef, key, width, height, mipmaps = false)
   return created;
 }
 
-// Fraction of the quad a fit-contained media picture covers (the shader's
-// fit-contain branch): a video whose aspect differs from its plate is letterboxed.
+// Fraction of the layer box a fit-contained media picture covers (the shader's
+// fit-contain branch): media whose aspect differs from its plate is letterboxed.
+// A video's quad is only its fitted picture, inside the frame-sized box its
+// effects keep (layerMesh.js `mediaFrac`).
 export function mediaContentFrac(layerMesh) {
+  const frac = layerMesh?.userData?.mediaFrac;
+  if (frac) return { cw: frac.cw, ch: frac.ch };
   const u = layerMesh?.material?.uniforms;
   const canvasSize = u?.uCanvasSize?.value;
   const mediaSize = u?.uResolution?.value;

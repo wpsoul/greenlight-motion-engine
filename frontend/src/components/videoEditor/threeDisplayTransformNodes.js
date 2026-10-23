@@ -25,21 +25,7 @@
  * The two helpers are separate and laid out because they are pure functions of
  * their arguments, which is the condition that makes a layout safe (§2/§7b).
  */
-import { Fn, vec3, clamp, mix, pow, step, max, uniform } from 'three/tsl';
-
-/** ACES filmic approximation — the same five constants as the GLSL. */
-export const veAces = Fn(([x]) => {
-  const a = 2.51;
-  const b = 0.03;
-  const c = 2.43;
-  const d = 0.59;
-  const e = 0.14;
-  // Association exactly as the GLSL has it: (x*(a*x+b)) / (x*(c*x+d)+e).
-  return clamp(
-    x.mul(x.mul(a).add(b)).div(x.mul(x.mul(c).add(d)).add(e)),
-    0.0, 1.0,
-  );
-}).setLayout({ name: 'veAces', type: 'vec3', inputs: [{ name: 'x', type: 'vec3' }] });
+import { Fn, vec3, mat3, clamp, mix, pow, step, max, log2, dot, uniform } from 'three/tsl';
 
 /** Linear → sRGB, piecewise, with the GLSL's own `step`-based select. */
 export const veToSRGB = Fn(([c]) => mix(
@@ -48,7 +34,36 @@ export const veToSRGB = Fn(([c]) => mix(
   step(0.0031308, c),
 )).setLayout({ name: 'veToSRGB', type: 'vec3', inputs: [{ name: 'c', type: 'vec3' }] });
 
-export const veDisplayTransform = Fn(([linearColor, exposure]) => veToSRGB(veAces(linearColor.mul(exposure))))
+// AgX with the GLEA look — the same constants and steps as veAgx in
+// threeDisplayTransform.js (three's agxToneMapping plus the saturation look and the
+// ×1.35 gain). It replaced veAces as the 3D default.
+const VE_SRGB_TO_REC2020 = mat3(vec3(0.6274, 0.0691, 0.0164), vec3(0.3293, 0.9195, 0.0880), vec3(0.0433, 0.0113, 0.8956));
+const VE_REC2020_TO_SRGB = mat3(vec3(1.6605, -0.1246, -0.0182), vec3(-0.5876, 1.1329, -0.1006), vec3(-0.0728, -0.0083, 1.1187));
+const VE_AGX_INSET = mat3(
+  vec3(0.856627153315983, 0.137318972929847, 0.11189821299995),
+  vec3(0.0951212405381588, 0.761241990602591, 0.0767994186031903),
+  vec3(0.0482516061458583, 0.101439036467562, 0.811302368396859));
+const VE_AGX_OUTSET = mat3(
+  vec3(1.1271005818144368, -0.1413297634984383, -0.14132976349843826),
+  vec3(-0.11060664309660323, 1.157823702216272, -0.11060664309660294),
+  vec3(-0.016493938717834573, -0.016493938717834257, 1.2519364065950405));
+const VE_AGX_MIN_EV = -12.47393;
+const VE_AGX_MAX_EV = 4.026069;
+
+export const veAgx = Fn(([color]) => {
+  const c = VE_AGX_INSET.mul(VE_SRGB_TO_REC2020.mul(color)).toVar();
+  c.assign(clamp(log2(max(c, vec3(1e-10))).sub(VE_AGX_MIN_EV).div(VE_AGX_MAX_EV - VE_AGX_MIN_EV), 0.0, 1.0));
+  const x2 = c.mul(c);
+  const x4 = x2.mul(x2);
+  c.assign(x4.mul(x2).mul(15.5).sub(x4.mul(c).mul(40.14)).add(x4.mul(31.96)).sub(x2.mul(c).mul(6.868))
+    .add(x2.mul(0.4298)).add(c.mul(0.1191)).sub(0.00232));
+  const luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c.assign(VE_AGX_OUTSET.mul(c.sub(luma).mul(1.2).add(luma)));
+  c.assign(pow(max(vec3(0.0), c), vec3(2.2)));
+  return clamp(VE_REC2020_TO_SRGB.mul(c), 0.0, 1.0);
+}).setLayout({ name: 'veAgx', type: 'vec3', inputs: [{ name: 'color', type: 'vec3' }] });
+
+export const veDisplayTransform = Fn(([linearColor, exposure]) => veToSRGB(veAgx(linearColor.mul(exposure).mul(1.35))))
   .setLayout({
     name: 'veDisplayTransform',
     type: 'vec3',

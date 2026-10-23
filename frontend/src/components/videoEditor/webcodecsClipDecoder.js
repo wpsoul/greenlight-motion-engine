@@ -486,6 +486,9 @@ export class ClipDecoder {
    *   header's display rotation (the canvas takes the display size). Off by
    *   default: the analysers (clipFrameSource, roto, face mosaic) turn
    *   `canvas` themselves and would turn it twice.
+   * @param {Function} [opts.drawFrame] — called with the chosen VideoFrame INSTEAD
+   *   of drawing it onto `canvas`. The frame stays open until the next
+   *   drawFrameAt(). WebmClipDecoder reads a WebM's alpha stream through it.
    */
   constructor(source, opts = {}) {
     this.source = source;
@@ -520,6 +523,9 @@ export class ClipDecoder {
     this._flushed = false;
     this._waiter = null;
     this._lastTargetUs = -1;
+    this._drawFrame = typeof opts.drawFrame === 'function' ? opts.drawFrame : null;
+    // Timestamp (µs) of the frame the last drawFrameAt() drew, null before one.
+    this.drawnTimestampUs = null;
     // Target the output callback prunes against while catching up. -1 disables
     // pruning (no draw in flight), which only happens before the first draw.
     this._pruneTargetUs = -1;
@@ -648,7 +654,10 @@ export class ClipDecoder {
       if (f.timestamp <= targetUs + FRAME_PICK_SLACK_US && (!best || f.timestamp > best.timestamp)) best = f;
     }
     if (!best && this._frames.length) best = this._frames[0];
-    if (best) {
+    if (best) this.drawnTimestampUs = best.timestamp;
+    if (best && this._drawFrame) {
+      this._drawFrame(best);
+    } else if (best) {
       if (this.rotation) {
         // Same turn as clipFrameSource / rotoProcessor (clockwise, tkhd convention).
         const ctx = this.ctx;

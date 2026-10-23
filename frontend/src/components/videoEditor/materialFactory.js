@@ -354,6 +354,11 @@ export const materials = {
     const n = nodes();
     return n ? n.comp.createCameraDofNodeMaterial() : null;
   },
+  // Per-pixel DOF for a camera-baked 3D pass (reads the pass's depth).
+  cameraDofDepth: () => {
+    const n = nodes();
+    return n ? n.comp.createCameraDofDepthNodeMaterial() : null;
+  },
   /** Backdrop Blur (shape layers): the separable blur pass and the coverage mix. */
   backdropBlur: () => {
     const n = nodes();

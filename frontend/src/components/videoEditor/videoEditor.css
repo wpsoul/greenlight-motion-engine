@@ -3278,6 +3278,135 @@ body.gl-tablet .ve-tl-ripple-btn {
   to { opacity: 0.45; }
 }
 
+/* The part the toolbar status menu points at. */
+.ve-ruler-cache-run.is-hot {
+  box-shadow: 0 0 0 1px rgb(229 72 77 / 55%), 0 0 8px rgb(229 72 77 / 55%);
+}
+.ve-ruler-cache-run.is-cached.is-hot,
+.ve-ruler-cache-run.is-pending.is-hot {
+  box-shadow: 0 0 0 1px rgb(52 211 153 / 55%), 0 0 8px rgb(52 211 153 / 55%);
+}
+
+/* While the status clock sweeps the wait: a short bright spot runs along the
+   range Smart renders next. Transform only, and only for those 5 s. */
+.ve-ruler-cache-comet {
+  position: absolute;
+  top: 0;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ve-ruler-cache-comet i {
+  position: absolute;
+  top: 0;
+  left: -28px;
+  width: 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgb(255 139 142 / 0), #ffc2c4 70%, rgb(255 139 142 / 0));
+  animation: ve-rc-comet 1.25s cubic-bezier(0.645, 0.045, 0.355, 1) infinite;
+  will-change: transform;
+}
+@keyframes ve-rc-comet {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--ve-rc-comet-run, 200px)); }
+}
+
+/* ── Render cache status (timeline toolbar, next to Manage) ──
+   The icon sits in the 13px slot of the toolbar's line icons: an 11px ring that is
+   a clock while Smart waits (a short hand fixed at 12, one hand sweeping once over
+   the wait), a turning arc while it renders, a check once cached. */
+/* The status keeps its colour when hovered or open (over .ve-compact-toggle's). */
+.ve-compact-toggle.ve-rc-status.is-slow { color: #ff9a9d; }
+.ve-compact-toggle.ve-rc-status.is-pending,
+.ve-compact-toggle.ve-rc-status.is-cached { color: #7ff0c3; }
+.ve-rc-icon {
+  position: relative;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  margin: 1px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.25px currentColor;
+}
+.ve-rc-icon.is-wait { opacity: 0.55; }
+.ve-rc-icon.is-count::before,
+.ve-rc-icon.is-wait::before {
+  content: '';
+  position: absolute;
+  left: 4.875px;
+  top: 3px;
+  width: 1.25px;
+  height: 3.25px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.6;
+}
+.ve-rc-hand {
+  position: absolute;
+  left: 4.875px;
+  top: 1.75px;
+  width: 1.25px;
+  height: 4.5px;
+  border-radius: 1px;
+  background: currentColor;
+  transform-origin: 50% 3.75px;
+}
+.ve-rc-hand.is-sweeping {
+  animation-name: ve-rc-sweep;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  will-change: transform;
+}
+@keyframes ve-rc-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.ve-rc-icon.is-pending { box-shadow: inset 0 0 0 1.25px rgb(52 211 153 / 25%); }
+.ve-rc-arc {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.25px solid transparent;
+  border-top-color: currentColor;
+  animation: ve-rc-spin 0.9s linear infinite;
+}
+@keyframes ve-rc-spin {
+  to { transform: rotate(360deg); }
+}
+.ve-rc-icon svg {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 7px;
+  height: 7px;
+}
+
+.ve-rc-menu-head {
+  padding: 6px 12px 5px;
+  font-size: 11px;
+  color: #8b8b96;
+}
+.ve-rc-menu .ve-context-item { font-variant-numeric: tabular-nums; }
+.ve-rc-menu-val {
+  margin-left: auto;
+  color: #ff8b8e;
+  font-variant-numeric: tabular-nums;
+}
+.ve-rc-menu-val.is-pending,
+.ve-rc-menu-val.is-cached { color: #34d399; }
+.ve-rc-dot.is-slow { color: #e5484d; }
+.ve-rc-dot.is-pending,
+.ve-rc-dot.is-cached { color: #34d399; }
+.ve-rc-dot svg { width: 10px; height: 10px; vertical-align: -1px; }
+.ve-rc-menu-foot {
+  max-width: 250px;
+  padding: 5px 12px 6px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #7d7d88;
+}
+
 /* ── Timeline markers (ruler pins) ── */
 .ve-ruler-markers {
   position: absolute;
@@ -16971,18 +17100,50 @@ color: var(--accent, #33efab);
    shape's STROKE / TRIM rows. The cards themselves are the shared ve-fx-row family. */
 .ve-stroke-options { display: flex; flex-direction: column; }
 /* Text Animators (TextAnimatorsPanel.jsx) — Animator cards are ve-fx-rows; the
-   effects inside one are hairline rows, not a second box, so the 244px body keeps
-   its field width. */
+   effects inside one hang off it as the branches of a tree (a lamp, a lighter
+   name, the add button as the last branch), so they never read as layer effects
+   of their own. Look-dev: html/INTERFACE/text-animator-effects-lab (variant A). */
 .ve-txa { display: flex; flex-direction: column; }
 .ve-txa-card-body { display: flex; flex-direction: column; min-width: 0; }
 .ve-txa-card-body > .ve-motion-group:first-child > .ve-motion-group-head { padding-top: 2px; }
-.ve-txa-fx { margin-top: 0; padding: 8px 0 6px; background: transparent; border: 0; border-top: 1px solid #25292b; border-radius: 0; gap: 4px; }
-.ve-txa-fx.ve-fx-row-collapsed { padding-bottom: 7px; }
-.ve-txa-fx .ve-fx-name { font-size: 11px; font-weight: 550; }
-.ve-txa-fx-body { display: flex; flex-direction: column; min-width: 0; }
-.ve-txa-fx-body > .ve-motion-field-row { min-height: 28px; }
-.ve-txa-extra { border-top: 1px solid #25292b; padding-top: 4px; }
-.ve-txa-fx + .ve-txa-extra { margin-top: 2px; }
+/* The animator's name keeps its own line (it was cut to "Ri…" beside the summary). */
+.ve-fx-row-head .ve-fx-name.ve-txa-anim-name { flex-direction: column; align-items: flex-start; gap: 1px; }
+.ve-txa-anim-title { display: flex; align-items: center; gap: 5px; max-width: 100%; min-width: 0; }
+.ve-txa-anim-name .ve-fx-name-sub { max-width: 100%; }
+/* The tree: each branch draws its piece of the spine and its elbow. Zero gap —
+   the spine must run unbroken from one branch to the next. */
+.ve-motion-group-body:has(> .ve-txa-leaf) { gap: 0; }
+.ve-txa-leaf { position: relative; margin-left: 7px; padding-left: 13px; min-width: 0; }
+.ve-txa-leaf::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid #33393c; }
+.ve-txa-leaf:last-child::before { bottom: auto; height: 14px; }
+.ve-txa-leaf::after { content: ''; position: absolute; left: 0; top: 14px; width: 9px; border-top: 1px solid #33393c; }
+.ve-txa-leaf-head { display: flex; align-items: center; gap: 4px; min-height: 28px; }
+/* The effect's on/off: the animator key-cap's lamp, without the cap. */
+.ve-txa-lamp { flex: none; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: transparent; display: grid; place-items: center; cursor: pointer; }
+.ve-txa-lamp::after { content: ''; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px #565c5f; transition: background 0.15s, box-shadow 0.15s; }
+.ve-txa-lamp:hover { background: rgba(255, 255, 255, 0.06); }
+.ve-txa-lamp[aria-pressed='true']::after { background: var(--accent); box-shadow: 0 0 5px rgba(51, 239, 171, 0.6); }
+.ve-txa-leaf-name {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; padding: 0; border: 0; background: none;
+  color: var(--ve-field-value); font: inherit; font-size: 11px; font-weight: 500; text-align: left; cursor: pointer;
+}
+.ve-txa-leaf-name > .ve-fx-name-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ve-txa-leaf-name > small { margin-left: auto; flex: none; font-size: 10px; font-weight: 450; color: var(--text-muted); white-space: nowrap; }
+.ve-txa-leaf-name:hover > .ve-fx-name-text { color: #fff; }
+.ve-txa-leaf .ve-fx-remove { width: 18px; height: 18px; opacity: 0; }
+.ve-txa-leaf-head:hover .ve-fx-remove, .ve-txa-leaf .ve-fx-remove:focus-visible { opacity: 1; }
+.ve-txa-leaf.is-off .ve-txa-leaf-name { color: var(--text-muted); }
+.ve-txa-leaf.is-off .ve-fx-name-text { text-decoration: line-through; text-decoration-color: rgba(142, 142, 164, 0.5); }
+.ve-txa-leaf-body { display: flex; flex-direction: column; min-width: 0; margin: 0 0 6px 7px; padding-left: 10px; border-left: 1px solid #272c2e; }
+.ve-txa-leaf-body > .ve-motion-field-row { min-height: 28px; }
+/* Colour rows in a branch: the picker gives way, not the label (the scene panels' fix —
+   the hex input's intrinsic width would otherwise cut "Colour" to "Co…"). */
+.ve-txa-leaf-body > .ve-motion-field-row > .ve-trans-sub-label { flex: 0 0 auto; }
+.ve-txa-leaf-body > .ve-motion-field-row > div:last-child { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
+.ve-txa-leaf-body > .ve-motion-field-row > div:last-child > .cp-wrap { flex: 1 1 0%; min-width: 0; }
+.ve-txa-extra { padding-top: 4px; }
+.ve-txa-extra::after { top: 18px; }
+.ve-txa-extra:last-child::before { height: 18px; }
 .ve-txa-empty { margin: 4px 0 6px; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
 .ve-txa-group-tag { font-size: 9.5px; font-weight: 550; letter-spacing: .02em; color: var(--text-muted); }
 .ve-txa-group-tag.on { color: var(--accent); }
@@ -19463,80 +19624,6 @@ color: var(--accent, #33efab);
    collapse state, scroll position and in-flight edit alive across a tab switch. */
 .ve-grid-tabs { margin: 0 12px 10px; }
 
-/* ── Particle inspector tabs ────────────────────────────────────────────────
-   Eight groups will not fit a 300 px panel as an even strip, so this one
-   SCROLLS SIDEWAYS instead of shrinking. Vertically it does not move at all: the
-   strip is the panel's navigation, and navigation that scrolls away means
-   picking another tab costs a scroll back to the top every time.
-
-   PINNED UNDER THE SELECTION HEADER, which is itself sticky at top 0 and 46 px
-   tall — hence `top: 46px`. The scroll container is `.ve-editor-panel`, not the
-   body, so sticky resolves against that.
-
-   The negative top margin cancels the body's 16 px flex gap. Without it the bar
-   floats 16 px below the header and the layers scrolling past show through the
-   band between the two — which reads as a rendering glitch, not as a gap. */
-.ve-ptabs {
-  position: sticky;
-  top: 46px;
-  z-index: 3;
-  /* NO NEGATIVE TOP MARGIN. Pulling the bar up to close the body's flex gap put
-     its natural position ABOVE the 46px sticky threshold, so sticky clamped it
-     back DOWN while the content below stayed laid out where the margin had put
-     it — and the first section sat 10px UNDER the bar at rest. There is nothing
-     to close anyway: once scrolled, the header (0–46) and this bar (46–102) abut
-     exactly, and at rest the gap is just panel background. */
-  /* 16, not 6: the body's flex `gap` computes to 0 in the right-column layout,
-     so this margin is the ONLY space under the bar — and it has to match the
-     14px a tab click lands a group at, or Solver (whose target clamps at
-     scrollTop 0) rests tighter than every other group. */
-  margin: 0 0 16px;
-  padding: 9px 12px 12px;
-  /* Opaque, and matching the selection header: anything scrolling underneath
-     must not be visible through the bar. */
-  background: #151718;
-  border-bottom: 1px solid #202325;
-}
-.ve-ptabs-scroll {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  scroll-behavior: smooth;
-  background: rgb(255 255 255 / 3%);
-  border-radius: 8px;
-  padding: 3px;
-  /* Fade both ends so a partly-scrolled tab is obviously cut off on purpose. */
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
-  /* NO scroll-snap. The strip rests exactly where it is left; a snap pulls the
-     row out from under the finger that just placed it. */
-}
-.ve-ptabs-scroll::-webkit-scrollbar { display: none; }
-
-.ve-ptab {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 550;
-  font-family: inherit;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--ve-field-label);
-  background: transparent;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.13s ease, color 0.13s ease;
-}
-.ve-ptab svg { flex: 0 0 auto; opacity: 0.85; }
-.ve-ptab:hover { color: var(--text-primary); }
-.ve-ptab.active { background: #2b3033; color: #e8edeb; }
-.ve-ptab.active svg { opacity: 1; color: var(--accent, #33efab); }
 
 /* One driven property in EFFECTORS ▸ PROXIMITY: a LOOK / SIM badge, the field,
    and an eject. The badge is not decoration — it is the only place the panel can
@@ -19559,28 +19646,8 @@ color: var(--accent, #33efab);
 .ve-prox-kind-look { color: #8fd8ff; background: rgb(143 216 255 / 11%); }
 .ve-prox-kind-motion { color: #ffca7a; background: rgb(255 202 122 / 11%); }
 
-/* RUN-OUT ROOM, so a tab near the bottom can actually reach the top.
-   Without it the last few groups are unreachable — the panel bottoms out with
-   PROXIMITY still 221 px down and TRANSFORM 483 px down, and worse, the spy then
-   highlights whatever group DID make it to the line, so the strip disagrees with
-   the tab you just pressed. Every anchored-nav page pays this same tax. Sized in
-   vh so it holds at any window height; only ever added when the strip is
-   present, so no other layer type gains dead space. */
-/* Both selectors on purpose: in the editor's right column
-   `.ve-right-col .editor-right-properties .ve-editor-panel-body { padding: 0 }`
-   is more specific and resets the shorthand, so the plain rule alone silently
-   did nothing there — which is the layout this feature actually ships in. */
-.ve-editor-panel-ptabbed > .ve-editor-panel-body,
-.ve-right-col .editor-right-properties .ve-editor-panel-ptabbed > .ve-editor-panel-body {
-  padding-bottom: 62vh;
-}
 
-/* NOTHING IS HIDDEN. The strip used to filter — one group shown, the rest
-   display:none — and that was the wrong shape for this panel: a particle system
-   is tuned by moving between groups constantly, and a filter turns each of those
-   into a two-click round trip while also making "where did Collision go" a
-   question the UI invented. Every section stays in the panel; `data-ptab` is now
-   only a scroll anchor (see ParticleModeTabs). */
+/* Grid Builder: on its Grid and Effectors tabs the layer's own sections step aside. */
 .ve-editor-panel-grid-tabbed > .ve-editor-panel-body > .glvr-section,
 .ve-editor-panel-grid-tabbed > .ve-editor-panel-body > .ve-ltab-group,
 .ve-editor-panel-grid-tabbed > .ve-editor-panel-body > .glvr-options-list {
@@ -20783,6 +20850,17 @@ color: var(--accent, #33efab);
 .ve-fxpick-trigger:disabled { opacity: 0.55; cursor: not-allowed; }
 .ve-fxpick-trigger-plus { color: var(--text-secondary); font-size: 13px; line-height: 1; }
 .ve-fxpick-trigger-caret { color: var(--text-muted); flex: 0 0 auto; }
+/* variant="cta": the trigger is the panel's dashed add button (the .ve-mt-draw-cta
+   look) with no field row around it. */
+.ve-fxpick-cta {
+  display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 9px;
+  border: 1px dashed #3a4046; border-radius: 7px; background: transparent; color: var(--text-muted);
+  font: inherit; font-size: 11px; font-weight: 500; cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.ve-fxpick-cta:hover:not(:disabled), .ve-fxpick-cta.open { color: var(--text-primary); border-color: #4a5158; background: rgba(255, 255, 255, 0.02); }
+.ve-fxpick-cta:disabled { opacity: 0.45; cursor: default; }
+.ve-fxpick-cta-plus { color: var(--text-secondary); font-size: 13px; line-height: 1; }
 
 .ve-fxpick-pop {
   width: 300px;
@@ -25938,7 +26016,15 @@ color: var(--accent, #33efab);
 .ve-editor-panel-ltabbed[data-ltab="track"] .ve-ltab-group:not([data-ltab="track"]),
 .ve-editor-panel-ltabbed[data-ltab="d3"] .ve-ltab-group:not([data-ltab="d3"]),
 .ve-editor-panel-ltabbed[data-ltab="render"] .ve-ltab-group:not([data-ltab="render"]),
-.ve-editor-panel-ltabbed[data-ltab="sound"] .ve-ltab-group:not([data-ltab="sound"]) { display: none; }
+.ve-editor-panel-ltabbed[data-ltab="sound"] .ve-ltab-group:not([data-ltab="sound"]),
+.ve-editor-panel-ltabbed[data-ltab="p-emit"] .ve-ltab-group:not([data-ltab="p-emit"]),
+.ve-editor-panel-ltabbed[data-ltab="p-look"] .ve-ltab-group:not([data-ltab="p-look"]),
+.ve-editor-panel-ltabbed[data-ltab="p-motion"] .ve-ltab-group:not([data-ltab="p-motion"]),
+.ve-editor-panel-ltabbed[data-ltab="p-forces"] .ve-ltab-group:not([data-ltab="p-forces"]),
+.ve-editor-panel-ltabbed[data-ltab="p-collide"] .ve-ltab-group:not([data-ltab="p-collide"]),
+.ve-editor-panel-ltabbed[data-ltab="p-fluid"] .ve-ltab-group:not([data-ltab="p-fluid"]),
+.ve-editor-panel-ltabbed[data-ltab="p-prox"] .ve-ltab-group:not([data-ltab="p-prox"]),
+.ve-editor-panel-ltabbed[data-ltab="p-solver"] .ve-ltab-group:not([data-ltab="p-solver"]) { display: none; }
 
 .ve-editor-panel.ve-editor-panel-ltabbed {
   display: grid;
@@ -26011,6 +26097,74 @@ color: var(--accent, #33efab);
   box-shadow: 0 4px 14px rgb(0 0 0 / 40%);
 }
 .ve-ltab-rail-btn:hover .ve-ltab-rail-tip { opacity: 1; }
+
+/* ── Particle rail (ParticleRailKit.jsx; look-dev html/INTERFACE/particle-rail-lab, B) ──
+   The particle groups, a + for the modules the system does not use yet, a divider,
+   then the layer's own groups. The preset row spans the top under the header, as
+   the Scene Rig's Look row does. */
+.ve-editor-panel.ve-editor-panel-ltabbed.ve-editor-panel-prail { grid-template-rows: auto auto minmax(0, 1fr); }
+.ve-editor-panel-prail > .ve-ppreset-anchor { grid-column: 1 / -1; }
+.ve-editor-panel-prail > .ve-ltab-rail { grid-row: 3; }
+.ve-editor-panel-prail > .ve-editor-panel-body { grid-row: 3; }
+.ve-ltab-rail-sep { flex: 0 0 1px; width: 22px; height: 1px; margin: 5px 0; background: #24292c; }
+.ve-ltab-rail-btn.ve-ltab-rail-add { color: #8f9694; box-shadow: inset 0 0 0 1px #343a3e; border-radius: 7px; }
+.ve-ltab-rail-btn.ve-ltab-rail-add:hover,
+.ve-ltab-rail-btn.ve-ltab-rail-add.open { color: #e8edeb; box-shadow: inset 0 0 0 1px #4a5158; }
+/* The module's trash sits at the right end of its first section's header. */
+.glvr-section-header .ve-pmodule-remove { margin-left: auto; }
+.glvr-section-header .ve-section-info + .ve-pmodule-remove { margin-left: auto; }
+
+/* Preset row: the picture is the preset itself (a sketch, ParticleRailKit). */
+.ve-ppreset-anchor { min-width: 0; }
+.ve-ppreset-thumb { position: relative; background: #07080a; }
+.ve-ppreset-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.ve-ppreset-pop { width: 340px; }
+.ve-ppreset-head { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #26272b; font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.ve-ppreset-head small { font-size: 11px; font-weight: 450; color: var(--text-muted); }
+.ve-ppreset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ve-ppreset-tile {
+  display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 5px 5px 7px; border-radius: 8px;
+  border: 1px solid #2b2c31; background: #212226; color: var(--ve-field-value); font: inherit; text-align: left; cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.ve-ppreset-tile:hover { background: #292b30; border-color: var(--border-light); }
+.ve-ppreset-tile.is-on { border-color: #6b6b73; background: #262b2f; }
+.ve-ppreset-tile img { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 5px; background: #07080a; }
+.ve-ppreset-tile b { font-size: 11.5px; font-weight: 600; padding: 0 2px; }
+.ve-ppreset-tile small { font-size: 10px; line-height: 1.35; color: var(--text-muted); padding: 0 2px; }
+.ve-ppreset-confirm { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid #26272b; font-size: 11px; color: #d9b37e; }
+.ve-ppreset-confirm span { flex: 1; min-width: 0; }
+.ve-pmodules-pop { width: 280px; }
+
+/* Ramp: drag a stop, click the bar to add one; the selected stop's fields under it. */
+.ve-pramp { display: flex; flex-direction: column; }
+.ve-pramp-bar {
+  position: relative; height: 22px; margin: 8px 7px 4px; border-radius: 5px; cursor: copy; touch-action: none;
+  background-color: #1d2022;
+  background-image: linear-gradient(45deg, #2a2e30 25%, transparent 25%), linear-gradient(-45deg, #2a2e30 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2e30 75%), linear-gradient(-45deg, transparent 75%, #2a2e30 75%);
+  background-size: 8px 8px; background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+.ve-pramp-fill { position: absolute; inset: 0; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+.ve-pramp-stop {
+  position: absolute; top: -4px; width: 12px; height: 30px; margin-left: -6px; padding: 0; border-radius: 4px;
+  background: transparent; border: 2px solid #8a918f; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); cursor: ew-resize; touch-action: none;
+}
+.ve-pramp-stop.is-sel { border-color: #eef2f0; }
+.ve-pramp-stop i { position: absolute; left: 1px; right: 1px; bottom: 1px; height: 7px; border-radius: 2px; }
+.ve-pramp-cap { display: flex; justify-content: space-between; margin: 0 7px 2px; font-size: 9.5px; color: #6f7773; }
+.ve-pramp-edit-head { display: flex; align-items: center; justify-content: space-between; min-height: 24px; margin: 6px 0 0; font-size: 11px; font-weight: 600; color: #c8ceca; }
+.ve-pramp-color > .ve-field-label-row { flex: 0 0 auto; }
+.ve-pramp-color-control { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
+.ve-pramp-color-control > .cp-wrap { flex: 1 1 0%; min-width: 0; }
+
+/* Map pieces you can drag (emitter, its aim, a placed force, a collider). */
+.ve-pmap svg { touch-action: none; }
+.ve-pmap .ve-pmap-drag { cursor: grab; }
+.ve-pmap .ve-pmap-drag:active { cursor: grabbing; }
+
+/* A particle hint that is a warning reads as one (DistributionRows). */
+.ve-dist-hint.warn { color: #d9b37e; }
 
 /* TIME SPEED ▸ Preset (SpeedPresetPicker.jsx) — the easing picker's skin plus a
    delete ✕ on the user's own presets and a Save action in the foot. */

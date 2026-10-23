@@ -24,6 +24,7 @@ import {
   Fn, If, Loop, Break, int, pow, sqrt, tan, atan, uniform, uniformArray, texture, screenCoordinate, screenSize,
   vec2, vec3, vec4, float, mat2, dot, cross, mix, clamp, smoothstep, abs, max, min,
   length, distance, floor, fract, mod, exp, sin, cos, asin, sign, radians, normalize, step, select, array,
+  uint, uvec2, ivec2, inverseSqrt,
 } from 'three/tsl';
 import * as TSL from 'three/tsl';
 import { compileUserTsl } from './tslUserShader.js';
@@ -108,6 +109,56 @@ const hueShift = Fn(([col, a]) => {
 }).setLayout({
   name: 'fxHueShift', type: 'vec3',
   inputs: [{ name: 'col', type: 'vec3' }, { name: 'a', type: 'float' }],
+});
+
+// Film Grain's lattice — the GLSL grHash4 / grCorner / grLayer twins. The hash
+// is integer maths (LCG + xorshift), bit-exact across backends where a float
+// hash is not; swizzle writes are whole-vector assigns and the shifts are by a
+// vector, because WGSL shifts a vector only by a vector.
+const GR_K = uint(1664525);
+const GR_16 = uvec2(uint(16), uint(16));
+const grHash4 = Fn(([p, seed]) => {
+  const v = uvec2(ivec2(floor(p)).add(int(32768))).toVar();
+  v.assign(uvec2(v.x.add(uint(seed).mul(uint(747796405))), v.y));
+  v.assign(v.mul(GR_K).add(uint(1013904223)));
+  v.assign(uvec2(v.x.add(v.y.mul(GR_K)), v.y));
+  v.assign(uvec2(v.x, v.y.add(v.x.mul(GR_K))));
+  v.assign(v.bitXor(v.shiftRight(GR_16)));
+  v.assign(uvec2(v.x.add(v.y.mul(GR_K)), v.y));
+  v.assign(uvec2(v.x, v.y.add(v.x.mul(GR_K))));
+  v.assign(v.bitXor(v.shiftRight(GR_16)));
+  return vec4(vec2(v.bitAnd(uvec2(uint(65535), uint(65535)))), vec2(v.shiftRight(GR_16))).div(65536.0);
+}).setLayout({ name: 'fxGrHash4', type: 'vec4', inputs: [{ name: 'p', type: 'vec2' }, { name: 'seed', type: 'float' }] });
+
+const grCorner = Fn(([c, seed, chroma]) => {
+  const h = grHash4(c, seed.mul(2.0)).toVar();
+  const g = vec3(h.x.add(h.y).sub(1.0), 0.0, 0.0).toVar();
+  If(chroma.greaterThan(0.001), () => {
+    const h2 = grHash4(c, seed.mul(2.0).add(1.0));
+    g.assign(vec3(g.x, h.z.add(h.w).sub(1.0), h2.x.add(h2.y).sub(1.0)));
+  });
+  return g;
+}).setLayout({
+  name: 'fxGrCorner', type: 'vec3',
+  inputs: [{ name: 'c', type: 'vec2' }, { name: 'seed', type: 'float' }, { name: 'chroma', type: 'float' }],
+});
+
+const grLayer = Fn(([p, seed, chroma]) => {
+  const i = floor(p).toVar();
+  const f = fract(p);
+  const w = f.mul(f).mul(float(3.0).sub(f.mul(2.0))).toVar();
+  const k = vec4(
+    float(1.0).sub(w.x).mul(float(1.0).sub(w.y)), w.x.mul(float(1.0).sub(w.y)),
+    float(1.0).sub(w.x).mul(w.y), w.x.mul(w.y),
+  ).toVar();
+  const s = grCorner(i, seed, chroma).mul(k.x)
+    .add(grCorner(i.add(vec2(1.0, 0.0)), seed, chroma).mul(k.y))
+    .add(grCorner(i.add(vec2(0.0, 1.0)), seed, chroma).mul(k.z))
+    .add(grCorner(i.add(vec2(1.0, 1.0)), seed, chroma).mul(k.w));
+  return s.mul(inverseSqrt(max(dot(k, k), 1e-4)));
+}).setLayout({
+  name: 'fxGrLayer', type: 'vec3',
+  inputs: [{ name: 'p', type: 'vec2' }, { name: 'seed', type: 'float' }, { name: 'chroma', type: 'float' }],
 });
 
 // waveRipple's own value noise + 3-octave fbm. Pure functions of their
@@ -395,7 +446,6 @@ const wwWave = Fn(([x, waveType, antialias]) => {
 });
 
 // GLSL `x > 0.5 ? 1 : 0`, which several bodies use as a boolean param.
-const step05 = (x) => step(0.5, x);
 
 /*
  * A texture binding that knows whether it is looking at an UPLOADED texture or a
@@ -998,72 +1048,6 @@ const BODIES = {
     return out;
   },
 
-  /*
-   * Directional Smear. A weighted march along an authored direction.
-   *
-   * Two things that must survive the port verbatim: the direction goes through
-   * fxDir, so the streak stays stuck to a ROTATED layer instead of always
-   * smearing screen-horizontal; and the result is clamped back under its own
-   * alpha (`min(rgb, a)`) to keep the premultiplied invariant, without which a
-   * bright tap can push rgb above alpha and the export flatten reads it as a
-   * fringe.
-   *
-   * The GLSL's `for (i < 64) { if (i >= taps) break; }` is a bounded loop with a
-   * dynamic trip count — Loop/Break reproduces exactly that, and the bound must
-   * stay constant for the shader to compile.
-   */
-  directionalSmear: ({ u, uvn, helpers }) => {
-    const P = u.uParams;
-    const { fxLocal, fxFrame, fxDir, fxRes } = helpers;
-    const smearTap = (p, mode) => {
-      // sampleClamped: outside the plate is EMPTY, not the edge texel.
-      const inside = p.x.greaterThanEqual(0.0).and(p.x.lessThanEqual(1.0))
-        .and(p.y.greaterThanEqual(0.0)).and(p.y.lessThanEqual(1.0));
-      const transparent = inside.select(u.uTexture.sample(p), vec4(0.0));
-      const clamped = u.uTexture.sample(clamp(p, 0.0, 1.0));
-      const m = abs(fract(fxLocal(p).mul(0.5)).mul(2.0).sub(1.0));
-      const mirrored = u.uTexture.sample(fxFrame(m));
-      return select(mode.lessThan(0.5), transparent,
-        select(mode.lessThan(1.5), clamped, mirrored));
-    };
-    const ref = fxRes().y.div(1080.0);
-    const len = P.element(0).mul(ref).toVar();
-    const out = vec4(0.0).toVar();
-    If(len.lessThan(0.5), () => {
-      out.assign(u.uTexture.sample(uvn));
-    }).Else(() => {
-      const dir = vec2(cos(radians(P.element(1))), sin(radians(P.element(1))));
-      const bias = clamp(P.element(2).div(100.0), -1.0, 1.0);
-      const fall = max(P.element(3).div(100.0), 0.05);
-      const taps = max(float(5.0),
-        floor(P.element(4).mul(select(u.uQuality.lessThan(0.75), float(0.5), float(1.0))))).toVar();
-      const boost = P.element(5).div(100.0);
-      const edgeMode = P.element(6);
-      const t0 = float(-0.5).sub(bias.mul(0.5)).toVar();
-      const t1 = float(0.5).sub(bias.mul(0.5)).toVar();
-      const span = max(max(abs(t0), abs(t1)), 1e-3);
-      const acc = vec4(0.0).toVar();
-      const ws = float(0.0).toVar();
-      Loop({ start: int(0), end: int(64) }, ({ i }) => {
-        const fi = float(i);
-        If(fi.greaterThanEqual(taps), () => { Break(); });
-        const k = fi.div(max(taps.sub(1.0), 1e-4));
-        const t = mix(t0, t1, k);
-        const w = pow(max(float(1.0).sub(abs(t).div(span)), 0.0), float(1.0).div(fall)).toVar();
-        const sm = smearTap(uvn.add(fxDir(dir.mul(t.mul(len)).div(fxRes()))), edgeMode).toVar();
-        const l = luma(unpremult(sm)).mul(sm.a);
-        // Bright pixels drag longer streaks. Guarded in GLSL by `boost > 0.001`;
-        // at boost 0 the factor is exactly 1, so the guard is provably neutral.
-        w.mulAssign(float(1.0).add(boost.mul(l).mul(l).mul(3.0)));
-        acc.addAssign(sm.mul(w));
-        ws.addAssign(w);
-      });
-      const res = acc.div(max(ws, 1e-4)).toVar();
-      out.assign(vec4(min(res.rgb, vec3(res.a)), res.a));
-    });
-    return out;
-  },
-
   colorama: ({ u, uvn, srcCol, helpers }) => {
     const P = u.uParams;
     const { fxCoord } = helpers;
@@ -1229,12 +1213,41 @@ const BODIES = {
 
   grain: ({ u, uvn, srcCol, helpers }) => {
     const P = u.uParams;
-    const tt = mix(float(0.0), floor(u.uTime.mul(24.0)), step05(P.element(2)));
-    // Cell lattice matches GLSL gl_FragCoord; colour still comes from srcCol.
-    const gp = floor(helpers.fxCoord(uvn).div(max(float(1.0), P.element(1))));
-    const n = hash21(gp.add(tt.mul(1.37))).sub(0.5);
-    const col = clamp(unpremult(srcCol).add(n.mul(P.element(0))), 0.0, 1.0);
-    return vec4(col.mul(srcCol.a), srcCol.a);
+    const amt = P.element(0);
+    const out = srcCol.toVar();
+    If(amt.greaterThan(0.001), () => {
+      const chroma = clamp(P.element(3), 0.0, 1.0).toVar();
+      const frame = select(P.element(2).greaterThan(0.5), floor(u.uTime.mul(24.0)), float(0.0)).toVar();
+      const jit = grHash4(vec2(frame, 17.0), float(3.0)).mul(64.0).toVar();
+      // 1080p-reference px on the layer's own lattice (plain fxCoord matches
+      // GLSL's cells, like every hashed lattice here).
+      const pxScale = max(min(u.uResolution.x, u.uResolution.y).div(1080.0), 1e-3);
+      const fc = helpers.fxCoord(uvn).toVar();
+      const p = fc.div(pxScale).toVar();
+      const size = max(P.element(1), 1.0).toVar();
+      const pa = rot2(float(0.41)).mul(p).div(size).add(jit.xy);
+      const pb = rot2(float(-0.93)).mul(p).div(size.mul(2.1)).add(jit.zw).add(517.0);
+      const n = grLayer(pa, frame, chroma).add(grLayer(pb, frame.add(9973.0), chroma).mul(0.42)).toVar();
+      const wc = smoothstep(1.5, 4.0, size).mul(0.6).toVar();
+      If(wc.greaterThan(0.001), () => {
+        const pc = rot2(float(2.17)).mul(p).div(size.mul(0.45)).add(jit.yx).add(1291.0);
+        n.assign(vec3(n.x.add(wc.mul(grLayer(pc, frame.add(19937.0), float(0.0)).x)), n.y, n.z));
+      });
+      const hf = grHash4(fc, frame.mul(2.0).add(7.0));
+      n.assign(vec3(n.x.add(hf.x.add(hf.y).sub(1.0).mul(0.3)), n.y, n.z));
+      n.mulAssign(inverseSqrt(float(1.2664).add(wc.mul(wc)).div(6.0)));
+      const c = clamp(unpremult(srcCol), 0.0, 1.0).toVar();
+      const l = luma(c).toVar();
+      const resp = mix(float(0.55), float(1.0), smoothstep(0.0, 0.3, l))
+        .mul(float(1.0).sub(smoothstep(0.5, 1.0, l).mul(0.7)));
+      const room = max(sqrt(clamp(c.mul(4.0).mul(float(1.0).sub(c)), 0.0, 1.0)), vec3(0.18));
+      const rgb = vec3(n.x).add(
+        vec3(0.7071, -0.7071, 0.0).mul(n.y).add(vec3(0.4082, 0.4082, -0.8165).mul(n.z)).mul(chroma.mul(1.3)),
+      );
+      const col = clamp(c.add(rgb.mul(amt.mul(0.22).mul(resp)).mul(room)), 0.0, 1.0);
+      out.assign(vec4(col.mul(srcCol.a), srcCol.a));
+    });
+    return out;
   },
 
   scanlines: ({ u, uvn, srcCol, helpers }) => {

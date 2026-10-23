@@ -3,6 +3,7 @@
 //
 //   npx greenlight-motion doctor                     what this computer has, and how to fix what's missing
 //   npx greenlight-motion init <dir> [--from p.json] a project folder: index.html, project.json, assets/
+//   npx greenlight-motion script <dir> [--from s.json] [--force]   <dir>/script.json (a scene script) → project.json
 //   npx greenlight-motion build <dir>                project.json + assets/ → a page the user double-clicks
 //   npx greenlight-motion check <dir> [--json]       problems to fix (missing files, template, errors, blank frames)
 //   npx greenlight-motion stills <dir> [--at 0.5,2] [--count 6] [--out d]   PNG frames + a labelled contact sheet
@@ -20,6 +21,7 @@
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, copyFileSync, rmSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { applyEdits } from './apply.mjs';
@@ -483,6 +485,85 @@ async function apply() {
   }
 }
 
+// ── the scene script: <dir>/script.json → <dir>/project.json, with the converter the GreenLight Motion connector's
+// build_video uses (dist/greenlight-motion-script.mjs — frontend/src/motionEngine/sceneScript.js; the format:
+// skill/references/scene-script.md). The script is the source: project.json is rewritten on every run, so a project
+// edited by hand since then is kept unless --force.
+async function script() {
+  const dir = rest[0];
+  if (!dir) fail('script needs a folder', 'npx greenlight-motion script my-video  (it reads my-video/script.json)');
+  const S = await import(pathToFileURL(path.join(PKG, 'dist', 'greenlight-motion-script.mjs')).href);
+  const from = flags.from ? path.resolve(String(flags.from)) : path.join(dir, 'script.json');
+  if (!existsSync(from)) fail(`no scene script at ${from}`, 'write one (skill/references/scene-script.md) or pass --from <file.json>');
+  let scene;
+  try { scene = JSON.parse(readFileSync(from, 'utf8')); } catch (e) { fail(`${from} is not valid JSON: ${e.message}`); }
+  const projectFile = path.join(dir, 'project.json');
+  const stamp = path.join(dir, '.script-built');   // the sha256 of the project.json the last run wrote
+  if (existsSync(projectFile) && !flags.force) {
+    const now = createHash('sha256').update(readFileSync(projectFile)).digest('hex');
+    const built = existsSync(stamp) ? readFileSync(stamp, 'utf8').trim() : '';
+    if (now !== built) fail(`${projectFile} ${built ? 'was edited since script wrote it' : 'was not written by script'}`, 'pass --force to replace it (its own edits are lost), or go on editing project.json with apply');
+  }
+  mkdirSync(path.join(dir, 'assets'), { recursive: true });
+  if (path.resolve(from) !== path.resolve(dir, 'script.json')) writeFileSync(path.join(dir, 'script.json'), JSON.stringify(scene, null, 2) + '\n');
+  // every src: a file in assets/ (asset:<name>), a file on this computer (copied in) or an https link (downloaded in,
+  // so the folder plays offline and the engine may draw it) — its kind and size read from its own bytes
+  const files = new Map(); const problems = [];
+  for (const src of S.scriptSources(scene)) {
+    try { files.set(src, await scriptFile(S, dir, src)); } catch (e) { problems.push(`src "${String(src).slice(0, 80)}": ${e.message}`); }
+  }
+  const caps = JSON.parse(readFileSync(path.join(PKG, 'schema', 'capabilities.json'), 'utf8'));
+  const out = S.compileScript(scene, caps, files);
+  out.problems.unshift(...problems);
+  for (const w of out.warnings) console.log(`warning: ${w}`);
+  if (out.problems.length) {
+    console.error(`greenlight-motion: the script can't be converted yet — fix these and run script again:\n${out.problems.map((p) => `  - ${p}`).join('\n')}`);
+    process.exit(1);
+  }
+  const text = JSON.stringify(out.project, null, 2) + '\n';
+  writeFileSync(projectFile, text);
+  writeFileSync(stamp, createHash('sha256').update(text).digest('hex') + '\n');
+  build(dir);
+  console.log(`\n${out.duration} s, ${out.summary.length} scene${out.summary.length === 1 ? '' : 's'}:\n${out.summary.join('\n')}
+\nnext: npx greenlight-motion check ${dir}  →  stills ${dir} (look at the contact sheet, fix script.json, run script again)  →  render ${dir}`);
+}
+async function scriptFile(S, dir, src) {
+  const take = (bytes, name) => {
+    const type = S.sniff(bytes);
+    if (!type) throw new Error('not a picture, video or sound the engine plays (PNG, JPEG, GIF, WebP, SVG, MP4, MOV, WebM, MP3, M4A, WAV, OGG)');
+    const kind = S.KIND[type];
+    if (bytes.length > S.LIMITS[kind]) throw new Error(`the ${kind} is ${Math.round(bytes.length / 1048576)} MB (up to ${S.LIMITS[kind] / 1048576} MB)`);
+    return { url: `asset:${name}`, kind, type, name, ...S.probe(bytes, type) };
+  };
+  const into = (name, bytes) => {   // a file brought in: under its own name, or a numbered one if a different file has it
+    const base = path.basename(name).replace(/[^\w.-]+/g, '-') || 'file';
+    let n = base;
+    for (let i = 2; existsSync(path.join(dir, 'assets', n)) && !readFileSync(path.join(dir, 'assets', n)).equals(bytes); i += 1) n = base.replace(/(\.\w+)?$/, `-${i}$1`);
+    writeFileSync(path.join(dir, 'assets', n), bytes);
+    return n;
+  };
+  if (/^asset:/i.test(src)) {
+    const name = src.replace(/^asset:/i, '');
+    const file = path.join(dir, 'assets', name);
+    if (!existsSync(file)) throw new Error(`put the file at ${file}`);
+    return take(readFileSync(file), name);
+  }
+  if (/^https?:\/\//i.test(src)) {
+    const r = await fetch(src, { redirect: 'follow', signal: AbortSignal.timeout(60000) });
+    if (!r.ok) throw new Error(`the link answered ${r.status}`);
+    const bytes = Buffer.from(await r.arrayBuffer());
+    let name = 'file';
+    try { name = decodeURIComponent(new URL(r.url || src).pathname.split('/').pop() || 'file'); } catch { /* the default */ }
+    const type = S.sniff(bytes);
+    if (type && !new RegExp(`\\.${type === 'jpg' ? 'jpe?g' : type}$`, 'i').test(name)) name = `${name.replace(/\.\w*$/, '') || 'file'}.${type}`;
+    return take(bytes, into(name, bytes));
+  }
+  const local = path.resolve(src);
+  if (!existsSync(local)) throw new Error(`no such file — put it in ${path.join(dir, 'assets')}/ and write "asset:<file name>"`);
+  const bytes = readFileSync(local);
+  return take(bytes, into(path.basename(local), bytes));
+}
+
 function schema() {
   const topic = rest[0] || 'format';
   const caps = () => JSON.parse(readFileSync(path.join(PKG, 'schema', 'capabilities.json'), 'utf8'));
@@ -589,9 +670,9 @@ async function review() {
   await new Promise(() => {});   // serves until stopped
 }
 
-const COMMANDS = { doctor, init, build: () => build(rest[0] || '.'), check, stills, render, pack, set, apply, schema, trace, review };
+const COMMANDS = { doctor, init, script, build: () => build(rest[0] || '.'), check, stills, render, pack, set, apply, schema, trace, review };
 if (!cmd || cmd === 'help' || flags.help || !COMMANDS[cmd]) {
-  console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 19).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+  console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 20).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
   process.exit(cmd && !COMMANDS[cmd] && cmd !== 'help' ? 1 : 0);
 }
 try {

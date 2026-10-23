@@ -18,7 +18,7 @@ const FIELDS = [
   // the composite pipeline (./compositePipeline.js)
   'posedCamera', 'orthoCamera', 'fsQuadGeo', 'materialFactory',
   'blitMaterial', 'blitScene', 'pictureCopyMaterial', 'pictureCopyScene', 'seqPlateCopyMaterial', 'seqPlateCopyScene',
-  'depthStampMaterial', 'depthStampScene', 'depthCompositeMaterial', 'depthCompositeScene', 'cameraDofMaterial', 'cameraDofScene',
+  'depthStampMaterial', 'depthStampScene', 'depthCompositeMaterial', 'depthCompositeScene', 'depthCompositeSplitMaterial', 'depthCompositeSplitScene', 'depthCompositeTranslucentMaterial', 'depthCompositeTranslucentScene', 'depthCompositeUnderMaterial', 'depthCompositeUnderScene', 'backdropUnderMaterial', 'backdropUnderScene','cameraDofMaterial', 'cameraDofScene', 'cameraDofDepthMaterial', 'cameraDofDepthScene',
   'mixMaterial', 'mixScene', 'maskMaterial', 'maskScene', 'trackMatteMaterial', 'trackMatteScene',
   'trackMattePlainMaterial', 'trackMattePlainScene', 'overBlitMaterial', 'overBlitScene', 'flattenScene',
   'adjustmentGeo', 'adjustmentClipMesh', 'adjustmentClipScene', 'effectMesh', 'effectScene',
@@ -74,7 +74,7 @@ const FIELDS = [
   // ./sequenceComposite.js
   'perfStats', 'rcMediaOnly', 'sequenceFrameStamp',
   // ./adjustmentComposite.js
-  'alphaExport', 'autoFillLayers', 'backdropLayers', 'bendLayers', 'bezierWarpLayers', 'chromaKeyLayers', 'colorRefConsumed', 'colorRefKeys', 'colorRefSources', 'cornerPinLayers', 'depthPlates', 'depthScanLayers', 'drosteLayers', 'frRimLayers', 'glassLayers', 'glowLayers', 'layerDepthMode', 'layerItems', 'layerMaskLayers', 'matteSourceChannels', 'meshWarpLayers', 'mockupFrameLayers', 'modelDepth', 'modelDepthTex', 'modelSpillDepth', 'motionBlurLayers', 'motionTrailLayers', 'overlayFx', 'pryzmLayers', 'regionDistortLayers', 'repetileLayers', 'rigLayers', 'shaderBlendLayers', 'trackMatteLayers',
+  'alphaExport', 'autoFillLayers', 'backdropLayers', 'bendLayers', 'bezierWarpLayers', 'chromaKeyLayers', 'colorRefConsumed', 'colorRefKeys', 'colorRefSources', 'cornerPinLayers', 'depthPlates', 'depthScanLayers', 'drosteLayers', 'frRimLayers', 'glassLayers', 'glowLayers', 'layerDepthMode', 'layerItems', 'layerMaskLayers', 'matteSourceChannels', 'meshWarpLayers', 'mockupFrameLayers', 'modelDepth', 'modelDepthRange', 'modelDepthTex', 'modelSpillDepth', 'modelTransparentDepthTex', 'motionBlurLayers', 'motionTrailLayers', 'overlayFx', 'pryzmLayers', 'regionDistortLayers', 'repetileLayers', 'rigLayers', 'shaderBlendLayers', 'trackMatteLayers',
   // ./channelRender.js
   'activeRigAt', 'audioElements', 'ensureParticleModule', 'forceMuteAudio', 'frameToken', 'lastActiveIndex', 'loop', 'playbackStep', 'preTransitionFxPrepare', 'renderSequenceFrame', 'selectedItemId', 'shortAudio', 'soundEnabled', 'tightSyncUntil', 'worldActive',
   // ./layerMesh.js

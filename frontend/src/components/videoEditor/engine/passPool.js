@@ -50,6 +50,35 @@ export function ensurePassTarget(engine, key, w, h, nearest) {
   return target;
 }
 
+/**
+ * A pooled target with a full mip chain, regenerated after every render into it. For a pass that reads its
+ * source PREFILTERED — camera DOF samples each tap at the mip level of its tap spacing — so thin detail under a
+ * wide gather is averaged instead of aliased. Same pool, same release rules as ensurePassTarget.
+ */
+export function ensureMipPassTarget(engine, key, w, h) {
+  const renderer = engine.renderer;
+  if (!renderer) return null;
+  const width = Math.max(1, Math.round(w));
+  const height = Math.max(1, Math.round(h));
+  const pool = engine.passPool;
+  let target = pool.get(key);
+  if (!target) {
+    target = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.LinearMipmapLinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: true,
+    });
+    pool.set(key, target);
+  }
+  if (target.width !== width || target.height !== height) target.setSize(width, height);
+  engine.passUse.set(key, { frame: engine.passFrame, at: performance.now() });
+  return target;
+}
+
 export function releasePoolKey(engine, key) {
   const pool = engine.passPool;
   const target = pool.get(key);

@@ -1,6 +1,6 @@
 {
   "name": "greenlight-motion",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "GreenLight Motion Engine: AI agents make motion-design videos (3D, camera, effects, transitions, text animation, particles, motion blur) with the GreenLight Dash Video Editor's own engine, in the user's browser.",
   "keywords": [
     "video",
@@ -37,6 +37,7 @@
   "exports": {
     ".": "./dist/greenlight-motion.mjs",
     "./iife": "./dist/greenlight-motion.js",
+    "./script": "./dist/greenlight-motion-script.mjs",
     "./package.json": "./package.json"
   },
   "files": [

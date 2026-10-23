@@ -1375,7 +1375,51 @@ export function sanitizeEffectChain(list) {
 // real content change to every other open window).
 export const MODEL_FITS = ['height', 'width', 'unit'];
 
-export const MODEL_ANCHORS = ['center', 'base'];
+// 'origin' keeps the asset's own origin as the pivot (no bbox recentring), so a GLB
+// exported in scene coordinates lands exactly where its scene put it.
+export const MODEL_ANCHORS = ['center', 'base', 'origin'];
+
+// Media on named meshes of ANY model (model3dConfig.screens). 'stretch' fills the
+// mesh's own UVs exactly; cover/contain fit the media into a canvas of `aspect`.
+export const MODEL_SCREEN_FITS = ['stretch', 'cover', 'contain'];
+export const MODEL_SCREEN_UVS = ['mesh', 'planar'];
+export const MODEL_SCREEN_SHADING = ['screen', 'lit'];
+export const MODEL_SCREENS_MAX = 8;
+
+function sanitizeModelScreens(list) {
+  if (!Array.isArray(list)) return [];
+  const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
+  const name = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 128) : null);
+  return list.slice(0, MODEL_SCREENS_MAX).reduce((out, s) => {
+    if (!s || typeof s !== 'object' || typeof s.url !== 'string' || !s.url) return out;
+    const material = name(s.material);
+    const node = name(s.node);
+    if (!material && !node) return out;
+    out.push({
+      url: s.url.slice(0, 4096),
+      ...(material ? { material } : {}),
+      ...(node ? { node } : {}),
+      fitMode: pick(s.fitMode, MODEL_SCREEN_FITS, 'stretch'),
+      ...(Number.isFinite(s.aspect) && s.aspect > 0 ? { aspect: sanitizeNumber(s.aspect, 16 / 9, { min: 0.1, max: 10 }) } : {}),
+      uv: pick(s.uv, MODEL_SCREEN_UVS, 'mesh'),
+      shading: pick(s.shading, MODEL_SCREEN_SHADING, 'screen'),
+      scale: sanitizeNumber(s.scale, 1, { min: 0.1, max: 5 }),
+      offsetX: sanitizeNumber(s.offsetX, 0, { min: -1, max: 1 }),
+      offsetY: sanitizeNumber(s.offsetY, 0, { min: -1, max: 1 }),
+      rotation: sanitizeNumber(s.rotation, 0, { min: -180, max: 180 }),
+      padding: sanitizeNumber(s.padding, 0, { min: 0, max: 0.45 }),
+      borderRadius: sanitizeNumber(s.borderRadius, 0, { min: 0, max: 0.5 }),
+      // Video: seconds into the media at the layer's first frame, and whether it loops.
+      offset: sanitizeNumber(s.offset, 0, { min: -600, max: 600 }),
+      loop: s.loop !== false,
+      mirrorX: s.mirrorX === true,
+      flipY: s.flipY === true,
+      // A self-lit screen that still takes the Scene Rig's shadows. Only stored when on.
+      ...(s.receiveShadow === true ? { receiveShadow: true } : {}),
+    });
+    return out;
+  }, []);
+}
 
 export const MODEL_LOOPS = ['once', 'loop', 'pingpong'];
 
@@ -1437,11 +1481,21 @@ export function sanitizeModel3dConfig(item) {
             },
           }
         : {}),
+      // Media on named meshes/materials of any model (preset or custom) — panels,
+      // TVs, phones inside a scene. Only stored when there is at least one.
+      ...(() => {
+        const screens = sanitizeModelScreens(raw.screens);
+        return screens.length ? { screens } : {};
+      })(),
       fit: pick(raw.fit, MODEL_FITS, D.fit),
       // In 'unit' mode this is pixels-per-model-unit, which can legitimately be large.
       fitValue: sanitizeNumber(raw.fitValue, D.fitValue, { min: 0.01, max: 10000 }),
       anchor: pick(raw.anchor, MODEL_ANCHORS, D.anchor),
       placeOnRigFloor: raw.placeOnRigFloor !== false,
+      // With a Scene Rig: whether the model casts into / receives from its shadow map.
+      // Both default on, and are only stored when switched off.
+      ...(raw.castShadow === false ? { castShadow: false } : {}),
+      ...(raw.receiveShadow === false ? { receiveShadow: false } : {}),
       baseRotation: {
         x: sanitizeNumber(rot.x, 0, { min: -360, max: 360 }),
         y: sanitizeNumber(rot.y, 0, { min: -360, max: 360 }),
@@ -1459,7 +1513,8 @@ export function sanitizeModel3dConfig(item) {
         rim: sanitizeNumber(lights.rim, D.lights.rim, { min: 0, max: 10 }),
       },
       animation: {
-        // null = "no clip chosen"; a name is whatever the glTF declared.
+        // null = "no clip chosen"; a name is whatever the glTF declared; '*' plays
+        // every clip together (a scene exported with one action per object).
         clip: typeof anim.clip === 'string' && anim.clip ? anim.clip : null,
         speed: sanitizeNumber(anim.speed, D.animation.speed, { min: -8, max: 8 }),
         loop: pick(anim.loop, MODEL_LOOPS, D.animation.loop),

@@ -541,6 +541,11 @@ export function resolveLayerPathFx(engine, item, clip, kf, layerMesh) {
   const canvasSize = u?.uCanvasSize?.value;
   const mediaSize = u?.uResolution?.value;
   if (!canvasSize || !(canvasSize.x > 1) || !(canvasSize.y > 1)) return null;
+  // The box the chain draws in, in plate px. A video's quad is only its fitted
+  // picture; its box stays the frame the picture sits in (layerMesh.js fxFrame).
+  const boxFrac = layerMesh?.userData?.mediaFrac;
+  const plateW = boxFrac ? canvasSize.x / boxFrac.cw : canvasSize.x;
+  const plateH = boxFrac ? canvasSize.y / boxFrac.ch : canvasSize.y;
   // Content rect fractions inside the quad — the same maths as the shader's
   // fit-contain branch, so traced points land on the drawn pixels.
   let { cw, ch } = mediaSize ? mediaContentFrac(layerMesh) : { cw: 1, ch: 1 };
@@ -566,7 +571,7 @@ export function resolveLayerPathFx(engine, item, clip, kf, layerMesh) {
     if (!outline) return null; // still decoding
     sourceKey = `img:${djb2(clip.proxyUrl || clip.url)}`;
   }
-  const fit = `${cw.toFixed(4)}:${ch.toFixed(4)}:${Math.round(canvasSize.x)}x${Math.round(canvasSize.y)}`;
+  const fit = `${cw.toFixed(4)}:${ch.toFixed(4)}:${Math.round(plateW)}x${Math.round(plateH)}`;
   let texture = null;
   let closed = true;
   if (outline && outline.frac) {
@@ -596,7 +601,7 @@ export function resolveLayerPathFx(engine, item, clip, kf, layerMesh) {
     const radii = getItemCornerRadii(item);
     const radius = Math.max(0, ...radii.map((r) => (Number.isFinite(Number(r)) ? Number(r) : 0)));
     texture = getOrBakePathTexture(`rect:${fit}:${Math.round(radius)}`, (data) => {
-      const quad = sampleRoundedRectQuad(cw, ch, radius, canvasSize.x, canvasSize.y, PATH_FX_SAMPLES);
+      const quad = sampleRoundedRectQuad(cw, ch, radius, plateW, plateH, PATH_FX_SAMPLES);
       if (!quad) return false;
       for (let i = 0; i < PATH_FX_SAMPLES; i += 1) {
         // One contour: z (contour start) and w (its first index) stay 0.
@@ -611,8 +616,8 @@ export function resolveLayerPathFx(engine, item, clip, kf, layerMesh) {
     texture,
     count: PATH_FX_SAMPLES,
     closed,
-    plateWidth: canvasSize.x,
-    plateHeight: canvasSize.y,
+    plateWidth: plateW,
+    plateHeight: plateH,
   };
 }
 

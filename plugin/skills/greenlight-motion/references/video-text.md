@@ -131,6 +131,8 @@ Orders {{{COUNTER:0-2,480; style=roll; duration=2.5; easing=expo_out}}} in {{{TI
 - Energetic text (a title, hook, promo or social line, anything punchy, bouncy or kinetic): [video-text-kinetic.md](video-text-kinetic.md) — 21 in-and-out animations (Swing Pop and its family).
 - Everything else: [video-text-presets.md](video-text-presets.md) — 46 recipes. Sweep Reveal (typing under a colour band), Type on Shape (text typed onto a pill, card or bar that grows with it), Emphasis (one highlight pass), Loop (neon, rainbow, float, flicker), Characters (decode, binary, glitch) and Voice (caption karaoke on `textWordTimings`).
 
+**Pace:** an entrance, an exit or a one-time pass takes at least 0.8–1 s by default, from the first unit starting to the last one settling. On Time that span is `(units − 1) × stagger + duration`. Go faster only when the edit needs it. The rule and its exceptions are in [video-projects.md](video-projects.md#text-animation-pace).
+
 The After Effects text-animator model on a text layer (stored as `textAnimators`). `item.textAnimators` is a list of animators; each one **selects** units of the text with a range (plus an optional wiggle) and applies its **effects** to them. Every effect value is what a unit gets at 100 % selection; the unit's selection amount (−1…1) scales it. What moves the selection is the range's `drive`: `range` (default) = Start / End / Offset, animated with `txa:` keyframe tracks or with `flow` for an endless keyframe-free travel; `time` = every unit takes its turn in seconds (a stagger, with In / Out and a highlight clock); `voice` = every unit takes its turn when it is spoken (captions). Renders identically in preview, `/render-onserver` and stills.
 
 `textAnimators` is the only text animation. Never write `textSplit*`, `splitIn*`, `splitOut*`, `textHighlight*` or `textCaret*` fields, or `textRevealProgress` / `textHighlightColor` tracks: the app ignores them. A stored project that still carries them is converted into `textAnimators` when the app loads it, so a `GET` of a project nobody has opened since may still show them.
@@ -258,9 +260,9 @@ Worked examples (spread onto a text item; durations assume a 4 s layer):
 
 // Fade Up (Time): words rise in 0.06 s apart, and leave upward at the end.
 "textAnimators": [
-  { "aid": "a1", "name": "In", "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.06, "duration": 0.6, "curve": "Power2 Smooth" },
+  { "aid": "a1", "name": "In", "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.06, "duration": 0.8, "curve": "Power2 Smooth" },
     "effects": [ { "pid": "p1", "type": "position", "x": 0, "y": 50 }, { "pid": "p2", "type": "opacity", "opacity": 0 } ] },
-  { "aid": "a2", "name": "Out", "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.5, "curve": "Power2 Smooth" },
+  { "aid": "a2", "name": "Out", "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.7, "curve": "Power2 Smooth" },
     "effects": [ { "pid": "p3", "type": "position", "x": 0, "y": -50 }, { "pid": "p4", "type": "opacity", "opacity": 0 } ] }]
 
 // Energetic in and out (Swing Pop and 20 more, each two Time animators): video-text-kinetic.md.
@@ -320,9 +322,9 @@ PUT /api/moodboards/{board_id}/video-projects/{project_id}
           "textFontWeight": 800, "textAlign": "center",
           "panX": 0, "panY": 35,
           "textAnimators": [
-            { "aid": "a1", "name": "In", "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.06, "duration": 0.6, "curve": "Power2 Smooth" },
+            { "aid": "a1", "name": "In", "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.06, "duration": 0.8, "curve": "Power2 Smooth" },
               "effects": [ { "pid": "p1", "type": "position", "x": 0, "y": 50 }, { "pid": "p2", "type": "opacity", "opacity": 0 } ] },
-            { "aid": "a2", "name": "Out", "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.5, "curve": "Power2 Smooth" },
+            { "aid": "a2", "name": "Out", "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.7, "curve": "Power2 Smooth" },
               "effects": [ { "pid": "p3", "type": "position", "x": 0, "y": -50 }, { "pid": "p4", "type": "opacity", "opacity": 0 } ] }
           ]
         }

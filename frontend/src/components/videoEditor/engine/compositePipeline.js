@@ -17,7 +17,7 @@ import {
   createBlitMaterial, createPictureCopyMaterial, createOverBlitMaterial, createAdjustmentMaterial, createMixMaterial,
   createMaskCompositeMaterial, createTrackMatteMaterial, createDepthStampMaterial, createDepthCompositeMaterial,
 } from '../clipShader';
-import { createCameraDofMaterial } from '../cameraDof';
+import { createCameraDofDepthMaterial, createCameraDofMaterial } from '../cameraDof';
 import { createMotionBlurMixMaterial } from '../motionBlurLayer';
 import { createMatteClipMaterial } from '../adjustmentEffects';
 import { selectedBackend } from '../videoRenderer';
@@ -95,9 +95,66 @@ export function buildCompositePipeline(engine, { camera, initW, initH, fov }) {
   depthCompositeScene.add(new THREE.Mesh(fsQuadGeo, depthCompositeMaterial));
   engine.depthCompositeMaterial = depthCompositeMaterial;
   engine.depthCompositeScene = depthCompositeScene;
+  // A 3D pass with transparent surfaces composites in two draws, each with its own
+  // material (compositeWithDepth): its opaque pixels writing depth, then a card in
+  // front at its own depth without writing it — depth writing is pipeline state on
+  // WebGPU, and each of these samplers only ever sees one kind of texture.
+  const depthCompositeSplitMaterial = makeMaterial.depthComposite() ?? createDepthCompositeMaterial();
+  depthCompositeSplitMaterial.uniforms.uPass.value = 1;
+  const depthCompositeSplitScene = new THREE.Scene();
+  depthCompositeSplitScene.add(new THREE.Mesh(fsQuadGeo, depthCompositeSplitMaterial));
+  const depthCompositeTranslucentMaterial = makeMaterial.depthComposite() ?? createDepthCompositeMaterial();
+  depthCompositeTranslucentMaterial.uniforms.uPass.value = 2;
+  depthCompositeTranslucentMaterial.depthWrite = false;
+  const depthCompositeTranslucentScene = new THREE.Scene();
+  depthCompositeTranslucentScene.add(new THREE.Mesh(fsQuadGeo, depthCompositeTranslucentMaterial));
+  engine.depthCompositeSplitMaterial = depthCompositeSplitMaterial;
+  engine.depthCompositeSplitScene = depthCompositeSplitScene;
+  engine.depthCompositeTranslucentMaterial = depthCompositeTranslucentMaterial;
+  engine.depthCompositeTranslucentScene = depthCompositeTranslucentScene;
+  // The same source again, for the pixels the tested draw REJECTED: something drawn
+  // earlier stands in front there. Composited UNDER what is already in the stack
+  // (premultiplied: dst + src·(1 − dst.a)), never writing depth — so a partly
+  // transparent layer in front (a soft shadow, a 30 % tint) shows this surface through
+  // its transparency instead of the empty comp, and an opaque one still hides it.
+  const depthCompositeUnderMaterial = makeMaterial.depthComposite() ?? createDepthCompositeMaterial();
+  depthCompositeUnderMaterial.depthWrite = false;
+  depthCompositeUnderMaterial.depthFunc = THREE.GreaterDepth;
+  depthCompositeUnderMaterial.blending = THREE.CustomBlending;
+  depthCompositeUnderMaterial.blendEquation = THREE.AddEquation;
+  depthCompositeUnderMaterial.blendSrc = THREE.OneMinusDstAlphaFactor;
+  depthCompositeUnderMaterial.blendDst = THREE.OneFactor;
+  depthCompositeUnderMaterial.blendEquationAlpha = THREE.AddEquation;
+  depthCompositeUnderMaterial.blendSrcAlpha = THREE.OneMinusDstAlphaFactor;
+  depthCompositeUnderMaterial.blendDstAlpha = THREE.OneFactor;
+  const depthCompositeUnderScene = new THREE.Scene();
+  depthCompositeUnderScene.add(new THREE.Mesh(fsQuadGeo, depthCompositeUnderMaterial));
+  engine.depthCompositeUnderMaterial = depthCompositeUnderMaterial;
+  engine.depthCompositeUnderScene = depthCompositeUnderScene;
+  // A camera-locked backdrop held aside while the 3D stack composites over transparency
+  // lands UNDER the finished stack (renderAdjustmentComposite, lockedLead). A storage
+  // identity, like the sequence plate copy: it keeps the stack's own V axis on WebGPU.
+  const backdropUnderMaterial = makeMaterial.blit({ flipTexture: true }) ?? createBlitMaterial();
+  backdropUnderMaterial.depthTest = false;
+  backdropUnderMaterial.depthWrite = false;
+  backdropUnderMaterial.transparent = true;
+  backdropUnderMaterial.blending = THREE.CustomBlending;
+  backdropUnderMaterial.blendEquation = THREE.AddEquation;
+  backdropUnderMaterial.blendSrc = THREE.OneMinusDstAlphaFactor;
+  backdropUnderMaterial.blendDst = THREE.OneFactor;
+  backdropUnderMaterial.blendEquationAlpha = THREE.AddEquation;
+  backdropUnderMaterial.blendSrcAlpha = THREE.OneMinusDstAlphaFactor;
+  backdropUnderMaterial.blendDstAlpha = THREE.OneFactor;
+  const backdropUnderScene = new THREE.Scene();
+  backdropUnderScene.add(new THREE.Mesh(fsQuadGeo, backdropUnderMaterial));
+  engine.backdropUnderMaterial = backdropUnderMaterial;
+  engine.backdropUnderScene = backdropUnderScene;
   const cameraDofMaterial = makeMaterial.cameraDof() ?? createCameraDofMaterial();
   const cameraDofScene = new THREE.Scene();
   cameraDofScene.add(new THREE.Mesh(fsQuadGeo, cameraDofMaterial));
+  const cameraDofDepthMaterial = makeMaterial.cameraDofDepth() ?? createCameraDofDepthMaterial();
+  const cameraDofDepthScene = new THREE.Scene();
+  cameraDofDepthScene.add(new THREE.Mesh(fsQuadGeo, cameraDofDepthMaterial));
   // Full-screen mix pass: composite the adjusted result over the layers below at opacity.
   const mixMaterial = makeMaterial.mix() ?? createMixMaterial();
   const mixScene = new THREE.Scene();
@@ -146,6 +203,8 @@ export function buildCompositePipeline(engine, { camera, initW, initH, fov }) {
   engine.blitScene = blitScene;
   engine.cameraDofMaterial = cameraDofMaterial;
   engine.cameraDofScene = cameraDofScene;
+  engine.cameraDofDepthMaterial = cameraDofDepthMaterial;
+  engine.cameraDofDepthScene = cameraDofDepthScene;
   engine.mixMaterial = mixMaterial;
   engine.mixScene = mixScene;
   engine.maskMaterial = maskMaterial;
@@ -205,6 +264,7 @@ export function buildCompositePipeline(engine, { camera, initW, initH, fov }) {
   // what disposeCompositePipeline releases: exactly the objects built here
   engine.pipelineBuilt = {
     fsQuadGeo, blitMaterial, seqPlateCopyMaterial, depthStampMaterial, depthCompositeMaterial, cameraDofMaterial,
+    cameraDofDepthMaterial, depthCompositeSplitMaterial, depthCompositeTranslucentMaterial,
     mixMaterial, maskMaterial, trackMatteMaterial, trackMattePlainMaterial, overBlitMaterial, adjustmentClipMesh,
     matteClipMaterial,
   };
@@ -221,7 +281,10 @@ export function disposeCompositePipeline(engine) {
   if (b.seqPlateCopyMaterial !== b.blitMaterial) b.seqPlateCopyMaterial.dispose();
   b.depthStampMaterial.dispose();
   b.depthCompositeMaterial.dispose();
+  b.depthCompositeSplitMaterial.dispose();
+  b.depthCompositeTranslucentMaterial.dispose();
   b.cameraDofMaterial.dispose();
+  b.cameraDofDepthMaterial.dispose();
   b.mixMaterial.dispose();
   b.maskMaterial.dispose();
   b.trackMatteMaterial.dispose();

@@ -314,8 +314,7 @@
 /* narrow: one column — the preview, transport and timeline, then the inspector */
 @media (max-width: 860px) {
   .glm-app { display: block; overflow: auto; }
-  .glm-top { position: sticky; top: 0; z-index: 5; background: var(--glm-bg); padding: 8px 16px; flex-wrap: wrap; }
-  .glm-badge { order: 3; width: 100%; }
+  .glm-top { position: sticky; top: 0; z-index: 5; background: var(--glm-bg); padding: 8px 12px 8px 16px; gap: 8px 12px; }
   .glm-tbtn span { display: none; }
   .glm-view { flex: none; height: 56vw; min-height: 180px; margin: 14px 16px 0; }
   .glm-transport { padding-left: 16px; padding-right: 16px; }
@@ -327,6 +326,23 @@
   .glm-track > * { width: 100%; height: auto; }
   .glm-app.is-render .glm-insp, .glm-app:not(.is-render) .glm-deliver { display: none; }
 }
+/* the app bar stays one line: the status chip, then the size badge make room for the title and the buttons */
+@media (max-width: 700px) {
+  .glm-mode { display: none; }
+  .glm-app .glm-notes-btn { margin-left: auto; }
+}
+@media (max-width: 520px) {
+  .glm-badge { display: none; }
+  .glm-top { gap: 8px; }
+}
+/* a phone: the transport stays one line — Loop is its icon */
+@media (max-width: 480px) {
+  .glm-transport { gap: 8px; }
+  .glm-time b { min-width: 0; }
+  .glm-app .glm-play { min-width: 80px; }
+  .glm-app .glm-transport .glm-icon { min-width: 28px; padding: 0 6px; }
+}
+@container (max-width: 480px) { .glm-transport .glm-icon[aria-pressed] span { display: none; } }
 @media (prefers-reduced-motion: reduce) {
   .glm-app *, .glm-app *::before, .glm-app *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
 }

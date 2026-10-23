@@ -192,7 +192,7 @@ export function ensureSequenceState(engine, itemId, seqClip) {
     st.layouts = new Map(seqChannels.map((ch) => [ch.id, getTimelineLayout(ch.items, { unsnapped: ch.unsnapped })]));
     // Parenting is scoped to one editing level, so a sequence gets its own index
     // over its inner channels — a link can never reach out of (or into) a sequence.
-    st.parentIndex = buildParentIndex(seqChannels, (ch) => st.layouts.get(ch.id));
+    st.parentIndex = buildParentIndex(seqChannels, (ch) => st.layouts.get(ch.id), (item) => st.clipsMap.get(item.clipId));
     const nextIds = new Set(seqChannels.map((ch) => ch.id));
     for (const [id, cs] of st.channelStates.entries()) {
       if (nextIds.has(id)) continue;

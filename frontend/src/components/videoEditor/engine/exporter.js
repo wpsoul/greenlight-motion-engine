@@ -16,6 +16,7 @@ import { describeGpuLoad, gpuResetCount } from '../gpuReset';
 import { getItemKeyframeValues, itemHasKeyframes } from '../gsapTransitions';
 import { disposeHtmlLiveExportPages, htmlBlankCanvas, htmlLiveExportCanvas, htmlLiveSettleUsed, htmlLiveSupported } from '../htmlLive';
 import { preloadImagePlate } from '../imagePlate';
+import { preloadVideoPlate } from '../videoPlate';
 import { getParenting } from '../keyframeParenting';
 import { motionBlurLevelForShutter } from '../motionBlurLevels';
 import { ensureMotionTemplate, motionMediaPending, pumpMotionMedia } from '../motionTemplates';
@@ -29,6 +30,7 @@ import { exportVideo as runExport, isWebCodecsSupported } from '../videoExporter
 import { selectedBackend } from '../videoRenderer';
 import { ClipDecoder, ClipSource, SegmentedClipDecoder, SegmentedSource } from '../webcodecsClipDecoder';
 import { isWebmUrl, WebmFrameCache } from '../webmFrameCache';
+import { WebmClipDecoder, WebmSource } from '../webmClipDecoder';
 import { ensureSequenceState as ensureSequenceStateInEngine } from './channelStates';
 import { resolveActiveIndex } from './compositeHelpers';
 import { calculateVideoTime, clamp01 } from './layerHelpers';
@@ -38,6 +40,15 @@ import { resolveFollow as resolveFollowInEngine, resolveParenting as resolvePare
 import { ensureModel3dModule as ensureModel3dModuleInEngine, ensureParticleModule as ensureParticleModuleInEngine } from './modules3d';
 import { getMotionBlurPipeline as getMotionBlurPipelineInEngine } from './motionPasses';
 import { awaitShapeSvgImages, finiteNumber, preloadShapeSvgs } from './mediaHelpers';
+
+// Every top-level video's real-size source (videoPlate.js reads the original, not the proxy).
+function videoPlateUrls(env) {
+  return [...new Set(
+    env.channels.flatMap((ch) => ch.items.map((it) => env.clipsMap.get(it.clipId)))
+      .filter((clip) => clip?.mediaType === 'video' && !clip.htmlSource && (clip.url || clip.proxyUrl))
+      .map((clip) => clip.url || clip.proxyUrl),
+  )];
+}
 
 export async function captureFrameAtTime(engine, env, time, opts = {}) {
   // A still is one render, so installed effect packages the project uses have
@@ -113,6 +124,7 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
         .filter((clip) => clip?.mediaType === 'image' && clip.url)
         .map((clip) => clip.url),
     )].map((url) => Promise.all([preloadImagePlate(url), preloadAnimatedImage(url)]).catch(() => null)));
+    await Promise.all(videoPlateUrls(env).map((url) => preloadVideoPlate(url).catch(() => null)));
     await seekAllVideosForTimeInEngine(engine, env, time);
     markTexturesFresh();
     engine.renderFrame();
@@ -136,6 +148,13 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
     // would otherwise freeze the layer on frame 0 for good.
     for (let guard = 0; guard < 3 && animatedImagePending(); guard += 1) {
       await pumpAnimatedImages();
+      engine.renderFrame();
+    }
+    // Video frames asked for while drawing (3D model screens, motion templates,
+    // video mattes) decode on lanes the render only REQUESTED — settle them and
+    // repaint, exactly as an exported frame does, or the still keeps a stale frame.
+    for (let guard = 0; guard < 3 && motionMediaPending(); guard += 1) {
+      await pumpMotionMedia();
       engine.renderFrame();
     }
     // A still is a render too: a layer bake still in flight would capture
@@ -278,6 +297,9 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       .filter((clip) => clip?.mediaType === 'image' && clip.url)
       .map((clip) => clip.url),
   )].map((url) => Promise.all([preloadImagePlate(url), preloadAnimatedImage(url)])));
+  // Video plates the same way: a clip smaller than the frame draws at its real size
+  // (videoPlate.js), read from the original file's header.
+  await Promise.all(videoPlateUrls(env).map((url) => preloadVideoPlate(url)));
   // A Particle Solver draws through a lazily-imported module. In preview, a
   // frame that arrives before the import simply repaints when it lands — the
   // encoder gets ONE pass per frame, so without this the opening frames encode
@@ -545,7 +567,25 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     }
     return pending;
   };
-  const decodersByEl = new Map(); // videoEl -> Map(url -> Promise<ClipDecoder | WebmFrameCache | 'failed'>)
+  // WebM sources (webmClipDecoder.js), demuxed once per URL like ClipSource.
+  const webmSourceCache = new Map(); // url -> Promise<WebmSource | 'failed'>
+  const getWebmSource = (url) => {
+    let pending = webmSourceCache.get(url);
+    if (!pending) {
+      pending = (async () => {
+        const s = new WebmSource(url);
+        const ok = await s.init();
+        if (!ok) {
+          console.warn('[export] WebM frame-exact decode unavailable for ' + url
+            + ' (' + (s.errorKind || 'unknown') + ': ' + s.error + ') — playback frame cache');
+        }
+        return ok ? s : 'failed';
+      })();
+      webmSourceCache.set(url, pending);
+    }
+    return pending;
+  };
+  const decodersByEl = new Map(); // videoEl -> Map(url -> Promise<ClipDecoder | WebmClipDecoder | WebmFrameCache | 'failed'>)
   const allDecoders = [];
   // Segmented render sources, keyed by manifest URL. The backend prepares
   // these (see `_ensure_copy_segments` / `_ensure_transcoded_segments`) and
@@ -583,12 +623,21 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     let pending = byUrl.get(url);
     if (!pending) {
       pending = (async () => {
-        // WebM can't be demuxed by the mp4box WebCodecs path (no moov box), so it
-        // used to fall back to a per-frame <video> seek (~10x slower, and it dropped
-        // alpha). Pre-decode the whole clip once into a frame cache instead — fast,
-        // and drawImage preserves the alpha channel. Over-budget clips return
-        // ready=false and drop through to the seek path below (no regression).
+        // WebM can't be demuxed by the mp4box WebCodecs path (no moov box). It is
+        // demuxed by webmClipDecoder.js and decoded with WebCodecs instead — alpha
+        // included — so every time gets ITS frame, exactly as an mp4 does. The
+        // playback frame cache below is only the fallback for a file that reader
+        // cannot take: it plays the clip in real time and misses the frames shown
+        // while a render holds the main thread (1-5 frames late under motion blur).
+        // Over-budget clips return ready=false and drop through to the seek path
+        // below (no regression).
         if (isWebmUrl(url)) {
+          const webmSrc = await getWebmSource(url);
+          if (webmSrc !== 'failed') {
+            const d = new WebmClipDecoder(webmSrc);
+            allDecoders.push(d);
+            return d;
+          }
           const cache = new WebmFrameCache(url);
           const ok = await cache.ensureReady();
           if (!ok) {
@@ -706,11 +755,15 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     for (let i = 0; i < warmUrls.length; i++) {
       if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
       const url = warmUrls[i];
-      // WebM never goes through ClipSource (no moov box) — WebmFrameCache
-      // owns that path and is built lazily in getDecoder.
-      if (isWebmUrl(url)) continue;
       const name = url.split('/').pop().split('?')[0];
       const label = warmUrls.length > 1 ? `Loading media ${i + 1} of ${warmUrls.length}` : 'Loading media';
+      // WebM never goes through ClipSource (no moov box): its own demux runs here,
+      // before the frame loop, like an mp4's.
+      if (isWebmUrl(url)) {
+        setPhase(`${label}: ${name}`);
+        await getWebmSource(url);
+        continue;
+      }
       setPhase(`${label}: ${name}`);
       await getSource(url, {
         onProgress: (src) => setPhase(`${label}: ${src.describeProgress()}`),
@@ -1378,6 +1431,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     for (const d of allDecoders) { try { d.close(); } catch { /* ignore */ } }
     disposeHtmlLiveExportPages();
     sourceCache.clear(); // drop demuxed sample tables (can hold GBs for long 4K sources)
+    webmSourceCache.clear();
     for (const cs of engine.channelStates.values()) {
       for (const video of [cs.videos.a, cs.videos.b]) { if (video) video.__decodeCanvas = null; }
     }

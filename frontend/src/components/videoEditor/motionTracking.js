@@ -27,6 +27,7 @@ import { getItemKeyframeValues } from './gsapTransitions';
 import { localPrs, timelineSpansShareFrame } from './keyframeParenting';
 import { getTimelineDuration, mapTimelineToSource } from './speedUtils';
 import { containedSourceScale } from './mediaFit';
+import { videoPlateScale } from './videoPlate';
 
 const DEG2RAD = Math.PI / 180;
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -456,7 +457,8 @@ export function sourceTimeToCompTime(item, entry, tSource) {
    going through the tracked layer's own transform: how big its box is on screen,
    how the source is contain-fitted into that box, and how the layer is rotated.
    Skip any of those and the link drifts the moment someone scales or spins the
-   layer the track lives on. */
+   layer the track lives on. The box is the frame shrunk by the clip's real-size
+   factor (videoPlate.js): a clip smaller than the frame draws at its own size. */
 function containScale(track, boxW, boxH) {
   const aspect = num(track?.sourceAspect, 0);
   return containedSourceScale(boxW, boxH, aspect);
@@ -506,8 +508,9 @@ export function resolveMotionFollowDelta({ index, item, t, W, H }) {
   const duration = num(trackedEntry.endTime) - num(trackedEntry.startTime);
   const progress = duration > 0 ? clamp01((t - trackedEntry.startTime) / duration) : 0;
   const prs = localPrs(tracked, getItemKeyframeValues(tracked, progress), W, H);
-  const boxW = Math.abs(prs.sx) * W;
-  const boxH = Math.abs(prs.sy) * H;
+  const real = videoPlateScale(entry.clip, W, H);
+  const boxW = Math.abs(prs.sx) * W * real;
+  const boxH = Math.abs(prs.sy) * H * real;
   const { kx, ky } = containScale(track, boxW, boxH);
 
   // Layer-local offset, then rotated into composition space. rz is THREE's
@@ -673,7 +676,7 @@ export function collectMotionTrackCandidates({ index, item, clipsMap, fps = 30, 
    Source uv → composition frame pixels (y down, origin top-left), through the
    layer's cover fit, pose and rotation. Shared by the path and the box so the
    two can never disagree about where the tracked point is. */
-function frameMapper({ track, item, entry, W, H, t }) {
+function frameMapper({ track, item, entry, W, H, t, clip = null }) {
   const duration = num(entry?.endTime) - num(entry?.startTime);
   // The layer's pose AT THIS MOMENT — a fixed mid-clip guess would slide the
   // box off the object on any layer that animates.
@@ -681,8 +684,9 @@ function frameMapper({ track, item, entry, W, H, t }) {
     ? clamp01((t - num(entry?.startTime)) / duration)
     : 0.5;
   const prs = localPrs(item, getItemKeyframeValues(item, progress), W, H);
-  const boxW = Math.abs(prs.sx) * W;
-  const boxH = Math.abs(prs.sy) * H;
+  const real = videoPlateScale(clip, W, H);
+  const boxW = Math.abs(prs.sx) * W * real;
+  const boxH = Math.abs(prs.sy) * H * real;
   const { kx, ky } = containScale(track, boxW, boxH);
   const phi = -prs.rz;
   const cos = Math.cos(phi);
@@ -705,12 +709,12 @@ function frameMapper({ track, item, entry, W, H, t }) {
  * disagree. `track` is only read for `sourceAspect`, so a bare
  * `{ sourceAspect }` is a legitimate argument.
  */
-export function motionTrackFrameMapper({ track, item, entry, W, H, t }) {
-  return frameMapper({ track, item, entry, W, H, t });
+export function motionTrackFrameMapper({ track, item, entry, W, H, t, clip = null }) {
+  return frameMapper({ track, item, entry, W, H, t, clip });
 }
 
 /** Path polyline for the preview overlay, in composition pixels (y down). */
-export function motionTrackPathPoints({ track, item, entry, W, H, every = 1 }) {
+export function motionTrackPathPoints({ track, item, entry, W, H, every = 1, clip = null }) {
   if (!track?.samples?.length) return [];
   const used = motionTrackUseSpan(track);
   if (!used) return [];
@@ -725,7 +729,7 @@ export function motionTrackPathPoints({ track, item, entry, W, H, every = 1 }) {
     // sample's real composition-time pose instead of freezing the entire route
     // through the layer's mid-clip transform.
     const t = sourceTimeToCompTime(item, entry, s[MT_T]);
-    const toFrame = frameMapper({ track, item, entry, W, H, t });
+    const toFrame = frameMapper({ track, item, entry, W, H, t, clip });
     const p = toFrame(s[MT_CX], s[MT_CY]);
     out.push({ x: p.x, y: p.y, conf: s[MT_CONF], t: s[MT_T] });
   };
@@ -749,7 +753,7 @@ export function motionTrackPathPoints({ track, item, entry, W, H, every = 1 }) {
  * `pose` overrides the stored samples — that is how the live box follows a run
  * in progress, before there is a track to sample.
  */
-export function motionTrackBoxAt({ track, item, entry, W, H, t, pose = null }) {
+export function motionTrackBoxAt({ track, item, entry, W, H, t, pose = null, clip = null }) {
   if (!track?.region) return null;
   let outOfSpan = false;
   const src = pose || (() => {
@@ -778,7 +782,7 @@ export function motionTrackBoxAt({ track, item, entry, W, H, t, pose = null }) {
   const cx = num(src.cx, 0.5) * A;
   const cy = num(src.cy, 0.5);
 
-  const toFrame = frameMapper({ track, item, entry, W, H, t });
+  const toFrame = frameMapper({ track, item, entry, W, H, t, clip });
   const corner = (sx, sy) => {
     const x = cx + (cos * (sx * hw) - sin * (sy * hh));
     const y = cy + (sin * (sx * hw) + cos * (sy * hh));
@@ -797,14 +801,15 @@ export function motionTrackBoxAt({ track, item, entry, W, H, t, pose = null }) {
 /** Composition-frame pixels (y down, origin top-left) → source uv, the exact
  *  inverse of frameMapper. This is what turns a drag on the canvas into a track
  *  correction: the pointer lives in frame px, the samples in source uv. */
-export function motionTrackFrameToSourceUv({ track, item, entry, W, H, t }, x, y) {
+export function motionTrackFrameToSourceUv({ track, item, entry, W, H, t, clip = null }, x, y) {
   const duration = num(entry?.endTime) - num(entry?.startTime);
   const progress = duration > 0 && Number.isFinite(t)
     ? clamp01((t - num(entry?.startTime)) / duration)
     : 0.5;
   const prs = localPrs(item, getItemKeyframeValues(item, progress), W, H);
-  const boxW = Math.abs(prs.sx) * W;
-  const boxH = Math.abs(prs.sy) * H;
+  const real = videoPlateScale(clip, W, H);
+  const boxW = Math.abs(prs.sx) * W * real;
+  const boxH = Math.abs(prs.sy) * H * real;
   const { kx, ky } = containScale(track, boxW, boxH);
   const phi = -prs.rz;
   const cos = Math.cos(phi);

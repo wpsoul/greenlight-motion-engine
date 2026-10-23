@@ -137,7 +137,7 @@ export async function createMotionEngine({ canvas, backend = null } = {}) {
       clipsMap, layoutMap,
       transitionSoundCues: memo('cues', [channels, clipsMap, layoutMap, s.transitionRegistryRevision],
         () => deriveTransitionSoundCues({ channels, clipsMap, layoutMap, transitionRegistryRevision: s.transitionRegistryRevision })),
-      parentIndex: memo('parentIndex', [channels, layoutMap], () => deriveParentIndex({ channels, layoutMap })),
+      parentIndex: memo('parentIndex', [channels, layoutMap, clipsMap], () => deriveParentIndex({ channels, layoutMap, clipsMap })),
       textFontLoadRequest: memo('fonts', [channels, clipsMap], () => deriveTextFontLoadRequest({ channels, clipsMap })),
       motionImageUrls: memo('motionImages', [channels, clipsMap], () => deriveMotionImageUrls({ channels, clipsMap })),
       backgroundUrls: memo('bgUrls', [background, videoWidth, videoHeight], () => deriveBackgroundUrls({ background, videoWidth, videoHeight })),

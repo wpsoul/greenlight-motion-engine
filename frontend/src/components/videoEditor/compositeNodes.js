@@ -26,8 +26,8 @@
 import * as THREE from 'three/webgpu';
 import {
   uniform, texture, uv, vec2, vec3, vec4, float, dot, mix, clamp, select, Fn, If, Discard,
-  Loop, Break, int, abs, fract, sin, cos, sqrt, step, smoothstep, distance, max as tslMax,
-  screenCoordinate, screenSize, exp,
+  Loop, Break, int, abs, fract, sin, cos, sqrt, step, smoothstep, distance, max as tslMax, min as tslMin,
+  screenCoordinate, screenSize, exp, log2,
 } from 'three/tsl';
 import { makeTslSampler } from './tslSampler.js';
 import { stableHash12 } from './tslStableHash.js';
@@ -411,6 +411,11 @@ export function createDepthCompositeNodeMaterial() {
      * occludes what.
      */
     uFallback: uniform(-1),
+    // One depth texel, for the silhouette-edge probe (see the GLSL).
+    uDepthTexel: uniform(new THREE.Vector2(1 / 1280, 1 / 720)),
+    // Opaque + transparent depth and which pixels this draw takes (see the GLSL).
+    uTDepth: makeSampler(true),
+    uPass: uniform(0),
     // See createOverBlitNodeMaterial — same premultiplied blend-mode identity.
     uBlendIdentity: uniform(new THREE.Vector3(0, 0, 0)),
   };
@@ -426,14 +431,43 @@ export function createDepthCompositeNodeMaterial() {
     const color = u.uColor.sample(uvn);
     // A transparent pixel must never become an invisible depth wall.
     Discard(color.a.lessThan(0.02));
-    Discard(u.uDepth.sample(uvn).r.greaterThanEqual(FAR_PLANE).and(u.uFallback.lessThan(0.0)));
+    // A card — a transparent surface where the pass has no opaque surface of its
+    // own: pass 2 only (see the GLSL).
+    const tdepth = u.uTDepth.sample(uvn).r;
+    const opaqueDepth = u.uDepth.sample(uvn).r;
+    const card = tdepth.lessThan(FAR_PLANE).and(opaqueDepth.greaterThanEqual(FAR_PLANE));
+    Discard(u.uPass.greaterThan(0.5).and(u.uPass.lessThan(1.5)).and(card));
+    Discard(u.uPass.greaterThan(1.5).and(card.not()));
+    Discard(u.uDepth.sample(uvn).r.greaterThanEqual(FAR_PLANE).and(u.uFallback.lessThan(0.0)).and(u.uPass.lessThan(1.5)));
     return vec4(color.rgb.add(u.uBlendIdentity.mul(float(1.0).sub(color.a))), color.a);
   })();
   // Survivors at the far plane are exactly the ones with a usable fallback, so
   // the select needs no second guard.
   material.depthNode = Fn(() => {
-    const rawDepth = u.uDepth.sample(uvn).r;
-    return select(rawDepth.greaterThanEqual(FAR_PLANE), u.uFallback, rawDepth);
+    /*
+     * Both depths are read HERE, unconditionally, before any select. A depth
+     * texture is read with textureLoad at its textureDimensions, and TSL emits
+     * that size into a variable once per texture, at its first use — this
+     * depth output is generated ahead of the fragment body. Read inside the
+     * select's branches, each size was assigned only on its own branch, and the
+     * fragment's card test then loaded the OTHER depth at texel (0, 0): pass 1
+     * saw no card anywhere and pass 2 saw a card everywhere, so a soft shadow
+     * card wrote depth (a black disc) and the solid body skipped it.
+     */
+    const rawDepth = u.uDepth.sample(uvn).r.toVar();
+    const tdepth = u.uTDepth.sample(uvn).r.toVar();
+    // An antialiased silhouette edge the depth resolve missed stands with the
+    // surface beside it; only true spill takes the fallback (see the GLSL). The
+    // probe is symmetric, so the flipped binding needs no offset correction.
+    const tx = vec2(u.uDepthTexel.x, 0.0);
+    const ty = vec2(0.0, u.uDepthTexel.y);
+    const edge = tslMin(
+      tslMin(u.uDepth.sample(uvn.add(tx)).r, u.uDepth.sample(uvn.sub(tx)).r),
+      tslMin(u.uDepth.sample(uvn.add(ty)).r, u.uDepth.sample(uvn.sub(ty)).r));
+    const missing = select(edge.lessThan(FAR_PLANE), edge, u.uFallback);
+    const opaque = select(rawDepth.greaterThanEqual(FAR_PLANE), missing, rawDepth);
+    // A card is nudged toward the camera like a decal (see the GLSL).
+    return select(u.uPass.greaterThan(1.5), tdepth.sub(float(1.0).sub(tdepth).mul(0.002)), opaque);
   })();
   material.transparent = true;
   // The isolated source texture is premultiplied by its coverage — the GLSL side
@@ -503,6 +537,35 @@ const GOLDEN_ANGLE = 2.39996323;
 const HIGHLIGHT_THRESHOLD = 0.72;
 const DOF_MAX_SAMPLES = 40;
 
+// GLSL `mod(abs(p), 2.0)` — the argument is non-negative, so floor-mod and
+// TSL's truncating `%` agree here and no glslMod helper is needed.
+const dofMirrorUv = (p) => {
+  const m = abs(p).mod(2.0);
+  return mix(m, vec2(2.0).sub(m), step(1.0, m));
+};
+
+// Straight-alpha highlight boost, re-premultiplied. Guarded on alpha because
+// dividing a fully transparent texel by its own alpha is where bloom picks up
+// the colour of pixels nobody can see. Shared by both DOF passes.
+const dofBoostedSample = (u) => (uvIn, lod) => {
+  const s = u.uTexture.sample(dofMirrorUv(uvIn)).level(lod).toVar();
+  const straight = s.rgb.div(tslMax(s.a, 0.00001));
+  const luma = dot(straight, vec3(0.2126, 0.7152, 0.0722));
+  const boost = float(1.0).add(tslMax(float(0.0), luma.sub(HIGHLIGHT_THRESHOLD)).mul(u.uHighlightGain));
+  const boosted = vec4(straight.mul(boost).mul(s.a), s.a);
+  return select(s.a.lessThanEqual(0.00001).or(u.uHighlightGain.lessThanEqual(0.00001)), s, boosted);
+};
+
+// The mip level of the spacing between taps when the source has mips (see the
+// GLSL tapLod): a wide gather reads thin detail prefiltered instead of aliased.
+const dofTapLod = (u, spacingPx) => select(u.uMipOn.greaterThan(0.5), log2(tslMax(float(1.0), spacingPx)), float(0.0));
+
+// How much of the circle of confusion survives at this fragment (focus area).
+const dofFocusFalloff = (u, fragXY) => select(
+  u.uFocusOuterPx.lessThanEqual(0.0), float(1.0),
+  smoothstep(u.uFocusInnerPx, u.uFocusOuterPx, distance(fragXY, u.uFocusPointPx)),
+);
+
 /**
  * Golden-angle spiral bokeh with a highlight boost and a focus hold-off.
  *
@@ -524,17 +587,12 @@ export function createCameraDofNodeMaterial() {
     uRadiusPx: uniform(0),
     uHighlightGain: uniform(0),
     uSamples: uniform(40),
+    uMipOn: uniform(0),
     uFocusPointPx: uniform(new THREE.Vector2(0, 0)),
     uFocusInnerPx: uniform(0),
     uFocusOuterPx: uniform(0),
   };
 
-  // GLSL `mod(abs(p), 2.0)` — the argument is non-negative, so floor-mod and
-  // TSL's truncating `%` agree here and no glslMod helper is needed.
-  const mirrorUv = (p) => {
-    const m = abs(p).mod(2.0);
-    return mix(m, vec2(2.0).sub(m), step(1.0, m));
-  };
   /*
    * The spiral's per-pixel rotation, transcribed from the GLSL exactly.
    *
@@ -553,17 +611,7 @@ export function createCameraDofNodeMaterial() {
   // The stable integer mix, matching cameraDof.js's GLSL exactly. See
   // tslStableHash.js for why the pixel index is the input.
   const hash12 = (p) => stableHash12(p);
-  // Straight-alpha highlight boost, re-premultiplied. Guarded on alpha because
-  // dividing a fully transparent texel by its own alpha is where bloom picks up
-  // the colour of pixels nobody can see.
-  const boostedSample = (uvIn) => {
-    const s = u.uTexture.sample(mirrorUv(uvIn)).toVar();
-    const straight = s.rgb.div(tslMax(s.a, 0.00001));
-    const luma = dot(straight, vec3(0.2126, 0.7152, 0.0722));
-    const boost = float(1.0).add(tslMax(float(0.0), luma.sub(HIGHLIGHT_THRESHOLD)).mul(u.uHighlightGain));
-    const boosted = vec4(straight.mul(boost).mul(s.a), s.a);
-    return select(s.a.lessThanEqual(0.00001).or(u.uHighlightGain.lessThanEqual(0.00001)), s, boosted);
-  };
+  const boostedSample = dofBoostedSample(u);
 
   const material = new THREE.MeshBasicNodeMaterial();
   material.fragmentNode = Fn(() => {
@@ -580,16 +628,14 @@ export function createCameraDofNodeMaterial() {
      */
     const fragXY = screenCoordinate.xy;
     // How much of this layer's circle of confusion survives here.
-    const falloff = select(
-      u.uFocusOuterPx.lessThanEqual(0.0), float(1.0),
-      smoothstep(u.uFocusInnerPx, u.uFocusOuterPx, distance(fragXY, u.uFocusPointPx)),
-    );
+    const falloff = dofFocusFalloff(u, fragXY);
     const radiusPx = u.uRadiusPx.mul(falloff).toVar();
     const out = vec4(0.0).toVar();
     If(radiusPx.lessThan(0.25), () => {
       out.assign(u.uTexture.sample(vUv));
     }).Else(() => {
-      const sum = boostedSample(vUv).toVar();
+      const lod = dofTapLod(u, radiusPx.mul(1.4).div(sqrt(tslMax(float(1.0), u.uSamples)))).toVar();
+      const sum = boostedSample(vUv, lod).toVar();
       const total = float(1.0).toVar();
       const rotation = hash12(fragXY).mul(6.2831853);
       Loop({ start: int(0), end: int(DOF_MAX_SAMPLES), type: 'int' }, ({ i }) => {
@@ -602,10 +648,138 @@ export function createCameraDofNodeMaterial() {
         // orientation because the two flips cancel. A visual +Y OFFSET does not:
         // WebGPU's render-target texture axis runs opposite to WebGL's here, so
         // negate only the offset while keeping the centre sample untouched.
-        sum.addAssign(boostedSample(vUv.add(vec2(offset.x, offset.y.negate()))));
+        sum.addAssign(boostedSample(vUv.add(vec2(offset.x, offset.y.negate())), lod));
         total.addAssign(1.0);
       });
       out.assign(sum.div(total));
+    });
+    return out;
+  })();
+  material.transparent = false;
+  material.blending = THREE.NoBlending;
+  return finish(material, u);
+}
+
+const DOF_SPREAD_MAX_SAMPLES = 20;
+
+/**
+ * Depth-aware DOF for a camera-baked 3D pass — the twin of cameraDof.js's
+ * createCameraDofDepthMaterial; read its header for the two gathers.
+ *
+ * Orientation: every tap reads colour and depth at the SAME coordinate, both
+ * plain. The colour arrives through plateToCameraAxis (a 3D pass's isolate is
+ * upright, so it is blitted once onto the camera axis first), which is exactly
+ * the orientation of the pass's depth attachment — createDepthCompositeNodeMaterial
+ * flips its depth only because it pairs it with the UPRIGHT isolate. The tap
+ * offset's Y is negated as in the layer pass.
+ */
+export function createCameraDofDepthNodeMaterial() {
+  const u = {
+    uTexture: makeSampler(),
+    uDepth: makeSampler(),
+    uResolution: uniform(new THREE.Vector2(1280, 720)),
+    uHighlightGain: uniform(0),
+    uSamples: uniform(40),
+    uSpreadSamples: uniform(20),
+    uMipOn: uniform(0),
+    uFocusPointPx: uniform(new THREE.Vector2(0, 0)),
+    uFocusInnerPx: uniform(0),
+    uFocusOuterPx: uniform(0),
+    uNear: uniform(1),
+    uFar: uniform(1000),
+    uFocusDistance: uniform(1000),
+    uCocScale: uniform(0),
+    uMaxCocPx: uniform(64),
+    uReachPx: uniform(0),
+    uSpreadPx: uniform(0),
+    uDepthTexel: uniform(new THREE.Vector2(1 / 1280, 1 / 720)),
+  };
+  const boostedSample = dofBoostedSample(u);
+  // View distance at a uv, or -1 where the pass drew nothing.
+  const viewDistanceAt = (uvIn) => {
+    const d = u.uDepth.sample(uvIn).r;
+    return select(d.greaterThanEqual(FAR_PLANE), float(-1.0),
+      u.uNear.mul(u.uFar).div(u.uFar.sub(d.mul(u.uFar.sub(u.uNear)))));
+  };
+  // modelDof.cocAtDistance, in target px.
+  const cocOf = (dist) => tslMin(u.uMaxCocPx, u.uCocScale.mul(abs(u.uFocusDistance.sub(dist))).div(tslMax(dist, 1.0)));
+  const tapAt = (vUv, angle, radius) => {
+    const offset = vec2(cos(angle), sin(angle)).mul(radius).div(u.uResolution);
+    return vUv.add(vec2(offset.x, offset.y.negate()));
+  };
+
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.fragmentNode = Fn(() => {
+    const vUv = uv();
+    const fragXY = screenCoordinate.xy;
+    const falloff = dofFocusFalloff(u, fragXY);
+    const centerRaw = viewDistanceAt(vUv).toVar();
+    // An antialiased silhouette edge belongs to the surface beside it (see the GLSL).
+    If(centerRaw.lessThan(0.0).and(u.uTexture.sample(vUv).a.greaterThan(0.004)), () => {
+      const tx = vec2(u.uDepthTexel.x, 0.0);
+      const ty = vec2(0.0, u.uDepthTexel.y);
+      centerRaw.assign(tslMax(
+        tslMax(viewDistanceAt(vUv.add(tx)), viewDistanceAt(vUv.sub(tx))),
+        tslMax(viewDistanceAt(vUv.add(ty)), viewDistanceAt(vUv.sub(ty)))));
+    });
+    const centerEmpty = centerRaw.lessThan(0.0);
+    const centerDist = select(centerEmpty, float(1e30), centerRaw).toVar();
+    // An empty pixel has nothing of its own to blur: it only receives what blurred
+    // surfaces scatter onto it, out to the pass's largest CoC (see the GLSL).
+    const cc = select(centerEmpty, float(0.0), cocOf(centerRaw).mul(falloff)).toVar();
+    const spread = select(centerEmpty, u.uReachPx, u.uSpreadPx).mul(falloff).toVar();
+    const out = vec4(0.0).toVar();
+    If(cc.lessThan(0.25).and(spread.lessThan(0.25)), () => {
+      out.assign(u.uTexture.sample(vUv));
+    }).Else(() => {
+      const rotation = stableHash12(fragXY).mul(6.2831853).toVar();
+      const lodOwn = dofTapLod(u, cc.mul(1.4).div(sqrt(tslMax(float(1.0), u.uSamples)))).toVar();
+      const sum = boostedSample(vUv, lodOwn).toVar();
+      const total = float(1.0).toVar();
+      If(cc.greaterThanEqual(0.25), () => {
+        Loop({ start: int(0), end: int(DOF_MAX_SAMPLES), type: 'int' }, ({ i }) => {
+          If(float(i).greaterThanEqual(u.uSamples), () => { Break(); });
+          const fi = float(i).add(0.5);
+          const radius = sqrt(fi.div(tslMax(float(1.0), u.uSamples))).mul(cc);
+          const tapUv = tapAt(vUv, fi.mul(GOLDEN_ANGLE).add(rotation), radius);
+          const tapRaw = viewDistanceAt(dofMirrorUv(tapUv));
+          const tapOwn = select(tapRaw.lessThan(0.0), cc, cocOf(tapRaw).mul(falloff));
+          // A tap behind this pixel may blur no further over it than it blurs itself.
+          const tapCoc = select(tapRaw.greaterThan(centerDist), tslMin(tapOwn, cc), tapOwn);
+          const w = smoothstep(radius.sub(1.0), radius, tapCoc);
+          // An empty tap is read unfiltered: transparency, not its neighbours' colour.
+          sum.addAssign(boostedSample(tapUv, select(tapRaw.lessThan(0.0), float(0.0), lodOwn)).mul(w));
+          total.addAssign(w);
+        });
+      });
+      const own = sum.div(total).toVar();
+      out.assign(own);
+      If(spread.greaterThan(cc.add(0.25)), () => {
+        const fg = vec4(0.0).toVar();
+        const cover = float(0.0).toVar();
+        const n = tslMax(float(1.0), u.uSpreadSamples);
+        const span = spread.sub(cc);
+        const lodSpread = dofTapLod(u, span.div(n).mul(1.4)).toVar();
+        Loop({ start: int(0), end: int(DOF_SPREAD_MAX_SAMPLES), type: 'int' }, ({ i }) => {
+          If(float(i).greaterThanEqual(u.uSpreadSamples), () => { Break(); });
+          const fj = float(i).add(0.5);
+          // Evenly spaced radii outside the own disk (see the GLSL).
+          const radius = cc.add(span.mul(fj).div(n));
+          const tapUv = tapAt(vUv, fj.mul(GOLDEN_ANGLE).add(rotation).add(1.0), radius);
+          const tapRaw = viewDistanceAt(dofMirrorUv(tapUv));
+          const tapCoc = cocOf(tapRaw).mul(falloff);
+          // Only a NEARER surface whose (non-trivial) blur reaches here.
+          const reaches = tapRaw.greaterThanEqual(0.0).and(tapRaw.lessThan(centerDist)).and(tapCoc.greaterThanEqual(2.0));
+          const w = select(reaches, smoothstep(radius.sub(1.0), radius, tapCoc), float(0.0));
+          // Its ring's area over its blur disk, capped so one tap never decides alone.
+          const c = tslMin(float(0.5), w.mul(2.0).mul(radius).mul(span).div(n.mul(tslMax(tapCoc.mul(tapCoc), 1.0))));
+          fg.addAssign(boostedSample(tapUv, lodSpread).mul(c));
+          cover.addAssign(c);
+        });
+        If(cover.greaterThan(0.0), () => {
+          out.assign(mix(own, fg.div(cover), tslMin(cover, 1.0)));
+        });
+      });
     });
     return out;
   })();

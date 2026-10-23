@@ -5,7 +5,7 @@
   "description": "The GreenLight Motion Engine source. `npm run build` writes the bundle into ../motion-engine/dist.",
   "license": "Apache-2.0",
   "scripts": {
-    "build": "vite build --config vite.motion-engine.config.js && node ../motion-engine/scripts/third-party.mjs"
+    "build": "vite build --config vite.motion-engine.config.js && node ../motion-engine/scripts/build-script.mjs --out ../motion-engine/dist/greenlight-motion-script.mjs && node ../motion-engine/scripts/third-party.mjs"
   },
   "dependencies": {
     "@babel/runtime": "7.28.6",

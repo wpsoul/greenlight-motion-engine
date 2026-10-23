@@ -1294,7 +1294,13 @@ export function applyFilterUniforms(mat, item, keyframeProps, options = {}) {
 
   let opacity = Number.isFinite(item?.opacity) ? item.opacity / 100 : 1;
   if (Number.isFinite(keyframeProps?.opacity)) opacity *= keyframeProps.opacity;
-  u.uOpacity.value = opacity;
+  // Opacity scales COVERAGE, so it stops at 1 — the same clamp the adjustment
+  // material below applies. Unclamped, an opacity track above 1 (the track takes
+  // 0–2, and an API-written track holding 100 meant "100 %") multiplies every
+  // soft alpha by that factor: a VP9-alpha cut-out's feathered glow went fully
+  // opaque out to its blocky near-zero tail, a hard stair-stepped halo in the
+  // preview and the render alike (V2.8 clover bulb, 2026-10-21).
+  u.uOpacity.value = Math.max(0, Math.min(1, opacity));
 
   // `cc:` tracks (any number of the correction can be keyframed) merge over the
   // static object for this frame; with none, the object passes through unchanged.
@@ -1995,6 +2001,15 @@ export function createDepthCompositeMaterial() {
       // plane they spilled from — anything else makes an effect change what occludes
       // what.
       uFallback: { value: -1 },
+      // One depth texel, for the silhouette-edge probe below.
+      uDepthTexel: { value: new THREE.Vector2(1 / 1280, 1 / 720) },
+      // A 3D pass's opaque + transparent depth (model3dLayer renderTransparentDepth).
+      // uPass 0: every pixel, as always. 1: all but the cards (a transparent surface
+      // with no opaque surface of the pass behind it). 2: only those, at their own
+      // depth — written only while the stack under the 3D layers is still transparent
+      // (see compositeWithDepth and cardsWriteDepth).
+      uTDepth: { value: null },
+      uPass: { value: 0 },
       // Blend-mode identity for the premultiplied source — see overBlitFragmentShader.
       uBlendIdentity: { value: new THREE.Vector3(0, 0, 0) },
     },
@@ -2010,6 +2025,9 @@ precision highp float;
 uniform sampler2D uColor;
 uniform sampler2D uDepth;
 uniform float uFallback;
+uniform vec2 uDepthTexel;
+uniform sampler2D uTDepth;
+uniform float uPass;
 uniform vec3 uBlendIdentity;
 in vec2 vUv;
 out vec4 fragColor;
@@ -2018,9 +2036,36 @@ void main() {
   // Transparent pixels must never become an invisible depth wall.
   if (color.a < 0.02) discard;
   float depth = texture(uDepth, vUv).r;
+  if (uPass > 0.5) {
+    // A CARD: a transparent surface where the pass has no opaque surface of its own
+    // (a soft contact shadow on the page, a glass pane over nothing). It composites at
+    // its own depth, in pass 2. A transparent surface over the pass's own opaque one
+    // (stacked image planes, a tint over a wall) is NOT a card: the model pass already
+    // blended it over that surface, and the pixel stands at the opaque depth like any
+    // other — as a card it lost that depth, and a layer composited after it (a page
+    // behind) painted over the whole stack.
+    float tdepth = texture(uTDepth, vUv).r;
+    bool card = tdepth < 0.999999 && depth >= 0.999999;
+    if (uPass < 1.5 && card) discard;
+    if (uPass > 1.5) {
+      if (!card) discard;
+      // Nudged ~0.2 % of its distance toward the camera, as a decal is: a card lies
+      // ON a surface (a contact shadow on the page) and coplanar it would z-fight.
+      gl_FragDepth = tdepth - (1.0 - tdepth) * 0.002;
+      fragColor = vec4(color.rgb + uBlendIdentity * (1.0 - color.a), color.a);
+      return;
+    }
+  }
   if (depth >= 0.999999) {
     if (uFallback < 0.0) discard;
-    depth = uFallback;
+    // A pixel that keeps colour where the pass wrote no depth is either spill (a
+    // glow, a defocus blur: the fallback) or an antialiased silhouette edge the
+    // depth resolve missed — that one stands with the surface beside it, or a sharp
+    // edge drawn at the fallback would show through whatever is in front of it.
+    float edge = min(
+      min(texture(uDepth, vUv + vec2(uDepthTexel.x, 0.0)).r, texture(uDepth, vUv - vec2(uDepthTexel.x, 0.0)).r),
+      min(texture(uDepth, vUv + vec2(0.0, uDepthTexel.y)).r, texture(uDepth, vUv - vec2(0.0, uDepthTexel.y)).r));
+    depth = edge < 0.999999 ? edge : uFallback;
   }
   gl_FragDepth = depth;
   fragColor = vec4(color.rgb + uBlendIdentity * (1.0 - color.a), color.a);

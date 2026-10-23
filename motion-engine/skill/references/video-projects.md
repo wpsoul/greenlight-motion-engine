@@ -29,7 +29,7 @@
 | You are making one version of a project for Variants (your copy, the scope, `ready`) | [video-variants.md](video-variants.md) |
 | AI Viral Edits (kinetic words around a layer's subject) and sequences with an Essential panel (`clip.essential`) | the `viral-edits` workflow on the `greenlight` MCP server ([SKILL.md](../SKILL.md#ai-workflows-the-greenlight-mcp-server)); `essential` below |
 
-In this file: Editing and verification · Video Projects (list, get, create, update, collaborative boards, refresh revision, activate, delete, build from clips) · Editor `data` shape · Sequence clips · Video presets (and project export / import bundles, GreenLight Motion pages) · Interface scenes.
+In this file: Editing and verification · Text animation pace · Video Projects (list, get, card, create, update, collaborative boards, refresh revision, activate, delete, build from clips) · Editor `data` shape · Sequence clips · Video presets (and project export / import bundles, GreenLight Motion pages) · Interface scenes.
 
 Use `GET /api/video-editor/capabilities` for the installed build's effect and transition ids, fields, ranges and render support. Read the relevant subtree instead of copying a catalog into the prompt. For custom MotionFast authoring, use [the authoring skill](../../motionfast-templates/SKILL.md).
 
@@ -41,6 +41,17 @@ Use `GET /api/video-editor/capabilities` for the installed build's effect and tr
 4. GET again to verify the saved structure. For visible changes, use a composited still or a short full render from [video-rendering.md](video-rendering.md) to check the result: a successful save alone does not prove an effect or track renders.
 5. Keep all media used by the project, including nested sequences and effect assets, even when it has no canvas card. Follow [media cleanup](media.md#clean-up-helper--intermediate-media-do-this-at-the-end-of-a-task).
 
+## Text animation pace
+
+By default, text that animates in, animates out or gets a one-time pass (a sweep, a highlight, a typed line) takes **at least 0.8–1 s**, counted from the moment its first unit starts to the moment its last unit settles. Faster than that, the words flash past before anyone can read them. The rule holds however the motion is built:
+
+- **Advanced Animations on Time** (`textAnimators[].range.drive: "time"`): the span is `(units − 1) × stagger + duration`. For example, 4 words with `stagger` 0.06 and `duration` 0.8 take 0.98 s. For moves (rise, slide, scale, rotate, blur), reach the span with `duration`, because a long `stagger` makes a long line crawl. A typewriter (`duration` 0) gets its pace from `stagger`.
+- **Keyframes** (`txa:` range tracks such as Start or Offset, or a text layer's own position, scale and opacity tracks): the first and last key of one move sit at least 0.8 s apart. Key positions are % of the layer, so a move from `p1` to `p2` lasts `(p2 − p1) / 100 × layer seconds`.
+- **Layer entrances and exits** on a text layer: `transitionInDuration` / `transitionOutDuration` of 0.8 or more.
+- **Recipes** from [video-text-kinetic.md](video-text-kinetic.md) and [video-text-presets.md](video-text-presets.md) keep their tuned timing. On very short text (one or two words), where the span works out under 0.8 s, raise `duration` until it reaches 0.8 s.
+
+Go faster only when the edit really needs it: the user asks for snappy or fast text, a word hits on a beat or a fast cut, a glitch or scramble flicks, the layer is too short to fit a 0.8 s move, or the animator uses `drive: "voice"` (the speech sets the pace there).
+
 ## Video Projects (per board)
 
 A "video project" is a saved video-editor session inside a board.
@@ -48,11 +59,13 @@ A "video project" is a saved video-editor session inside a board.
 ### List video projects
 
 ```
-GET /api/moodboards/{board_id}/video-projects[?data=active]
+GET /api/moodboards/{board_id}/video-projects[?data=active|none]
 → { "projects": [{ "id", "name", "data", "updated_at", "summary", "preview", ... }], "active_project_id?" }
+GET /api/video-projects/counts
+→ { "counts": { "<board id>": <number of projects>, … } }   (boards without projects are left out)
 ```
 
-`?data=active` leaves out every payload except the open project's (`data: null`, `has_data: false`), so it is the cheap way to survey a board: each project still carries `summary`, which answers "how long is it, how big, how busy" without downloading timelines. The single-project GET / POST / PUT answers carry both fields too. Both are derived and read-only — never send them back.
+`?data=active` leaves out every payload except the open project's (`data: null`, `has_data: false`) and `?data=none` leaves out all of them, so they are the cheap ways to survey a board: each project still carries `summary`, which answers "how long is it, how big, how busy" without downloading timelines. The single-project GET / POST / PUT answers carry both fields too. Both are derived and read-only — never send them back.
 
 - `summary`: `{duration, width, height, layers, clips, markers, background, media}` — timeline length in seconds (speed curves approximated), canvas size, channels that hold items, item count, marker count, the solid background colour (or null), and the first picture on the timeline.
 - `preview`: null, or any of `thumbnail` + `thumbnailVersion` (a ~480 px frame of the project as it was last left after changes, and the project version it shows) and `frames` + `framesDuration` + `framesAt` (one JPEG strip of five frames side by side, cut from the last full-project render at `framesAt[i] × framesDuration` seconds). The URLs live under the board's `.project-previews/`.
@@ -63,12 +76,23 @@ GET /api/moodboards/{board_id}/video-projects[?data=active]
 GET /api/moodboards/{board_id}/video-projects/{project_id}
 ```
 
+### Project card (what a canvas card shows)
+
+```
+GET /api/moodboards/{board_id}/video-projects/{project_id}/card
+→ { "id", "board_id", "board_name", "name", "version", "updated_at", "summary", "preview" }   404 once removed
+```
+
+The project without its payload, plus its board's name: what a `video-project` canvas card shows ([elements.md](elements.md#video-editor-project-cards-a-video-project-on-any-board)). Use it to check that a board/project pair exists before making a card.
+
 ### Create video project
 
 ```
 POST /api/moodboards/{board_id}/video-projects
-{ "name": "Cut 01", "data": { ... } }
+{ "name": "Cut 01", "data": { ... }, "activate?": true }
 ```
+
+A new project becomes the board's open one (the Video Editor opens it next). Send `"activate": false` when the project is for later, e.g. behind a canvas card, so the user's editor keeps the project it has.
 
 ### Update video project
 
@@ -210,6 +234,10 @@ If you need to build the editor state by hand instead of using `/from-clips`, th
 
 **Layer titles.** Optional `"customName"` on any timeline item — the display title drawn on the clip in the timeline (and in the inspector's selected-layer header) in place of the clip/media name. Trimmed string, max 120 chars; empty or missing falls back to the default (the clip's `name`, or the text content for text layers). Set it whenever you build or edit a timeline so layers are self-describing — `"Intro logo"`, `"CTA caption"`, `"BG loop"` — instead of raw filenames; users can also rename in-app via the pencil beside the selected-layer title in the inspector panel. Display-only: no render path reads it.
 
+**Videos and photos draw at their real size.** A `video` clip (like a bitmap `image`) keeps its own aspect ratio and never gets bars: larger than the composition, it is shrunk to fit; smaller than the composition on both axes, it keeps its pixel size. A 1280×720 clip in a 1920×1080 project covers 1280×720 at `zoom: 1` (set `zoom: 1.5` to fill the frame), and a 1080×1920 clip in a 16:9 project is a centred portrait picture. Whatever the picture does not cover shows the layers below, or the project background.
+
+**Fit screen.** To make a video or image layer's whole picture fit the frame, call `POST /api/moodboards/{board_id}/video-projects/{project_id}/fit-screen` with `{"itemId": "<item id>"}` (the item can be inside a sequence) — the editor's **Fit screen** command (⌘K). It reads the media's real size on the server and saves the project: `zoom` becomes the fitting Scale (`max(1, min(compW/mediaW, compH/mediaH))` for a video or photo, `min(compW/w, compH/h)` of the declared size for an SVG), `scaleX`/`scaleY` become 1 and `panX`/`panY` 0. Rotation and keyframes are kept; `scale` keyframes multiply the new `zoom`. Answer: `{itemId, zoom, mediaWidth, mediaHeight, frame, version}`. 400 for a layer that is not a video or image, 422 when the media size cannot be read.
+
 **SVG clips are vector layers.** An `mediaType: "image"` clip whose `url` ends in `.svg` (or is an `image/svg+xml` data url) is **not** letterbox-fitted to the frame like a bitmap: it is laid out at the size the document itself declares (`width`/`height`, else the `viewBox`, else 300×150 by CSS default sizing) and re-rasterized at whatever resolution it ends up covering, so it stays sharp under any `zoom` or camera push-in. Consequences when authoring: a 200×80 logo occupies 200×80 composition px at `zoom: 1` — set `zoom` (or scale keyframes) to size it, never assume it fills the frame; artwork larger than the composition overflows it. Everything else is an ordinary image clip (filters, transitions, effects, keyframes). An SVG loaded this way cannot reach external resources — fonts must be outlined and images embedded, the same restriction any `<img>`\-loaded SVG has.
 
 **Animated image clips (GIF, animated WebP, APNG).** An `mediaType: "image"` clip whose `url` is an animated GIF, animated WebP or APNG plays as a moving picture instead of freezing on its first frame. Which frame shows is a pure function of the item's clip-local time, so preview and every render agree, and it is resolved from the file's own per-frame delays rather than an assumed frame rate — a file built around one long hold frame plays at the rate it was authored at. Two optional fields on the **item** control playback: `"gifLoopMode"` — `"loop"` (default, restart at the end), `"hold"` (freeze on the last frame) or `"pingpong"` (forwards then backwards) — and `"gifSpeed"`, a playback multiplier from 0.1 to 10, default 1, which changes only how fast the animation runs inside the clip and never the clip's length on the timeline. Both are dropped from the persisted JSON at their defaults, and a value outside those ranges is clamped on load. Set the clip `duration` (and the item's `trimEnd`) to the file's loop length for exactly one play-through — a longer span loops, a shorter one cuts — and `trimStart` offsets where the animation starts. Everything else is an ordinary image clip: plate sizing, filters, transitions, masks, effects and keyframes are unchanged, and still images are unaffected. **`/render-onserver` and `/render-still` bake the animation; the fast `/render` cannot ingest an animated file at all** (its ffmpeg image input assumes a still and errors on one), so send any timeline holding one to `/render-onserver`.
@@ -337,9 +365,15 @@ POST /api/moodboards/{board_id}/video-projects/{project_id}/export-light
        "modelFiles?": { "<preset id>": "<the URL the app serves its .glb at>" }, "pack?": false }
      → { folder, index, packed: { path, bytes } | null, files, bytes, missing, leftOut, fields }
 POST /api/moodboards/{board_id}/video-projects/import-light
-     { "path": "/abs/folder | …/index.html | a one-file page.html", "activate?": true }
+     { "path": "/abs/folder | …/index.html | a one-file page.html | a .glvideo file", "activate?": true }
      → the new project (like POST video-projects) + { copied }
+GET  /api/moodboards/{board_id}/video-projects/{project_id}/glvideo
+     → <name>.glvideo (answers once the whole file is written)
 ```
+
+- A `.glvideo` is the same project folder in one stored zip: `glvideo.json` (`{format: "glvideo", version: 1, title}`),
+  `project.json`, `assets/media/<rel>` and `assets/hdr/`. It is the file to hand a project to another GreenLight Dash:
+  `import-light` with its path opens it there as a new project.
 
 - `template.fields[]` = `{ key, label, type: text|color|image|number|select|toggle, targets: [{ itemId | clipId | (neither = project), path }] }`
   — e.g. `{ "key": "headline", "label": "Headline", "type": "text", "targets": [{ "itemId": "<item id>", "path": "textContent" }] }`,

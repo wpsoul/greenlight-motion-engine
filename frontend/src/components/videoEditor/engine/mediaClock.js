@@ -13,7 +13,7 @@ import { applyMute, isWebKitEngine, learnStartLag, parkAudio, startPlayingAudio,
 import { countLoadingPerfVideos, perfRegistry } from '../perfRegistry.js';
 import { ensurePreviewAudio } from '../previewAudioMedia.js';
 import { preloadForPreviewBuffer } from '../previewDeviceTier.js';
-import { getPreviewVideoSeekPolicy } from '../previewMediaLifecycle';
+import { getPreviewVideoSeekPolicy, resolveRateTrim, resolveStartAlignment } from '../previewMediaLifecycle';
 import { getTimelineEndTime, getTimelineLayout } from '../speedUtils';
 import { isContainerClip, SEQUENCE_MAX_DEPTH } from '../types';
 import { syncChannelStates } from './channelStates';
@@ -22,6 +22,75 @@ import { calculateVideoTime } from './layerHelpers';
 import { ensureVideoFrameLoop as ensureVideoFrameLoopInEngine, getClipPlaybackUrl, normalizeUrl, queueTextureDisposal as queueTextureDisposalInEngine, recordPresentedMediaTime as recordPresentedMediaTimeInEngine } from './mediaTextures';
 import { mediaActivation, PREVIEW_TIER } from './previewMedia';
 import { JUMP_HOLD, SEEKED_FRAME_GRACE_MS, mapSourceToTimeline } from './mediaHelpers';
+
+// Buffers that already took their one start-alignment seek (resolveStartAlignment):
+// cleared when the buffer starts or changes source.
+const startRealigned = new WeakSet();
+
+// CATCH-UP (resolveRateTrim). Per video: { err, factor, nominal } — `err` its smoothed
+// offset from its target in timeline seconds (currentTime against the clock). Per
+// engine: the reference, the median offset of every video synced in the previous
+// frame. They all read currentTime a frame stale, so a lag they share is not an error,
+// and a video with no other video playing is never trimmed. Measured on screen (a frame
+// counter in both layers): an alpha WebM cut-out over the copy of its shot inside a
+// sequence showed its frames one late on every frame of the shot; with the trim, on
+// none from ~0.3 s after the cut. (Steering by the frames rVFC reports as presented
+// instead was slower: those reports move in whole display refreshes.)
+const rateTrims = new WeakMap();
+const trimReferences = new WeakMap();
+
+// The playbackRate factor a catch-up holds on `video` (1 = none): renderChannel's own
+// rate check compares against speed × this, so it does not undo the trim.
+export function playbackRateTrim(video) {
+  return rateTrims.get(video)?.factor || 1;
+}
+
+function endRateTrim(video, nominal) {
+  const st = rateTrims.get(video);
+  if (!st) return;
+  rateTrims.delete(video);
+  const rate = nominal > 0 ? nominal : st.nominal;
+  if (st.factor !== 1 && rate > 0) video.playbackRate = rate;
+}
+
+function trimReferenceFor(engine) {
+  let ref = trimReferences.get(engine);
+  if (!ref) {
+    ref = { stamp: null, errs: [], median: null };
+    trimReferences.set(engine, ref);
+  }
+  if (ref.stamp !== engine.sequenceFrameStamp) {
+    const errs = ref.errs.sort((a, b) => a - b);
+    const n = errs.length;
+    ref.median = n >= 2 ? (n % 2 ? errs[n >> 1] : (errs[n / 2 - 1] + errs[n / 2]) / 2) : null;
+    ref.errs = [];
+    ref.stamp = engine.sequenceFrameStamp;
+  }
+  return ref;
+}
+
+function updateRateTrim(engine, env, video, nominal, targetTime) {
+  const ref = trimReferenceFor(engine);
+  const raw = (video.currentTime - targetTime) / nominal;
+  const st = rateTrims.get(video) || { err: raw, factor: 1, nominal };
+  st.err += (raw - st.err) * 0.3;
+  st.nominal = nominal;
+  rateTrims.set(video, st);
+  ref.errs.push(st.err);
+  // A sound would bend with the rate (preservesPitch is off): only silent videos are
+  // trimmed — muted, or a file with no audio (Chromium: video decoded, no audio bytes).
+  const silent = video.muted || video.volume === 0
+    || (video.webkitAudioDecodedByteCount === 0 && video.webkitVideoDecodedByteCount > 200000);
+  const factor = silent && ref.median !== null
+    ? resolveRateTrim({ excess: st.err - ref.median, fps: env.projectFps, trimming: st.factor !== 1 })
+    : 1;
+  if (factor !== st.factor) {
+    st.factor = factor;
+    video.playbackRate = nominal * factor;
+  } else if (factor !== 1 && Math.abs(video.playbackRate - nominal * factor) > 0.002) {
+    video.playbackRate = nominal * factor; // a speed ramp moved the nominal rate
+  }
+}
 
 export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
   const clipSource = getClipPlaybackUrl(clip);
@@ -90,20 +159,15 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
         });
       }, { once: true });
     }
+    // No play() at 'canplay': by then the clock has moved on from the position
+    // asked for at load time (a load takes 60–300 ms), and a buffer started there
+    // stays that far behind. The render 'canplay' triggers runs syncVideo, which
+    // starts it aligned to the clock (start alignment below).
     video.addEventListener('loadeddata', triggerRender, { once: true });
     video.addEventListener('canplay', triggerRender, { once: true });
     video.addEventListener('error', triggerRender, { once: true });
-    if (env.isPlaying && allowPlayback) {
-      video.addEventListener('canplay', () => {
-        if (!isCurrentSourceLoad()) return;
-        // JUMP_HOLD tier: never start from the position asked for at load time —
-        // by now the clock has moved on (a load takes 150+ ms). syncVideo starts
-        // it on the next frame, aligned to the clock (start alignment below).
-        if (JUMP_HOLD) return;
-        video.play().catch(() => {});
-        ensureVideoFrameLoopInEngine(engine, video); // frame-accurate texture updates while playing
-      }, { once: true });
-    }
+    startRealigned.delete(video);
+    endRateTrim(video);
     video.load();
     changedSource = true;
     engine.pendingSeek.delete(video);
@@ -151,18 +215,29 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
   // the seek below through the cooldown + stall-lead path.
   const webkitPlaying = isWebKitEngine && env.isPlaying && allowPlayback && !video.paused && !video.seeking;
   const earlyCorrection = webkitPlaying && learnStartLag(video, video.currentTime - clampedTargetTime);
-  // JUMP_HOLD tier — START ALIGNMENT. A paused buffer about to start while the
-  // project plays (after a jump, after a fresh load, on Play) must start ON the
-  // clock: a WebKit buffer started behind stays behind (drift under 1 s is left
-  // alone there). Up to 0.1 s behind (a frame or three at a cut) it just starts;
-  // up to 0.4 s AHEAD it stays paused until the clock reaches its frame; anywhere
-  // else it is seeked 0.12 s ahead — a paused seek lands in 40–90 ms — and waits.
+  // START ALIGNMENT (resolveStartAlignment). A paused buffer about to start while
+  // the project plays (after a jump, after a fresh load, on Play, at a cut) must
+  // start ON the clock: started behind, it stays behind. Close enough it just
+  // starts; AHEAD it stays paused until the clock reaches its frame; anywhere
+  // else it is seeked a lead past the clock and waits there.
   let startAlign = null;
-  if (JUMP_HOLD && env.isPlaying && allowPlayback && video.paused && !video.seeking
+  let startLead = 0;
+  if (env.isPlaying && allowPlayback && video.paused && !video.seeking
     && !engine.jumpHold.active && video.readyState >= 1 && !changedSource) {
-    const ahead = video.currentTime - clampedTargetTime;
-    startAlign = ahead >= -0.1 && ahead <= 0.03 ? 'go' : ahead > 0.03 && ahead <= 0.4 ? 'wait' : 'seek';
+    const decision = resolveStartAlignment({
+      ahead: video.currentTime - clampedTargetTime,
+      rate: video.playbackRate,
+      fps: env.projectFps,
+      jumpHold: JUMP_HOLD,
+      realigned: startRealigned.has(video),
+    });
+    startAlign = decision.align;
+    startLead = decision.lead;
   }
+  // Off the touch tier the alignment owns a paused start outright: a buffer it
+  // lets go (or holds) is not re-seeked to the bare clock by the ordinary
+  // threshold — that seek would land behind it again.
+  const alignOwnsStart = !JUMP_HOLD && (startAlign === 'go' || startAlign === 'wait');
 
   // If a previous seek is still pending, avoid issuing another one unless drift is large.
   const hasPendingSeek = engine.pendingSeek.has(video);
@@ -181,12 +256,13 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
     }
   }
 
-  if (seekDelta > seekThreshold || earlyCorrection || startAlign === 'seek') {
+  if ((seekDelta > seekThreshold && !alignOwnsStart) || earlyCorrection || startAlign === 'seek') {
     // A playing WebKit buffer: at most one seek per cooldown, aimed ahead so the
     // picture lands on the clock once the ~0.4 s post-seek stall ends.
     let seekTo = clampedTargetTime;
     if (startAlign === 'seek') {
-      seekTo = hasKnownDuration ? Math.min(clampedTargetTime + 0.12, Math.max(clampedTargetTime, video.duration - 0.05)) : clampedTargetTime + 0.12;
+      seekTo = hasKnownDuration ? Math.min(clampedTargetTime + startLead, Math.max(clampedTargetTime, video.duration - 0.05)) : clampedTargetTime + startLead;
+      startRealigned.add(video);
     } else if (webkitPlaying) {
       seekTo = webkitPlayingSeekTarget(video, clampedTargetTime, hasKnownDuration ? Math.max(clampedTargetTime, video.duration - 0.05) : clampedTargetTime + 0.4);
       if (seekTo === null) return false;
@@ -199,6 +275,7 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
     // hard-cut preloader upload the newly-decoded target even when source,
     // texture identity, and trim-in frame are otherwise unchanged.
     engine.preparedVideoTexturePrime.delete(video);
+    endRateTrim(video, options.rate);
 
     try {
       video.currentTime = seekTo;
@@ -281,8 +358,23 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
   if (env.isPlaying && allowPlayback && video.readyState >= 2 && !video.seeking) {
     // Play if needed AND (re)arm the frame loop every sync — this is what keeps a
     // just-activated, previously-preloaded clip from freezing on its first frame.
-    if (video.paused && !engine.jumpHold.active && startAlign !== 'wait') video.play().catch(() => {});
+    if (video.paused && !engine.jumpHold.active && startAlign !== 'wait') {
+      startRealigned.delete(video);
+      video.play().catch(() => {});
+    }
     ensureVideoFrameLoopInEngine(engine, video);
+  }
+  // Catch-up: a video that has been playing (not one starting this frame) is
+  // trimmed toward the others. `options.rate` is the clip's own speed — only the
+  // playing buffers renderChannel drives pass it. Not on WebKit, where every rate
+  // change silences the element for ~0.4 s.
+  const nominalRate = Number(options.rate);
+  if (!isWebKitEngine && nominalRate > 0 && env.isPlaying && allowPlayback && startAlign === null
+    && !video.paused && !video.seeking && video.readyState >= 2 && !changedSource
+    && hasKnownDuration && clampedTargetTime < video.duration - 0.1) {
+    updateRateTrim(engine, env, video, nominalRate, clampedTargetTime);
+  } else if (rateTrims.has(video)) {
+    endRateTrim(video, nominalRate);
   }
   if (inTightSync && seekDelta <= seekThreshold) {
     engine.tightSyncUntil.delete(video);

@@ -17,6 +17,7 @@ import { RIG_MEDIA_TYPE } from '../rig3d';
 import { SHAPE_PATH_KF_KEY, isStrokeShape, resolveLineSettings, withShapeSizeKeyframes } from '../shapePath';
 import { isGridClip } from '../types';
 import { getShapeTextureLayout } from './pathFx';
+import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 
 // Position/Rotation/Scale for one layer, base fields composed with its keyframed
 // PRS — and, when the layer is parented, with its parent's effective PRS resolved
@@ -35,7 +36,11 @@ export function applyMeshTransform(mesh, item, keyframeProps, W, H, parentXform 
   // every translation and rotation twice.
   // Same for the Rig clip: the cyclorama is posed by the rig's own x/y/z + rotation
   // inside that pass, so the plate it comes back on stays at frame identity.
-  if (clip?.mediaType === 'model3d' || clip?.mediaType === RIG_MEDIA_TYPE) {
+  // And for a particle layer: its Solver Box is posed at the layer's PRS and filmed
+  // through the project camera inside renderParticleLayer. Posing the plate too put
+  // every particle at twice the layer's offset, which under a travelling camera is
+  // off screen.
+  if (clip?.mediaType === 'model3d' || clip?.mediaType === RIG_MEDIA_TYPE || clip?.mediaType === PARTICLE_MEDIA_TYPE) {
     mesh.position.set(0, 0, 0);
     mesh.rotation.set(0, 0, 0);
     mesh.scale.set(1, 1, 1);

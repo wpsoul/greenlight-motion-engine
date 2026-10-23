@@ -5,6 +5,7 @@
 import { flattenClips } from "./sequenceUtils";
 import { isVectorMediaUrl, preloadVectorMedia } from "./vectorMedia";
 import { preloadImagePlate } from "./imagePlate";
+import { preloadVideoPlate } from "./videoPlate";
 import { preloadAnimatedImage } from "./animatedImage";
 import { getTimelineLayout } from "./speedUtils";
 import { RIG_MEDIA_TYPE } from "./rig3d";
@@ -91,14 +92,23 @@ export function warmMediaUrl(url, mediaType, timeoutMs = 15000) {
         audio.src = url;
         audio.load();
       } else {
-        // video (and anything else with a moving picture)
+        // video (and anything else with a moving picture) — and, for a video, its
+        // real size: a clip smaller than the frame draws at its own size
+        // (videoPlate.js), and a size resolved one frame late would export the
+        // opening frames blown up to the composition.
         const video = document.createElement("video");
         video.preload = "auto";
         video.muted = true;
-        video.onloadeddata = finish;
-        video.onerror = finish;
+        const decoded = new Promise((done2) => {
+          video.onloadeddata = done2;
+          video.onerror = done2;
+        });
         video.src = url;
         video.load();
+        Promise.all([
+          decoded,
+          mediaType === "video" ? preloadVideoPlate(url, timeoutMs) : null,
+        ]).then(finish);
       }
     } catch {
       finish();

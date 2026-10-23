@@ -7,6 +7,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 // Custom-uploaded environments may be .exr; three's own loader handles both formats
 // into the same equirectangular float texture the PMREM step expects.
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { cameraProxyFromPose } from './projectCamera';
 import { resolveModelUrl, modelScreenTarget, isPrimitiveUrl, PRIMITIVE_DEFAULT_COLOR } from './model3dPresets';
@@ -16,14 +17,21 @@ import { applyModelGrowFill, removeModelGrowFill } from './model3dGrowFill';
 import { notifyModelAssetLoaded } from './model3dEvents';
 import { createModelTonePassMaterial } from './model3dTonePass';
 import { makeShadowPlateMaterial } from './model3dShadowPlate';
-import { normalizeRig, vectorFromSpherical, candelaIntensity, cycSizePx, resolveEnvUrl, cycSurfaceColor } from './rig3d';
+import {
+  normalizeRig, vectorFromSpherical, candelaIntensity, areaLuminance, lightTarget, AREA_SHADOW_SHARE,
+  cycSizePx, resolveEnvUrl, cycSurfaceColor,
+} from './rig3d';
 // Importing installs the PCSS shadow lookup (a ShaderChunk edit) — only projects
 // that draw 3D ever load this module, so nothing else pays for it.
-import { PCSS_INSTALLED, pcssRadiusFor, lightSpread } from './rigSoftShadows';
+import { PCSS_INSTALLED, pcssRadiusFor, lightSpread, autoShadowBias } from './rigSoftShadows';
+import { fitDirectionalShadow } from './rigShadowFit';
 import { createRigContactShadows } from './rigContactShadows';
 // The Mockup builder's screen fit maths, shared rather than reimplemented so a screen
 // looks identical in both features.
 import { createCanvasSurface, drawMediaToCanvas } from '../mockupGenerator/screenTexture';
+// Frame-exact video for screens: the same decoder lanes motion templates and layer mattes
+// use, settled by the preview pump and by every export/still (motionMediaPending).
+import { requestVideoFrame, isSupportedMotionVideo, getMotionVideoSource } from './motionTemplates/motionVideo';
 
 /*
  * 3D model layers — real geometry standing in the editor's world, filmed by the
@@ -330,10 +338,14 @@ export function computeFit(box, config, W, H) {
   }
   if (!Number.isFinite(scale) || scale <= 0) scale = 1;
 
-  // Pivot: the bbox centre, or the floor of the bbox for objects that sit on a surface.
+  // Pivot: the bbox centre, the floor of the bbox for objects that sit on a surface,
+  // or the asset's own origin — which keeps a GLB exported in scene coordinates
+  // (Blender → GLEA) exactly where its scene put it, whatever its rest pose.
   // Offsets are pre-scale (applied to the inner group), so scaling stays uniform.
-  const anchor = config?.anchor === 'base' ? 'base' : 'center';
-  const offset = new THREE.Vector3(-center.x, anchor === 'base' ? -box.min.y : -center.y, -center.z);
+  const anchor = config?.anchor === 'base' || config?.anchor === 'origin' ? config.anchor : 'center';
+  const offset = anchor === 'origin'
+    ? new THREE.Vector3(0, 0, 0)
+    : new THREE.Vector3(-center.x, anchor === 'base' ? -box.min.y : -center.y, -center.z);
   return { scale, offset, size, center, anchor };
 }
 
@@ -397,9 +409,26 @@ const isVideoUrl = (url) => {
  * Paint this layer's screen for the current frame.
  * `time` is clip-local seconds, which is what a video screen seeks to.
  */
+// Draw one frame of screen media into its surface. 'stretch' fills the surface (and so
+// the mesh's own UV rectangle) exactly — what a GLB authored around a screen texture
+// expects; cover/contain keep the media's aspect inside the surface.
+function drawScreenMedia(surface, media, opts) {
+  if (opts.fitMode === 'stretch') {
+    const { ctx, canvas } = surface;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(media, 0, 0, canvas.width, canvas.height);
+    return;
+  }
+  drawMediaToCanvas(surface.ctx, surface.canvas, media, opts);
+}
+
+// `entry` is a model instance (its preset device screen) or one of its screen SLOTS
+// (model3dConfig.screens) — both carry `root` plus the screen* bookkeeping fields.
 function applyScreen(entry, target, screen, time) {
   const url = screen?.url || null;
-  const key = `${target?.node || ''}|${target?.material || ''}|${url || ''}`;
+  const key = target
+    ? `${target.node || ''}|${target.material || ''}|${url || ''}|${target.aspect || ''}|${target.planarUv ? 1 : 0}|${target.shading || ''}|${target.mirrorX ? 1 : 0}|${target.rotate || 0}|${target.gltfUv ? (target.flipY ? 'f' : 'g') : ''}`
+    : `||${url || ''}`;
 
   // Structure change (different mesh or different media) — rebuild the material.
   if (entry.screenKey !== key) {
@@ -474,6 +503,8 @@ function applyScreen(entry, target, screen, time) {
             color: 0x000000, toneMapped: false, side: THREE.DoubleSide,
             polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
           });
+          node.material.userData.glScreen = true;
+          node.material.userData.glDepthBias = SCREEN_DEPTH_BIAS;
         }
       });
       return;
@@ -486,6 +517,9 @@ function applyScreen(entry, target, screen, time) {
     surface.texture.center.set(0.5, 0.5);
     surface.texture.repeat.x = target.mirrorX ? -1 : 1;
     surface.texture.rotation = target.rotate || 0;
+    // A custom model's screen uses the mesh's own glTF UVs, whose origin is the
+    // image's TOP-left (GLTFLoader loads every texture with flipY off).
+    if (target.gltfUv) surface.texture.flipY = !!target.flipY;
     entry.screenSurface = surface;
 
     entry.root.traverse((node) => {
@@ -497,19 +531,31 @@ function applyScreen(entry, target, screen, time) {
           entry.screenGeomOriginals.set(node, node.geometry);
           node.geometry = planarUvGeometry(node.geometry);
         }
-        node.material = new THREE.MeshBasicMaterial({
-          map: surface.texture, color: 0xffffff, toneMapped: false,
-          // Some authored display meshes are wound facing INTO the device —
-          // single-sided they back-face cull from the
-          // very direction the screen is meant to be seen from.
-          side: THREE.DoubleSide,
-          // The display is often COPLANAR with the bezel ring / island parts
-          // — without a depth bias they z-fight and the
-          // artwork "mixes" with chassis pixels at grazing angles.
-          polygonOffset: true,
-          polygonOffsetFactor: -2,
-          polygonOffsetUnits: -2,
-        });
+        // 'lit' screens take the set's light, shadows and reflections and still glow
+        // with their media (a panel, a poster); the default is a self-lit display.
+        node.material = target.shading === 'lit'
+          ? new THREE.MeshStandardMaterial({
+            map: surface.texture, emissiveMap: surface.texture, emissive: 0xffffff, emissiveIntensity: 0.85,
+            roughness: 0.38, metalness: 0, side: THREE.DoubleSide,
+            polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+          })
+          : new THREE.MeshBasicMaterial({
+            map: surface.texture, color: 0xffffff, toneMapped: false,
+            // Some authored display meshes are wound facing INTO the device —
+            // single-sided they back-face cull from the
+            // very direction the screen is meant to be seen from.
+            side: THREE.DoubleSide,
+            // The display is often COPLANAR with the bezel ring / island parts
+            // — without a depth bias they z-fight and the
+            // artwork "mixes" with chassis pixels at grazing angles.
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2,
+          });
+        node.material.userData.glDepthBias = SCREEN_DEPTH_BIAS;
+        // A self-lit screen shows display-referred media: its pixels skip the scene's
+        // tone curve (renderScreenMask + the tone pass). A 'lit' one is part of the scene.
+        if (target.shading !== 'lit') node.material.userData.glScreen = true;
         return;
       }
       // The glass pane in front of the screen is opaque as authored and would hide
@@ -545,7 +591,7 @@ function applyScreen(entry, target, screen, time) {
     offsetY: Number.isFinite(screen.offsetY) ? screen.offsetY : 0,
     rotation: Number.isFinite(screen.rotation) ? screen.rotation : 0,
     padding: Math.min(0.45, (Number.isFinite(screen.padding) ? screen.padding : 0) + inset),
-    fitMode: screen.fitMode === 'contain' ? 'contain' : 'cover',
+    fitMode: screen.fitMode === 'contain' || screen.fitMode === 'stretch' ? screen.fitMode : 'cover',
     borderRadius: Number.isFinite(screen.borderRadius) ? screen.borderRadius : 0,
   };
   const paintInsetRing = () => {
@@ -563,13 +609,32 @@ function applyScreen(entry, target, screen, time) {
   };
 
   if (isVideoUrl(url)) {
+    // Seek by the playhead so the same frame comes out in preview and in export.
+    // `offset` shifts the media against the layer clock; videos loop unless told not to.
+    const clipT = Math.max(0, (Number(time) || 0) + (Number(screen.offset) || 0));
+    const wrap = (dur) => {
+      if (!(dur > 0)) return clipT;
+      return screen.loop === false ? Math.min(clipT, dur - 1e-3) : Math.min(dur - 1e-3, clipT % dur);
+    };
+    if (isSupportedMotionVideo(url)) {
+      // MP4/MOV: a WebCodecs decoder lane. The request is synchronous and flags the
+      // frame as pending until it is decoded; the preview pump and every export /
+      // still settle it and repaint (motionMediaPending), so the screen is frame-exact.
+      const src = getMotionVideoSource(url);
+      const frame = requestVideoFrame(url, wrap(src.loaded ? src.duration : 0), entry.laneKey || `scr:${url}`);
+      if (!frame) return;
+      drawScreenMedia(surface, frame, opts);
+      paintInsetRing();
+      surface.texture.needsUpdate = true;
+      entry.screenDrawn = null;   // a video redraws every frame
+      return;
+    }
+    // Other containers (WebM): a seeked <video> element — best effort.
     const v = ensureScreenVideo(entry, url);
     if (!v || !v.videoWidth) return;
-    const dur = v.duration || 0;
-    // Seek by the playhead so the same frame comes out in preview and in export.
-    const want = dur > 0 ? Math.min(dur - 1e-3, Math.max(0, time || 0) % dur) : 0;
+    const want = wrap(v.duration || 0);
     if (Math.abs(v.currentTime - want) > 0.02 && !v.seeking) v.currentTime = want;
-    drawMediaToCanvas(surface.ctx, surface.canvas, v, opts);
+    drawScreenMedia(surface, v, opts);
     paintInsetRing();
     surface.texture.needsUpdate = true;
     entry.screenDrawn = null;   // a video redraws every frame
@@ -582,9 +647,146 @@ function applyScreen(entry, target, screen, time) {
   const sig = `${url}|${JSON.stringify(opts)}|${inset}`;
   if (entry.screenDrawn === sig) return;
   entry.screenDrawn = sig;
-  drawMediaToCanvas(surface.ctx, surface.canvas, img.image, opts);
+  drawScreenMedia(surface, img.image, opts);
   paintInsetRing();
   surface.texture.needsUpdate = true;
+}
+
+// Restore everything a screen (or screen slot) swapped in.
+function releaseScreenState(state) {
+  if (!state) return;
+  for (const [mesh, original] of state.screenOriginals || []) {
+    if (mesh.material && mesh.material !== original) mesh.material.dispose?.();
+    mesh.material = original;
+  }
+  for (const [mesh, geo] of state.screenGeomOriginals || []) mesh.geometry = geo;
+  state.screenOriginals = null;
+  state.screenGeomOriginals = null;
+  state.screenSurface?.texture?.dispose?.();
+  state.screenSurface = null;
+  state.screenKey = null;
+  state.screenDrawn = null;
+  releaseScreenVideo(state);
+}
+
+/**
+ * Media on named meshes / materials of ANY model (model3dConfig.screens) — a slab in
+ * a Blender scene showing the live UI, a TV, a poster. Each entry is its own slot with
+ * its own material swap, surface and decoder lane; slots that disappear from the
+ * config restore the authored materials.
+ */
+function applyModelScreens(entry, screens, time) {
+  const list = Array.isArray(screens) ? screens : [];
+  if (!list.length && !entry.screenSlots?.length) return;
+  const slots = entry.screenSlots || (entry.screenSlots = []);
+  for (let i = 0; i < list.length; i += 1) {
+    const s = list[i];
+    const slot = slots[i] || (slots[i] = { root: entry.root, laneKey: `scr:${entry.itemId}:${i}` });
+    slot.root = entry.root;
+    const target = {
+      node: s.node || null,
+      material: s.material || null,
+      aspect: Number.isFinite(s.aspect) && s.aspect > 0 ? s.aspect : 16 / 9,
+      planarUv: s.uv === 'planar',
+      shading: s.shading === 'lit' ? 'lit' : 'screen',
+      mirrorX: !!s.mirrorX,
+      gltfUv: true,
+      flipY: !!s.flipY,
+    };
+    applyScreen(slot, target, s, time);
+  }
+  for (let i = list.length; i < slots.length; i += 1) releaseScreenState(slots[i]);
+  slots.length = list.length;
+}
+
+// The depth bias a screen is drawn with (polygonOffsetFactor), tuned at a 1080-px
+// pass. The factor multiplies the surface's depth slope PER WINDOW PIXEL, so the same
+// factor pulls a screen further toward the camera the fewer pixels the pass has: the
+// Draft preview plays at 0.75 and a page model filmed at a grazing angle came forward
+// by several px there — over cards and layers lying 2–3 px above it, which then
+// flickered in and out of the page in playback and never did in a full-size render.
+// Scaled to the pass height, the bias stays the same size in the scene at every size.
+const SCREEN_DEPTH_BIAS = -2;
+function scaleScreenDepthBias(entry, passHeight) {
+  const k = Math.max(0.1, (Number(passHeight) || 1080) / 1080);
+  entry.root?.traverse((node) => {
+    if (!node.isMesh) return;
+    for (const m of Array.isArray(node.material) ? node.material : [node.material]) {
+      if (Number.isFinite(m?.userData?.glDepthBias)) setDepthBiasFactor(m, m.userData.glDepthBias * k);
+    }
+  });
+  setDepthBiasFactor(MASK_SCREEN, SCREEN_DEPTH_BIAS * k);
+}
+// WebGL reads polygon offset as draw state. WebGPU bakes it into the render pipeline,
+// and three keys pipelines on a number only as zero / non-zero — a new factor reused
+// the old pipeline — so the factor joins the material's cache key there.
+function setDepthBiasFactor(m, factor) {
+  if (m.polygonOffsetFactor === factor) return;
+  m.polygonOffsetFactor = factor;
+  if (selectedBackend() !== 'webgpu') return;
+  if (!m.userData.glBiasKeyed) {
+    const base = m.customProgramCacheKey.bind(m);
+    m.customProgramCacheKey = () => `${base()}|bias:${m.polygonOffsetFactor}`;
+    m.userData.glBiasKeyed = true;
+  }
+  m.needsUpdate = true;
+}
+
+// ── Screen coverage mask ────────────────────────────────────────────────────
+// Which pixels of this model's pass show a self-lit screen, depth-tested against the
+// whole model so whatever stands in front still hides it. The tone pass gives those
+// pixels the media's own colour instead of the scene curve (model3dTonePass.js).
+const MASK_DEPTH = new THREE.MeshBasicMaterial({ color: 0x000000 });
+const MASK_SCREEN = new THREE.MeshBasicMaterial({
+  color: 0xffffff, side: THREE.DoubleSide, depthFunc: THREE.LessEqualDepth,
+  polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+});
+
+function screenMeshesOf(entry) {
+  const out = [];
+  entry.root?.traverse((node) => {
+    if (node.isMesh && node.visible && node.material?.userData?.glScreen) out.push(node);
+  });
+  return out;
+}
+
+function renderScreenMask(renderer, entry, scene, cam, meshes) {
+  const { width, height } = entry.hdr;
+  const samples = entry.hdr.samples || 0;
+  if (!entry.screenMask || entry.screenMask.width !== width || entry.screenMask.height !== height
+      || (entry.screenMask.samples || 0) !== samples) {
+    entry.screenMask?.dispose();
+    entry.screenMask = new THREE.WebGLRenderTarget(width, height, {
+      type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: true, stencilBuffer: false,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, samples,
+    });
+  }
+  renderer.setRenderTarget(entry.screenMask);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear(true, true, true);
+  // Translucent parts (a contact-shadow blob, a faded glass pane) never hide a screen.
+  const hidden = [];
+  scene.traverse((o) => {
+    if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.visible && !meshes.includes(o)) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      if (mats.some((m) => m?.transparent)) { o.visible = false; hidden.push(o); }
+    }
+  });
+  const prevOverride = scene.overrideMaterial;
+  // 1) the model's depth, 2) the screens alone, white, against that depth
+  scene.overrideMaterial = MASK_DEPTH;
+  renderer.render(scene, cam);
+  scene.overrideMaterial = null;
+  scene.traverse((o) => {
+    if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.visible && !meshes.includes(o)) { o.visible = false; hidden.push(o); }
+  });
+  const originals = meshes.map((m) => m.material);
+  for (const m of meshes) m.material = MASK_SCREEN;
+  renderer.render(scene, cam);
+  meshes.forEach((m, i) => { m.material = originals[i]; });
+  for (const o of hidden) o.visible = true;
+  scene.overrideMaterial = prevOverride;
+  return entry.screenMask.texture;
 }
 
 // ── Per-layer instances ─────────────────────────────────────────────────────
@@ -616,20 +818,90 @@ const plateInstances = new Map();
 
 const D2R_LIGHT = Math.PI / 180;
 
+// Area lights shade through linearly transformed cosines, which need two lookup
+// tables per backend: WebGL reads them as UniformsLib entries, WebGPU from
+// RectAreaLightNode. Without them a RectAreaLight draws nothing (or throws in a node
+// build), so until the tables exist an area light stands in as a directional.
+const areaLtc = { webgl: false, webgpu: null };
+function areaLightsReady() {
+  if (selectedBackend() !== 'webgpu') {
+    if (!areaLtc.webgl) {
+      RectAreaLightUniformsLib.init();
+      areaLtc.webgl = true;
+    }
+    return true;
+  }
+  if (areaLtc.webgpu === true) return true;
+  if (areaLtc.webgpu === null) {
+    areaLtc.webgpu = Promise.all([
+      import('three/webgpu'),
+      import('three/examples/jsm/lights/RectAreaLightTexturesLib.js'),
+    ]).then(([{ RectAreaLightNode }, { RectAreaLightTexturesLib }]) => {
+      RectAreaLightNode.setLTC(RectAreaLightTexturesLib.init());
+      areaLtc.webgpu = true;
+    }).catch((error) => {
+      console.warn('[model3d] area light tables failed to load; area lights stay directional', error);
+      areaLtc.webgpu = false;
+    });
+  }
+  return false;
+}
+
 function makeLightObject(type) {
   switch (type) {
     case 'point': return new THREE.PointLight(0xffffff, 1);
     case 'spot': return new THREE.SpotLight(0xffffff, 1);
+    case 'area': {
+      if (areaLightsReady()) return new THREE.RectAreaLight(0xffffff, 1, 1, 1);
+      const standIn = new THREE.DirectionalLight(0xffffff, 1);
+      standIn.userData.areaStandIn = true;
+      return standIn;
+    }
     case 'ambient': return new THREE.AmbientLight(0xffffff, 1);
     case 'hemisphere': return new THREE.HemisphereLight(0xffffff, 0x3a2f26, 1);
     default: return new THREE.DirectionalLight(0xffffff, 1);
   }
 }
 
-function applyLight(obj, light) {
+/**
+ * An area light: the lit rectangle itself (RectAreaLight — broad, soft highlights,
+ * no shadow) plus, when it casts, a companion directional from the same place that
+ * carries AREA_SHADOW_SHARE of the light and the shadow map.
+ */
+function applyAreaLight(obj, light, level, companion) {
+  const p = vectorFromSpherical(light.az, light.elev, light.dist);
+  const t = lightTarget(light);
+  const d = Math.max(1, Math.hypot(p.x - t.x, p.y - t.y, p.z - t.z));
+  const share = companion ? AREA_SHADOW_SHARE : 0;
+  obj.position.set(p.x, p.y, p.z);
+  if (obj.isRectAreaLight) {
+    obj.width = light.width;
+    obj.height = light.height;
+    // Lights look down -Z, so this faces the lit side at the target.
+    obj.lookAt(t.x, t.y, t.z);
+    obj.intensity = areaLuminance(level * (1 - share), d, light.width, light.height);
+  } else {
+    obj.target.position.set(t.x, t.y, t.z);
+    obj.target.updateMatrixWorld();
+    obj.intensity = level * (1 - share);
+  }
+  if (companion) {
+    companion.color.set(light.color);
+    companion.position.set(p.x, p.y, p.z);
+    companion.target.position.set(t.x, t.y, t.z);
+    companion.target.updateMatrixWorld();
+    companion.intensity = level * share;
+  }
+}
+
+function applyLight(obj, light, companion = null) {
   obj.color.set(light.color);
   // `on` is presentation only — see the rule above.
   const level = light.on === false ? 0 : light.intensity;
+  if (light.type === 'area') {
+    applyAreaLight(obj, light, level, companion);
+    return;
+  }
   if (light.type === 'ambient') {
     obj.intensity = level;
     return;
@@ -674,52 +946,73 @@ function makeLightRig(scene) {
  * is written in place, so the steady state costs a handful of number assignments
  * per frame and never touches the shader program cache.
  */
+function addLightObject(scene, obj) {
+  // A light must be visible to EVERY pass camera, and to the shadow map. three
+  // collects a light only when light.layers.test(camera.layers) — so with the
+  // shared world's per-object private layers, a light left on layer 0 would be
+  // dropped from every pass and the whole set would go black.
+  obj.layers.enableAll();
+  if (obj.target) obj.target.layers.enableAll();
+  scene.add(obj);
+  if (obj.target) scene.add(obj.target);
+  return obj;
+}
+
+function removeLightObject(scene, obj) {
+  if (!obj) return;
+  scene?.remove(obj);
+  if (obj.target) scene?.remove(obj.target);
+  obj.dispose?.();
+}
+
+function releaseHeldLight(scene, held) {
+  removeLightObject(scene, held.obj);
+  removeLightObject(scene, held.shadowObj);
+  held.shadowObj = null;
+}
+
 function syncLightsToScene(rigLights, lights) {
   const { scene, byLid } = rigLights;
   const seen = new Set();
   for (const light of lights) {
     seen.add(light.lid);
     let held = byLid.get(light.lid);
-    if (held && held.type !== light.type) {
-      scene.remove(held.obj);
-      if (held.obj.target) scene.remove(held.obj.target);
-      held.obj.dispose?.();
+    // An area light that started as a directional stand-in (its lookup tables were
+    // still loading) becomes the real thing as soon as they are there.
+    const upgrade = held && held.type === 'area' && held.obj.userData.areaStandIn && areaLightsReady();
+    if (held && (held.type !== light.type || upgrade)) {
+      releaseHeldLight(scene, held);
       held = null;
     }
     if (!held) {
-      const obj = makeLightObject(light.type);
-      // A light must be visible to EVERY pass camera, and to the shadow map. three
-      // collects a light only when light.layers.test(camera.layers) — so with the
-      // shared world's per-object private layers, a light left on layer 0 would be
-      // dropped from every pass and the whole set would go black.
-      obj.layers.enableAll();
-      if (obj.target) obj.target.layers.enableAll();
-      scene.add(obj);
-      if (obj.target) scene.add(obj.target);
-      held = { type: light.type, obj };
+      held = { type: light.type, obj: addLightObject(scene, makeLightObject(light.type)), shadowObj: null };
       byLid.set(light.lid, held);
+    }
+    // A casting area light's shadow lives on a companion directional. Created and
+    // removed only with castShadow, which is not animatable — the count changes when
+    // the user flips that switch, never per frame.
+    const wantCompanion = light.type === 'area' && light.castShadow === true;
+    if (wantCompanion && !held.shadowObj) {
+      held.shadowObj = addLightObject(scene, new THREE.DirectionalLight(0xffffff, 0));
+    } else if (!wantCompanion && held.shadowObj) {
+      removeLightObject(scene, held.shadowObj);
+      held.shadowObj = null;
     }
     // Remembered so the shadow setup can read castShadow / angle / shadowMapSize
     // without re-deriving them from the scene objects.
     held.light = light;
-    applyLight(held.obj, light);
+    applyLight(held.obj, light, held.shadowObj);
   }
   for (const [lid, held] of [...byLid]) {
     if (seen.has(lid)) continue;
-    scene.remove(held.obj);
-    if (held.obj.target) scene.remove(held.obj.target);
-    held.obj.dispose?.();
+    releaseHeldLight(scene, held);
     byLid.delete(lid);
   }
 }
 
 function disposeLightRig(rigLights) {
   if (!rigLights) return;
-  for (const held of rigLights.byLid.values()) {
-    rigLights.scene?.remove(held.obj);
-    if (held.obj.target) rigLights.scene?.remove(held.obj.target);
-    held.obj.dispose?.();
-  }
+  for (const held of rigLights.byLid.values()) releaseHeldLight(rigLights.scene, held);
   rigLights.byLid.clear();
 }
 
@@ -1460,6 +1753,141 @@ const _box = new THREE.Box3();
 const _center = new THREE.Vector3();
 const _viewCenter = new THREE.Vector3();
 const _spillNdc = new THREE.Vector3();
+const _viewCorner = new THREE.Vector3();
+
+// ── Transparent depth ────────────────────────────────────────────────────────
+// A transparent mesh (a contact-shadow card, a decal, glass) blends its colour
+// without writing depth, as it must inside the model, so the pass's depth has no
+// surface there: no occlusion against other layers, and camera DOF took its pixels
+// for spill at the model's centre depth (a soft shadow card drew as a black disc in
+// front of lettering it lies under). The pass therefore also hands back a SECOND
+// depth: opaque and transparent surfaces together, each transparent one where it is
+// actually visible (alpha >= TRANSPARENT_DEPTH_ALPHA). It is drawn into its own
+// target after the colour pass, so colour and blending are untouched and the
+// opaque depth stays what it was. The compositor reads the difference: a pixel where
+// this depth is nearer than the opaque one is a transparent card in front, and
+// composites at the card's depth WITHOUT writing it (adjustmentComposite.js).
+const TRANSPARENT_DEPTH_ALPHA = 0.02;
+const _depthHidden = [];
+const _depthSwapped = [];
+
+// One cached unlit twin per material that only reads alpha: colour writes off,
+// depth on. A transparent material is alpha-tested at TRANSPARENT_DEPTH_ALPHA; an
+// opaque one keeps its own alpha test (none, unless it cuts out), so its depth
+// matches the colour pass's. No polygon offset: on WebGPU a slope-scaled bias on a
+// card seen edge-on threw it far in front of everything (the compositor nudges a
+// card toward the camera itself, in proportion to its distance).
+function depthTwin(material) {
+  const transparent = !!material.transparent;
+  const key = transparent ? 'glDepthTwinT' : 'glDepthTwinO';
+  let twin = material.userData[key];
+  if (!twin) {
+    twin = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, depthTest: true });
+    material.userData[key] = twin;
+  }
+  const alphaTest = transparent ? Math.max(material.alphaTest || 0, TRANSPARENT_DEPTH_ALPHA) : (material.alphaTest || 0);
+  const map = alphaTest > 0 ? (material.map || null) : null;
+  const alphaMap = alphaTest > 0 ? (material.alphaMap || null) : null;
+  if (twin.map !== map || twin.alphaMap !== alphaMap || twin.vertexColors !== !!material.vertexColors
+    || twin.side !== material.side || twin.alphaTest !== alphaTest) {
+    twin.map = map;
+    twin.alphaMap = alphaMap;
+    twin.vertexColors = !!material.vertexColors;
+    twin.side = material.side;
+    twin.alphaTest = alphaTest;
+    twin.needsUpdate = true;
+  }
+  twin.opacity = alphaTest > 0 && Number.isFinite(material.opacity) ? material.opacity : 1;
+  return twin;
+}
+
+function ensureTransparentDepthTarget(entry) {
+  const { width, height } = entry.hdr;
+  if (entry.tdepth && (entry.tdepth.width !== width || entry.tdepth.height !== height)) {
+    entry.tdepth.dispose();
+    entry.tdepth = null;
+  }
+  if (!entry.tdepth) {
+    entry.tdepth = new THREE.WebGLRenderTarget(width, height, {
+      type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: true, stencilBuffer: false,
+    });
+    entry.tdepth.depthTexture = new THREE.DepthTexture(width, height);
+    entry.tdepth.depthTexture.type = THREE.UnsignedIntType;
+    entry.tdepth.depthTexture.minFilter = THREE.NearestFilter;
+    entry.tdepth.depthTexture.magFilter = THREE.NearestFilter;
+  }
+  return entry.tdepth;
+}
+
+/** The pass's opaque + transparent depth, or null when it has no transparent mesh. */
+function renderTransparentDepth(renderer, entry, scene, cam) {
+  const isTransparent = (m) => !!(m?.transparent && m.visible !== false);
+  let any = false;
+  const meshes = [];
+  entry.outer.traverseVisible((o) => {
+    if (!o.isMesh) return;
+    meshes.push(o);
+    if (!o.userData.glScreen && (Array.isArray(o.material) ? o.material.some(isTransparent) : isTransparent(o.material))) any = true;
+  });
+  if (!any) {
+    if (entry.tdepth) { entry.tdepth.dispose(); entry.tdepth = null; }
+    return null;
+  }
+  const target = ensureTransparentDepthTarget(entry);
+  const keep = new Set(meshes);
+  // Only the twins draw: everything else this camera would film is hidden.
+  scene.traverseVisible((o) => {
+    if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && !keep.has(o) && cam.layers.test(o.layers)) _depthHidden.push(o);
+  });
+  for (const o of _depthHidden) o.visible = false;
+  for (const o of meshes) {
+    _depthSwapped.push(o, o.material);
+    o.material = Array.isArray(o.material) ? o.material.map((x) => (x ? depthTwin(x) : x)) : depthTwin(o.material);
+  }
+  const background = scene.background;
+  scene.background = null;
+  try {
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, true, true);
+    renderer.render(scene, cam);
+  } finally {
+    scene.background = background;
+    for (let i = 0; i < _depthSwapped.length; i += 2) _depthSwapped[i].material = _depthSwapped[i + 1];
+    for (const o of _depthHidden) o.visible = true;
+    _depthSwapped.length = 0;
+    _depthHidden.length = 0;
+  }
+  return target.depthTexture;
+}
+
+// The box's span along the camera's view axis — its nearest and farthest corner,
+// clamped to the near plane. Per-pixel DOF reads each pixel's depth; this bounds
+// what that depth can be, so the compositor can skip a pass that no CoC reaches
+// and knows how far a blurred foreground may spread (modelDof.js).
+function boxViewRange(box, cam) {
+  let near = Infinity;
+  let far = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    _viewCorner.set(
+      i & 1 ? box.max.x : box.min.x,
+      i & 2 ? box.max.y : box.min.y,
+      i & 4 ? box.max.z : box.min.z,
+    ).applyMatrix4(cam.matrixWorldInverse);
+    const d = -_viewCorner.z;
+    if (d < near) near = d;
+    if (d > far) far = d;
+  }
+  if (!Number.isFinite(near) || !Number.isFinite(far)) return null;
+  cam.getWorldPosition(_viewCorner);
+  // The world box and eye too: the compositor orders models by whose box is on the
+  // camera's side of whose (compositeSortDepth.js orderByBoxes).
+  return {
+    near: Math.max(cam.near, near), far: Math.max(cam.near, far),
+    box: [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z],
+    eye: [_viewCorner.x, _viewCorner.y, _viewCorner.z],
+  };
+}
 
 /**
  * Bring one flat layer's plate object up to date and put it in the shared world:
@@ -1614,8 +2042,9 @@ export function renderPlateLayer(renderer, opts) {
     _box.getCenter(_center);
     _viewCenter.copy(_center).applyMatrix4(cam.matrixWorldInverse);
     const viewDistance = -_viewCenter.z;
+    const viewRange = boxViewRange(_box, cam);
 
-    const sh = prepareWorldShadows(world, rig, opts.frameToken ?? 0, H);
+    const sh = prepareWorldShadows(world, rig, opts.frameToken ?? 0, H, pcssActive, cam);
     renderer.setRenderTarget(entry.hdr);
     renderer.setClearColor(0x000000, 0);
     renderer.clear(true, true, true);
@@ -1625,6 +2054,7 @@ export function renderPlateLayer(renderer, opts) {
     tm.material.uniforms.uTexture.value = entry.hdr.texture;
     tm.material.uniforms.uResolution.value.set(entry.ldr.width, entry.ldr.height);
     tm.material.uniforms.uExposure.value = 1;
+    if (tm.material.uniforms.uScreenMaskOn) tm.material.uniforms.uScreenMaskOn.value = 0;
     // The plate carries the layer's own finished artwork, not rendered radiance, so
     // no display transform runs over it: switching on "receive shadow" must not
     // change the layer's colour, only darken it where a shadow lands.
@@ -1641,6 +2071,7 @@ export function renderPlateLayer(renderer, opts) {
       // pixels never stamp: the material discards them before it writes depth.
       depthTexture: item.shadowPlate?.occludes === true ? entry.hdr.depthTexture : null,
       viewDistance,
+      viewRange,
       error: null,
     };
   } finally {
@@ -1810,33 +2241,63 @@ function ensureShadowType(renderer) {
  *     passes — without this it would be 5 shadow renders.
  *
  * The caster cap exists because each shadowed light is a full extra scene render.
+ *
+ * 3. The map is FITTED to the frame's camera (rigShadowFit.js), so it is refitted
+ *    exactly when it is re-rendered: on the frame's first pass, when the world's
+ *    membership changes, and on the rig pass (`force`), which re-renders it anyway.
+ *    `view` is the pass camera. Every pass of a frame normally shares one; a pass
+ *    with a different one (a camera-locked model) refits and re-renders for itself.
  */
-function prepareWorldShadows(world, rig, frameToken, compH = 1080, pcss = pcssActive) {
+function prepareWorldShadows(world, rig, frameToken, compH = 1080, pcss = pcssActive, view = null, force = false) {
   const wantShadows = rig?.shadows?.mode === 'map';
   const maxCasters = Math.max(0, Math.min(4, rig?.shadows?.maxCasters ?? 2));
 
-  // World bounds, for the fitted frusta below. Recomputed per frame because models
+  // A pass filmed by a different camera than the one the map was fitted to (a
+  // camera-locked model next to project-camera ones) refits and re-renders.
+  let viewChanged = false;
+  if (view) {
+    const key = shadowViewKey(view);
+    if (key !== world.fitViewKey) {
+      world.fitView = (world.fitView || new THREE.PerspectiveCamera()).copy(view);
+      world.fitViewKey = key;
+      viewChanged = true;
+    }
+  }
+  // Layers are prepared lazily in channel order. A new model/shape can therefore
+  // join AFTER an earlier text pass already rendered this frame's shadow map. Treat
+  // world membership as part of the cache key so the later cyclorama pass refreshes
+  // with every caster present instead of freezing the first layer only.
+  const first = world.shadowToken !== frameToken || world.shadowRevision !== world.revision || viewChanged;
+  world.shadowToken = frameToken;
+  world.shadowRevision = world.revision;
+  // The map this frame's passes read was fitted when it was rendered; refitting
+  // without re-rendering would point every lookup at the wrong texels.
+  if (!first && !force) return { enabled: world.casters > 0, first: false };
+
+  // World bounds, for the fallback frusta below. Recomputed per fit because models
   // move; it is one Box3 over the scene, not per-mesh work.
   _box.makeEmpty();
   _box.expandByObject(world.scene);
   _box.getCenter(_center);
   const radius = _box.isEmpty() ? 1000 : Math.max(1, _box.getSize(_worldSize).length() * 0.5);
-  // Receivers can be enormous (a studio dome is 24 composition heights).
-  // Only casters need XY coverage: a directional shadow travels along the same
-  // light-space XY all the way to its receiver. Including the dome here spent
-  // nearly the entire map on empty space and turned product shadows into blocks.
+  // Receivers can be enormous (a studio dome is 24 composition heights, a page ten
+  // metres long). Only the part the camera sees is fitted — see rigShadowFit.js.
   const casterBounds = new THREE.Box3();
+  const receiverBounds = new THREE.Box3();
   world.scene.traverseVisible((mesh) => {
-    if (!mesh.isMesh || !mesh.castShadow || !mesh.geometry) return;
+    if (!mesh.isMesh || !mesh.geometry || !(mesh.castShadow || mesh.receiveShadow)) return;
     if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-    casterBounds.union(new THREE.Box3().copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld));
+    _meshBox.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+    if (mesh.castShadow) casterBounds.union(_meshBox);
+    if (mesh.receiveShadow) receiverBounds.union(_meshBox);
   });
   world.hasPlates = [...world.layerFor.keys()].some((k) => k.startsWith('p:'));
 
   let casters = 0;
   for (const held of world.lightRig.byLid.values()) {
-    const obj = held.obj;
-    if (!obj.shadow) continue;                       // ambient / hemisphere
+    // An area light casts through its companion directional (see applyAreaLight).
+    const obj = held.shadowObj || held.obj;
+    if (!obj.shadow) continue;                       // ambient / hemisphere / area without a shadow
     const want = wantShadows && held.light?.castShadow === true && casters < maxCasters;
     if (obj.castShadow !== want) obj.castShadow = want;
     if (!want) continue;
@@ -1844,6 +2305,10 @@ function prepareWorldShadows(world, rig, frameToken, compH = 1080, pcss = pcssAc
 
     const sh = obj.shadow;
     const dist = Math.max(1, obj.position.length());
+    // 1024 was visibly coarse on a 1080p composition once a large model shadow
+    // crossed a plate. Treat 2048 as the runtime quality floor; authored 4096 maps
+    // remain honoured for high-resolution export.
+    const size = Math.max(2048, Math.min(4096, held.light.shadowMapSize || 2048));
     if (obj.isDirectionalLight) {
       // DirectionalLightShadow defaults to an OrthographicCamera(-5, 5, 5, -5) — a
       // TEN PIXEL box around a scene thousands of pixels wide. Left alone the shadow
@@ -1854,21 +2319,19 @@ function prepareWorldShadows(world, rig, frameToken, compH = 1080, pcss = pcssAc
       sh.camera.top = r; sh.camera.bottom = -r;
       sh.camera.near = Math.max(1, dist - radius * 2);
       sh.camera.far = dist + radius * 3;
-      if (!casterBounds.isEmpty()) {
-        sh.updateMatrices(obj);
-        const fitted = casterBounds.clone().applyMatrix4(sh.camera.matrixWorldInverse);
-        const pad = Math.max(compH * 0.02, lightSpread(held.light.shadowSoftness, compH).capWorld * 1.5);
-        sh.camera.left = fitted.min.x - pad;
-        sh.camera.right = fitted.max.x + pad;
-        sh.camera.bottom = fitted.min.y - pad;
-        sh.camera.top = fitted.max.y + pad;
-        const half = Math.max(sh.camera.right - sh.camera.left, sh.camera.top - sh.camera.bottom) / 2;
-        const cx = (fitted.min.x + fitted.max.x) / 2, cy = (fitted.min.y + fitted.max.y) / 2;
-        sh.camera.left = cx - half; sh.camera.right = cx + half;
-        sh.camera.bottom = cy - half; sh.camera.top = cy + half;
-        sh.camera.near = Math.max(0.1, -fitted.max.z - pad);
-        // Keep receivers behind the casters in range without wasting XY texels.
-        sh.camera.far = Math.max(sh.camera.near + 1, -fitted.min.z + radius * 2);
+      sh.updateMatrices(obj);
+      const fit = fitDirectionalShadow({
+        lightView: sh.camera.matrixWorldInverse,
+        view: world.fitView || null,
+        receivers: receiverBounds,
+        casters: casterBounds,
+        pad: Math.max(compH * 0.02, lightSpread(held.light.shadowSoftness, compH).capWorld * 1.5),
+        mapSize: size,
+      });
+      if (fit) {
+        sh.camera.left = fit.left; sh.camera.right = fit.right;
+        sh.camera.bottom = fit.bottom; sh.camera.top = fit.top;
+        sh.camera.near = fit.near; sh.camera.far = fit.far;
       }
     } else if (obj.isSpotLight) {
       sh.camera.fov = Math.min(170, (held.light.angle || 32) * 2);
@@ -1879,11 +2342,6 @@ function prepareWorldShadows(world, rig, frameToken, compH = 1080, pcss = pcssAc
       sh.camera.near = Math.max(1, radius * 0.01);
       sh.camera.far = dist + radius * 2;
     }
-    sh.bias = -0.00002;
-    // 1024 was visibly coarse on a 1080p composition once a large model shadow
-    // crossed a plate. Treat 2048 as the runtime quality floor; authored 4096 maps
-    // remain honoured for high-resolution export.
-    const size = Math.max(2048, Math.min(4096, held.light.shadowMapSize || 2048));
     if (sh.mapSize.x !== size) {
       sh.mapSize.set(size, size);
       sh.map?.dispose();
@@ -1892,32 +2350,25 @@ function prepareWorldShadows(world, rig, frameToken, compH = 1080, pcss = pcssAc
     sh.camera.updateProjectionMatrix();
     const nodeFilter = pcss ? null : makeMaterial.rigShadowFilter(obj);
     sh.filterNode = nodeFilter;
+    // Acne is SCALE-dependent: a constant offset that looks right at 1080p stripes
+    // the whole set at 4K or on a large set, and a fixed one cannot follow a map
+    // fitted per frame. Offsets are therefore set in TEXELS of this map (the light's
+    // shadowBias / shadowNormalBias, or automatic when unset) and converted here.
+    const texelWorld = obj.isDirectionalLight
+      ? (sh.camera.right - sh.camera.left) / size
+      : (2 * dist * (obj.isSpotLight ? Math.tan(Math.max(1e-3, obj.angle)) : 1)) / size;
+    const auto = autoShadowBias({ planeBias: !!(pcss || nodeFilter), plates: world.hasPlates });
+    const depthTexels = Number.isFinite(held.light.shadowBias) ? held.light.shadowBias : auto.depth;
+    const normalTexels = Number.isFinite(held.light.shadowNormalBias) ? held.light.shadowNormalBias : auto.normal;
+    sh.normalBias = texelWorld * normalTexels;
+    sh.bias = -shadowDepthUnits(obj, sh.camera, texelWorld * depthTexels, dist);
     if (pcss || nodeFilter) {
       // Soft shadows (rigSoftShadows.js): the radius uniform carries the light's
       // size and penumbra growth, measured against this fitted frustum.
       sh.radius = pcssRadiusFor(obj, {
         softness: held.light.shadowSoftness ?? 1, compH, mapSize: size, subjectDist: dist,
       });
-      // Closed models cast from their BACK faces (three's default flip), so the
-      // receiving surface needs almost no normal offset — and every pixel of
-      // offset slides the shadow away from the object's base, which is what made
-      // shadows look detached. Flat DOUBLE-SIDED plates have no back face to hide
-      // behind, so a set with casting plates keeps a larger offset against
-      // self-shadow stair bands.
-      const texelWorld = obj.isDirectionalLight
-        ? (sh.camera.right - sh.camera.left) / size
-        : (2 * dist * (obj.isSpotLight ? Math.tan(Math.max(1e-3, obj.angle)) : 1)) / size;
-      sh.normalBias = texelWorld * (world.hasPlates ? 1.5 : 0.35);
     } else {
-      // Acne is SCALE-dependent: a constant normalBias that looks right at 1080p
-      // stripes the whole set at 4K, or on a large cyclorama.
-      // Flat double-sided plates are especially prone to self-shadow stair bands
-      // when the camera reaches their back side. Offset the lookup far enough to
-      // clear the plate itself while staying proportional to the fitted set.
-      const texelWorld = obj.isDirectionalLight
-        ? (sh.camera.right - sh.camera.left) / size
-        : (2 * dist * (obj.isSpotLight ? Math.tan(Math.max(1e-3, obj.angle)) : 1)) / size;
-      sh.normalBias = texelWorld * (world.hasPlates ? 1.5 : 0.35);
       // r183's old PCFSoft mode is only an alias for PCF, but PCF still honours
       // each light's radius. A softness of 1 is a visibly smooth four-pixel
       // penumbra; 0 remains hard.
@@ -1925,18 +2376,47 @@ function prepareWorldShadows(world, rig, frameToken, compH = 1080, pcss = pcssAc
     }
   }
   world.casters = casters;
+  return { enabled: casters > 0, first: true };
+}
 
-  // Layers are prepared lazily in channel order. A new model/shape can therefore
-  // join AFTER an earlier text pass already rendered this frame's shadow map. Treat
-  // world membership as part of the cache key so the later cyclorama pass refreshes
-  // with every caster present instead of freezing the first layer only.
-  const first = world.shadowToken !== frameToken || world.shadowRevision !== world.revision;
-  world.shadowToken = frameToken;
-  world.shadowRevision = world.revision;
-  return { enabled: casters > 0, first };
+/** The shared world's shadow setup as last fitted — for verification harnesses. */
+export function worldShadowStats() {
+  if (!sharedWorld) return null;
+  const lights = [];
+  for (const [lid, held] of sharedWorld.lightRig.byLid) {
+    const obj = held.shadowObj || held.obj;
+    if (!obj.shadow || !obj.castShadow) continue;
+    const c = obj.shadow.camera;
+    lights.push({
+      lid, type: held.type, mapSize: obj.shadow.mapSize.x,
+      left: c.left, right: c.right, bottom: c.bottom, top: c.top, near: c.near, far: c.far,
+      bias: obj.shadow.bias, normalBias: obj.shadow.normalBias, radius: obj.shadow.radius,
+    });
+  }
+  return { casters: sharedWorld.casters, fitted: !!sharedWorld.fitView, lights };
+}
+
+/** A world-px offset along the light, in the shadow map's own depth units. */
+function shadowDepthUnits(light, cam, worldOffset, subjectDist) {
+  const near = Math.max(1e-3, cam.near);
+  const far = Math.max(near + 1e-3, cam.far);
+  if (light.isDirectionalLight) return worldOffset / Math.max(1e-3, cam.far - cam.near);
+  // Perspective depth (spot, and the point cube's per-face depth) is not linear:
+  // linearised at the subject's distance, where the shadows that matter are.
+  const z = Math.max(near, Math.min(far, subjectDist));
+  return (worldOffset * far * near) / ((far - near) * z * z);
+}
+
+/** Identity of a pass camera's view, for refitting when it changes mid-frame. */
+function shadowViewKey(cam) {
+  let key = '';
+  for (const v of cam.matrixWorld.elements) key += `${v.toFixed(3)},`;
+  for (const v of cam.projectionMatrix.elements) key += `${v.toFixed(6)},`;
+  return key;
 }
 
 const _worldSize = new THREE.Vector3();
+const _meshBox = new THREE.Box3();
 
 /**
  * Build the shared shadow map without leaking every world object into this layer's
@@ -1990,16 +2470,104 @@ function primeWorldShadowMap(renderer, world, scene, camera) {
   }
 }
 
-/** Cast/receive flags on one object's subtree. Cheap, and only on change. */
-function setShadowFlags(root, cast, receive) {
-  if (root.userData.__shCast === cast && root.userData.__shRecv === receive) return;
+/** Cast/receive flags on one object's subtree. Cheap, and only on change.
+ *  `skipBlended`: a mesh whose every material is blended without an alpha cut-out
+ *  (glTF BLEND — depth write off, alphaTest 0) does not cast. three's depth pass
+ *  ignores such alpha entirely, so a soft contact-shadow card or a glow would cast
+ *  its whole rectangle onto the set. */
+function setShadowFlags(root, cast, receive, skipBlended = false) {
+  if (root.userData.__shCast === cast && root.userData.__shRecv === receive && root.userData.__shBlend === skipBlended) return;
   root.traverse((o) => {
     if (!o.isMesh) return;
-    o.castShadow = cast;
+    o.castShadow = cast && !(skipBlended && isBlendedCard(o));
     o.receiveShadow = receive;
   });
   root.userData.__shCast = cast;
   root.userData.__shRecv = receive;
+  root.userData.__shBlend = skipBlended;
+}
+
+function isBlendedCard(mesh) {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  return mats.length > 0 && mats.every((m) => m && m.transparent && m.depthWrite === false && !(m.alphaTest > 0));
+}
+
+/**
+ * The share of the set's light that casting lights carry — how dark a full shadow
+ * is on a surface that only SHOWS shadows (a "Shadows only" cyclorama, a self-lit
+ * screen). Fill lights and the HDR still reach a shadowed spot, so a fully blocked
+ * key must not turn it pure black.
+ */
+function castingLightShare(rig) {
+  let total = Math.max(0, rig?.env?.intensity || 0), casting = 0;
+  // Read from the rig itself, in the order prepareWorldShadows hands out the caster
+  // slots — a screen pass can run before this frame's shadow setup.
+  let slots = Math.max(0, Math.min(4, rig?.shadows?.maxCasters ?? 2));
+  for (const light of rig?.lights || []) {
+    if (!light.on) continue;
+    const energy = Math.max(0, light.intensity || 0);
+    total += energy;
+    if (light.castShadow !== true || light.type === 'ambient' || light.type === 'hemisphere' || slots <= 0) continue;
+    slots -= 1;
+    // An area light's companion carries only its share of the light.
+    casting += light.type === 'area' ? energy * AREA_SHADOW_SHARE : energy;
+  }
+  return total > 0 ? casting / total : 1;
+}
+
+/**
+ * Rig shadows on self-lit screens (model3dConfig.screens[].receiveShadow).
+ *
+ * A self-lit screen shows its media's own colours — no light, so no shadow either:
+ * a page or a UI a character walks on looked as if he floated over it. An opted-in
+ * screen gets a coplanar ShadowMaterial twin that darkens it by the casting lights'
+ * share where a shadow lands, and by nothing anywhere else, so its colours stay the
+ * media's own. Lit screens take shadows through their lighting already.
+ */
+function syncScreenShadows(entry, config, world, rig) {
+  const list = Array.isArray(config.screens) ? config.screens : [];
+  const on = !!world && config.receiveShadow !== false;
+  const want = new Set();
+  if (on) {
+    (entry.screenSlots || []).forEach((slot, i) => {
+      const s = list[i];
+      if (!s || s.receiveShadow !== true || s.shading === 'lit') return;
+      for (const mesh of slot.screenOriginals?.keys() || []) want.add(mesh);
+    });
+  }
+  const held = entry.screenShadows || (entry.screenShadows = new Map());
+  for (const [mesh, overlay] of held) {
+    if (want.has(mesh) && overlay.parent === mesh) continue;
+    overlay.removeFromParent();
+    held.delete(mesh);
+  }
+  if (!want.size) return;
+  if (!entry.screenShadowMat) {
+    entry.screenShadowMat = new THREE.ShadowMaterial({
+      color: 0x000000, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    });
+  }
+  entry.screenShadowMat.opacity = castingLightShare(rig);
+  for (const mesh of want) {
+    let overlay = held.get(mesh);
+    if (!overlay) {
+      overlay = new THREE.Mesh(mesh.geometry, entry.screenShadowMat);
+      overlay.name = 'Screen shadow';
+      overlay.castShadow = false;
+      overlay.raycast = () => {};
+      // Part of the screen, not a see-through part of the model: it must not switch
+      // on the transparent-depth pass (renderTransparentDepth) for the whole model.
+      overlay.userData.glScreen = true;
+      mesh.add(overlay);
+      held.set(mesh, overlay);
+    }
+    // A planar-UV screen swaps its geometry; the twin follows it.
+    if (overlay.geometry !== mesh.geometry) overlay.geometry = mesh.geometry;
+    overlay.receiveShadow = true;
+    overlay.layers.mask = mesh.layers.mask;
+    overlay.visible = mesh.visible;
+  }
 }
 
 /** Wrap ONLY the scene render — never the tone pass, and always restored. */
@@ -2149,6 +2717,108 @@ function modelFxModule() {
   return null;
 }
 
+/**
+ * What the model's held pose was made from (entry.pose). Records this call's inputs and
+ * says whether they are the held ones. Per frame: a new frameToken always poses again,
+ * so an edit between frames can never reuse a stale pose.
+ */
+function samePoseInputs(entry, frameToken, config, prs, rig, W, H, time) {
+  const held = entry.poseInputs || (entry.poseInputs = []);
+  let i = 0;
+  let same = frameToken != null;
+  const keep = (v) => { if (held[i] !== v) { held[i] = v; same = false; } i += 1; };
+  keep(frameToken); keep(config); keep(time); keep(W); keep(H);
+  keep(prs?.px); keep(prs?.py); keep(prs?.pz); keep(prs?.rx); keep(prs?.ry); keep(prs?.rz);
+  keep(prs?.sx); keep(prs?.sy); keep(prs?.sz);
+  keep(rig?.cyclorama?.shape); keep(rig?.cyclorama?.y);
+  return same;
+}
+
+/**
+ * Where a model is this frame: fit + anchor, the layer transform, its glTF animation
+ * and rig-floor placement. Everything a shadow map needs to see the model, and
+ * nothing that draws.
+ *
+ * With a Rig a model is posed twice a frame — the prepass (poseModelLayer) for the
+ * shared shadow map, then its own pass — with the same inputs: the second call gets
+ * the held pose instead of evaluating the mixer and the floor bounding box again.
+ */
+function poseModel(entry, item, config, prs, rig, W, H, time, frameToken) {
+  if (samePoseInputs(entry, frameToken, config, prs, rig, W, H, time) && entry.pose) return entry.pose;
+  entry.pose = null;
+  // Fit + anchor on the inner group.
+  const fit = computeFit(entry.box, config, W, H);
+  entry.inner.position.copy(fit.offset).multiplyScalar(fit.scale);
+  entry.inner.scale.setScalar(fit.scale);
+  // Publish the fitted footprint so the transform gizmo can size its selection box —
+  // the only thing outside this module that needs to know how big a model draws.
+  setModelFootprint(item.id, fit.size.x * fit.scale, fit.size.y * fit.scale);
+
+  // Layer transform on the outer group. `prs` is the canonical shape the shared
+  // evaluator hands every render path (keyframeParenting.localPrs): px/py/pz in world
+  // pixels, rx/ry/rz already in RADIANS with the editor's sign convention, sx/sy/sz.
+  // Unlike a plane layer — whose z-scale is meaningless and pinned to 1 — a solid
+  // scales on all three axes, so it uses sz too.
+  const base = config.baseRotation || { x: 0, y: 0, z: 0 };
+  const D2R = Math.PI / 180;
+  entry.outer.position.set(prs?.px || 0, prs?.py || 0, prs?.pz || 0);
+  entry.outer.rotation.set(
+    (prs?.rx || 0) - (base.x || 0) * D2R,
+    (prs?.ry || 0) - (base.y || 0) * D2R,
+    (prs?.rz || 0) - (base.z || 0) * D2R,
+    'XYZ'
+  );
+  const sx = Number.isFinite(prs?.sx) && prs.sx > 0 ? prs.sx : 1;
+  const sy = Number.isFinite(prs?.sy) && prs.sy > 0 ? prs.sy : sx;
+  const sz = Number.isFinite(prs?.sz) && prs.sz > 0 ? prs.sz : sx;
+  entry.outer.scale.set(sx, sy, sz);
+
+  // Animation, sampled by ABSOLUTE time. A delta-driven mixer is a function of frame
+  // pacing, which would make export frames drift from preview and scrubbing
+  // irreproducible. Before the floor box, so the box is THIS frame's animated pose
+  // (sampled after it, one pose lagged the animation by a frame).
+  applyModelAnimation(entry, config.animation, time);
+
+  // A model is part of the set, so by default its lowest rendered point rests on
+  // the cyclorama floor. Evaluate the real geometry after fit, rotation and scale;
+  // preset assets have wildly different pivots, which is why a fixed offset made
+  // some devices float. `prs.py` remains a lift above the set, and "Free" in the
+  // inspector restores unconstrained placement.
+  if (rig && config.placeOnRigFloor !== false && CYC_FLOOR_SHAPES.has(rig.cyclorama?.shape)) {
+    entry.outer.updateMatrixWorld(true);
+    _box.setFromObject(entry.root);
+    if (Number.isFinite(_box.min.y)) {
+      const floorY = -H * 0.42 + (rig.cyclorama?.y || 0);
+      entry.outer.position.y += floorY + (prs?.py || 0) - _box.min.y;
+    }
+  }
+  entry.pose = { fit, sx, sy, sz };
+  return entry.pose;
+}
+
+/**
+ * Pose a model for this frame WITHOUT drawing it (engine: before the channel loop).
+ *
+ * The Rig's shadow map is rendered once per frame, by the frame's first 3D pass.
+ * Each model used to be posed only in its own pass, so a model on a later channel
+ * was still in LAST frame's pose when that map was made: in playback its shadow on
+ * everything drawn before it trailed it by a frame. Same opts as renderModelLayer;
+ * only meaningful with a rig.
+ */
+export function poseModelLayer(opts) {
+  const { item, clip, prs, W, H, time } = opts;
+  if (!opts.rig) return;
+  const { ready, entry } = ensureModelInstance(item, clip);
+  if (!ready || !entry) return;
+  const rig = normalizeRig(opts.rig);
+  const world = ensureSharedWorld();
+  joinWorld(world, `m:${item.id}`, entry.outer, entry.scene);
+  const config = item?.model3dConfig || {};
+  setShadowFlags(entry.outer, config.castShadow !== false, config.receiveShadow !== false, true);
+  poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken);
+  entry.lastFrameToken = opts.frameToken ?? 0;
+}
+
 export function renderModelLayer(renderer, opts) {
   const { item, clip, pose, prs, W, H, width, height, time } = opts;
   const { ready, entry, error } = ensureModelInstance(item, clip);
@@ -2217,8 +2887,10 @@ export function renderModelLayer(renderer, opts) {
   // A project Rig layer lights every model in the scene; without one the layer's own
   // model3dConfig does, exactly as it always has.
   syncLightsToScene(world ? world.lightRig : entry.lightRig, rig ? rig.lights : rigLightsForConfig(config));
-  // Models are real solids and always participate when a shared Rig world exists.
-  if (world) setShadowFlags(entry.outer, true, true);
+  // Models are real solids and participate when a shared Rig world exists, unless
+  // the layer opts out (model3dConfig.castShadow / receiveShadow, both default on).
+  // Blended cards inside a model (a baked contact-shadow blob, a glow) never cast.
+  if (world) setShadowFlags(entry.outer, config.castShadow !== false, config.receiveShadow !== false, true);
   // Ground occlusion joins with the world: a model on its own (no rig) has no floor.
   if (world && !entry.groundAO) { applyGroundAO(entry.root); entry.groundAO = true; }
   const hasRigFloor = !!(rig && CYC_FLOOR_SHAPES.has(rig.cyclorama?.shape));
@@ -2227,7 +2899,14 @@ export function renderModelLayer(renderer, opts) {
   entry.lastConfig = config;
 
   // Screen artwork on a preset device, if it has a screen and the user set one.
+  if (!entry.laneKey) entry.laneKey = `scr:${entry.itemId}:device`;
   applyScreen(entry, modelScreenTarget(item), config.screen || null, time);
+  // Media on named meshes of any model (model3dConfig.screens).
+  applyModelScreens(entry, config.screens, time);
+  // Screen depth bias at this pass's size (see SCREEN_DEPTH_BIAS).
+  scaleScreenDepthBias(entry, entry.hdr.height);
+  // Self-lit screens that opt in still take the rig's shadows (screens[].receiveShadow).
+  syncScreenShadows(entry, config, world && rig?.shadows?.mode === 'map' ? world : null, rig);
   // A procedural shape's colour (model3dConfig.primitive.color).
   if (entry.tintMaterials?.length) {
     const tintColor = config.primitive?.color || PRIMITIVE_DEFAULT_COLOR;
@@ -2242,46 +2921,8 @@ export function renderModelLayer(renderer, opts) {
   // plane into the depth compositor (the source of invisible/white contact plates).
   applyContactShadow(entry, hasRigFloor ? { enabled: false } : config.shadow);
 
-  // Fit + anchor on the inner group.
-  const fit = computeFit(entry.box, config, W, H);
-  entry.inner.position.copy(fit.offset).multiplyScalar(fit.scale);
-  entry.inner.scale.setScalar(fit.scale);
-  // Publish the fitted footprint so the transform gizmo can size its selection box —
-  // the only thing outside this module that needs to know how big a model draws.
-  setModelFootprint(item.id, fit.size.x * fit.scale, fit.size.y * fit.scale);
-
-  // Layer transform on the outer group. `prs` is the canonical shape the shared
-  // evaluator hands every render path (keyframeParenting.localPrs): px/py/pz in world
-  // pixels, rx/ry/rz already in RADIANS with the editor's sign convention, sx/sy/sz.
-  // Unlike a plane layer — whose z-scale is meaningless and pinned to 1 — a solid
-  // scales on all three axes, so it uses sz too.
-  const base = config.baseRotation || { x: 0, y: 0, z: 0 };
-  const D2R = Math.PI / 180;
-  entry.outer.position.set(prs?.px || 0, prs?.py || 0, prs?.pz || 0);
-  entry.outer.rotation.set(
-    (prs?.rx || 0) - (base.x || 0) * D2R,
-    (prs?.ry || 0) - (base.y || 0) * D2R,
-    (prs?.rz || 0) - (base.z || 0) * D2R,
-    'XYZ'
-  );
-  const sx = Number.isFinite(prs?.sx) && prs.sx > 0 ? prs.sx : 1;
-  const sy = Number.isFinite(prs?.sy) && prs.sy > 0 ? prs.sy : sx;
-  const sz = Number.isFinite(prs?.sz) && prs.sz > 0 ? prs.sz : sx;
-  entry.outer.scale.set(sx, sy, sz);
-
-  // A model is part of the set, so by default its lowest rendered point rests on
-  // the cyclorama floor. Evaluate the real geometry after fit, rotation and scale;
-  // preset assets have wildly different pivots, which is why a fixed offset made
-  // some devices float. `prs.py` remains a lift above the set, and "Free" in the
-  // inspector restores unconstrained placement.
-  if (rig && config.placeOnRigFloor !== false && CYC_FLOOR_SHAPES.has(rig.cyclorama?.shape)) {
-    entry.outer.updateMatrixWorld(true);
-    _box.setFromObject(entry.root);
-    if (Number.isFinite(_box.min.y)) {
-      const floorY = -H * 0.42 + (rig.cyclorama?.y || 0);
-      entry.outer.position.y += floorY + (prs?.py || 0) - _box.min.y;
-    }
-  }
+  // Fit, layer transform, floor placement and animation (poseModel).
+  const { fit, sx, sy, sz } = poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken);
   if (rig) {
     // Shared by every model's injected material — the floor is the rig's.
     GROUND_AO.uGroundAoY.value = -H * 0.42 + (rig.cyclorama?.y || 0);
@@ -2290,11 +2931,6 @@ export function renderModelLayer(renderer, opts) {
   } else {
     GROUND_AO.uGroundAoOn.value = 0;
   }
-
-  // Animation, sampled by ABSOLUTE time. A delta-driven mixer is a function of frame
-  // pacing, which would make export frames drift from preview and scrubbing
-  // irreproducible.
-  applyModelAnimation(entry, config.animation, time);
 
   // Grow Fill in REAL 3D: per-vertex surface arrival attribute + injected
   // materials (model3dGrowFill.js). null cleanly restores the originals.
@@ -2332,6 +2968,7 @@ export function renderModelLayer(renderer, opts) {
   _box.getCenter(_center);
   _viewCenter.copy(_center).applyMatrix4(cam.matrixWorldInverse);
   const viewDistance = -_viewCenter.z;
+  const viewRange = boxViewRange(_box, cam);
 
   // ── Draw. The renderer is shared, so every piece of state touched here is saved
   // and restored; the composite loop runs with autoClear = false and depends on it.
@@ -2341,7 +2978,7 @@ export function renderModelLayer(renderer, opts) {
   renderer.getClearColor(prevClear);
   const prevClearAlpha = renderer.getClearAlpha();
 
-  const sh = world ? prepareWorldShadows(world, rig, opts.frameToken ?? 0, H) : null;
+  const sh = world ? prepareWorldShadows(world, rig, opts.frameToken ?? 0, H, pcssActive, cam) : null;
 
   renderer.autoClear = false;
   renderer.setRenderTarget(entry.hdr);
@@ -2382,9 +3019,21 @@ export function renderModelLayer(renderer, opts) {
     fxModule.releaseModelFx(entry);
   }
 
+  // Opaque + transparent depth, for the compositor and DOF (see renderTransparentDepth).
+  const transparentDepthTexture = renderTransparentDepth(renderer, entry, scene, cam);
+
+  // Self-lit screens keep their media's own colours (see renderScreenMask).
+  const screenMeshes = screenMeshesOf(entry);
+  const screenMask = screenMeshes.length ? renderScreenMask(renderer, entry, scene, cam, screenMeshes) : null;
+  if (!screenMeshes.length && entry.screenMask) { entry.screenMask.dispose(); entry.screenMask = null; }
+
   const { toneMesh: tm, toneScene: ts, toneCamera: tc } = ensureTonePass();
   tm.material.uniforms.uTexture.value = toneSource;
   tm.material.uniforms.uResolution.value.set(entry.ldr.width, entry.ldr.height);
+  if (tm.material.uniforms.uScreenMask) {
+    tm.material.uniforms.uScreenMask.value = screenMask;
+    tm.material.uniforms.uScreenMaskOn.value = screenMask ? 1 : 0;
+  }
   // The rig owns exposure once there is one; otherwise the layer's own env does.
   tm.material.uniforms.uExposure.value = rig
     ? rig.env.exposure
@@ -2398,7 +3047,10 @@ export function renderModelLayer(renderer, opts) {
   renderer.autoClear = prevAutoClear;
   renderer.setClearColor(prevClear, prevClearAlpha);
 
-  return { texture: entry.ldr.texture, depthTexture: entry.hdr.depthTexture, viewDistance, spillDepth, error: null };
+  return {
+    texture: entry.ldr.texture, depthTexture: entry.hdr.depthTexture, transparentDepthTexture,
+    viewDistance, viewRange, spillDepth, error: null,
+  };
 }
 
 // ── The Rig layer's own pass ────────────────────────────────────────────────
@@ -2553,6 +3205,7 @@ export function renderRigLayer(renderer, opts) {
   _box.getCenter(_center);
   _viewCenter.copy(_center).applyMatrix4(cam.matrixWorldInverse);
   const viewDistance = -_viewCenter.z;
+  const viewRange = boxViewRange(_box, cam);
 
   const prevTarget = renderer.getRenderTarget();
   const prevAutoClear = renderer.autoClear;
@@ -2560,18 +3213,20 @@ export function renderRigLayer(renderer, opts) {
   renderer.getClearColor(prevClear);
   const prevClearAlpha = renderer.getClearAlpha();
 
-  const sh = prepareWorldShadows(world, norm, opts.frameToken ?? 0, H);
+  // Refitted here because this pass re-renders the map anyway (forcePrime below).
+  const sh = prepareWorldShadows(world, norm, opts.frameToken ?? 0, H, pcssActive, cam, true);
   if (cycMat.mode === 'shadowCatcher') {
     // ShadowMaterial otherwise turns a fully blocked key into pure black even
     // when fill lights and the HDR still illuminate the ground. Estimate the
     // fraction of illumination that can be blocked; authored strength stays a
     // multiplier, with contact occlusion supplying the tight ambient grounding.
     let total = Math.max(0, norm.env.intensity || 0), casting = 0;
-    for (const { obj, light } of world.lightRig.byLid.values()) {
+    for (const { obj, shadowObj, light } of world.lightRig.byLid.values()) {
       if (!light.on) continue;
       const energy = Math.max(0, light.intensity || 0);
       total += energy;
-      if (obj.castShadow) casting += energy;
+      // An area light's companion carries only its share of the light.
+      if ((shadowObj || obj).castShadow) casting += shadowObj ? energy * AREA_SHADOW_SHARE : energy;
     }
     entry.cyc.mat.opacity = (cycMat.opacity ?? 1) * (total > 0 ? casting / total : 1);
   }
@@ -2589,6 +3244,7 @@ export function renderRigLayer(renderer, opts) {
   tm.material.uniforms.uTexture.value = entry.hdr.texture;
   tm.material.uniforms.uResolution.value.set(entry.ldr.width, entry.ldr.height);
   tm.material.uniforms.uExposure.value = norm.env.exposure;
+  if (tm.material.uniforms.uScreenMaskOn) tm.material.uniforms.uScreenMaskOn.value = 0;
   renderer.setRenderTarget(entry.ldr);
   renderer.setClearColor(0x000000, 0);
   renderer.clear(true, true, true);
@@ -2604,6 +3260,7 @@ export function renderRigLayer(renderer, opts) {
     // physical surface must not become an invisible wall in the 2D compositor.
     depthTexture: cycMat.mode === 'shadowCatcher' ? null : entry.hdr.depthTexture,
     viewDistance,
+    viewRange,
     error: null,
   };
 }
@@ -2615,40 +3272,54 @@ function proxyDistance(W, H) {
 }
 
 /** Drive the mixer to an absolute clip-local time, honouring speed/offset/loop. */
+// A clip's local time for this playhead, by the layer's loop mode. 'once' stops a hair
+// before the end: three wraps an action that sits EXACTLY on its duration back to frame 0.
+function modelClipTime(t, dur, mode) {
+  if (!(dur > 0)) return 0;
+  if (mode === 'loop') return ((t % dur) + dur) % dur;
+  if (mode === 'pingpong') {
+    const cycle = ((t % (dur * 2)) + dur * 2) % (dur * 2);
+    return cycle <= dur ? cycle : dur * 2 - cycle;
+  }
+  return Math.max(0, Math.min(dur - 1e-4, t));
+}
+
 export function applyModelAnimation(entry, animation, time) {
   if (!entry?.mixer || !entry.animations.length) return;
   const name = animation?.clip || null;
-  const clipDef = name ? entry.animations.find((a) => a.name === name) : null;
-  if (!clipDef) {
+  // '*' plays EVERY clip at once — a scene exported with one action per object
+  // (Blender's glTF exporter) animates as a whole, each clip on its own length.
+  const clipDefs = name === '*'
+    ? entry.animations
+    : (name ? entry.animations.filter((a) => a.name === name).slice(0, 1) : []);
+  if (!clipDefs.length) {
+    for (const a of entry.activeActions || []) a.stop();
+    entry.activeActions = null;
     if (entry.activeAction) { entry.activeAction.stop(); entry.activeAction = null; }
     return;
   }
-  let action = entry.actions.get(clipDef.name);
-  if (!action) {
-    action = entry.mixer.clipAction(clipDef);
-    entry.actions.set(clipDef.name, action);
-  }
-  if (entry.activeAction && entry.activeAction !== action) entry.activeAction.stop();
-  if (!action.isRunning()) { action.reset(); action.play(); }
-  entry.activeAction = action;
+  const want = clipDefs.map((clipDef) => {
+    let action = entry.actions.get(clipDef.name);
+    if (!action) {
+      action = entry.mixer.clipAction(clipDef);
+      entry.actions.set(clipDef.name, action);
+    }
+    return action;
+  });
+  for (const a of entry.activeActions || []) if (!want.includes(a)) a.stop();
+  if (entry.activeAction && !want.includes(entry.activeAction)) entry.activeAction.stop();
+  for (const action of want) if (!action.isRunning()) { action.reset(); action.play(); }
+  entry.activeActions = want;
+  entry.activeAction = want[0];
 
   const speed = Number.isFinite(animation?.speed) ? animation.speed : 1;
   const offset = Number.isFinite(animation?.offset) ? animation.offset : 0;
-  const dur = clipDef.duration || 0;
-  let t = (Number(time) || 0) * speed + offset;
-  if (dur > 0) {
-    const mode = animation?.loop || 'loop';
-    if (mode === 'loop') {
-      t = ((t % dur) + dur) % dur;
-    } else if (mode === 'pingpong') {
-      const cycle = ((t % (dur * 2)) + dur * 2) % (dur * 2);
-      t = cycle <= dur ? cycle : dur * 2 - cycle;
-    } else {
-      t = Math.max(0, Math.min(dur, t));
-    }
-  }
-  // setTime, never update(delta): the pose must be a pure function of the playhead.
-  entry.mixer.setTime(t);
+  const mode = animation?.loop || 'loop';
+  const t = (Number(time) || 0) * speed + offset;
+  // The pose must be a pure function of the playhead: every action is placed at its
+  // own clip time and the mixer is evaluated once, never advanced by a delta.
+  for (const action of want) action.time = modelClipTime(t, action.getClip().duration || 0, mode);
+  entry.mixer.update(0);
 }
 
 // ── World view ──────────────────────────────────────────────────────────────
@@ -2805,6 +3476,10 @@ function disposeInstance(entry) {
   releaseWorldLayer(sharedWorld, `m:${entry.itemId}`);
   entry.hdr?.dispose();
   entry.ldr?.dispose();
+  entry.tdepth?.dispose();
+  entry.tdepth = null;
+  entry.screenMask?.dispose();
+  entry.screenMask = null;
   // Real-3D effect targets (surface buffers, ping-pong, halo pyramid).
   if (entry.fx) fxModule?.releaseModelFx(entry);
   entry.mixer?.stopAllAction();
@@ -2816,6 +3491,11 @@ function disposeInstance(entry) {
     mesh.material = original;
   }
   entry.screenOriginals = null;
+  // Screen-shadow twins share the screen's geometry; only their material is ours.
+  for (const overlay of entry.screenShadows?.values() || []) overlay.removeFromParent();
+  entry.screenShadows = null;
+  entry.screenShadowMat?.dispose();
+  entry.screenShadowMat = null;
   // The contact shadow's plane and material are ours alone.
   if (entry.shadowMesh) {
     entry.shadowMesh.geometry?.dispose?.();
@@ -2832,6 +3512,9 @@ function disposeInstance(entry) {
   // shared asset, so unlike geometry and materials they must be disposed here.
   disposeLightRig(entry.lightRig);
   releaseScreenVideo(entry);
+  // Media slots on named meshes (model3dConfig.screens).
+  for (const slot of entry.screenSlots || []) releaseScreenState(slot);
+  entry.screenSlots = null;
 }
 
 function disposePlateInstance(entry) {
@@ -2933,6 +3616,25 @@ export function groundOcclude(root) {
   applyGroundAO(root);
 }
 
+const AO_CORE = 0.5; // the texture's solid core, as a fraction of its width
+let aoTexture = null;
+function contactOcclusionTexture() {
+  if (aoTexture) return aoTexture;
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const g = c.getContext('2d');
+  const core = size * AO_CORE;
+  const o = (size - core) / 2;
+  g.filter = `blur(${Math.round(size * 0.075)}px)`;
+  g.fillStyle = '#000';
+  g.beginPath();
+  if (g.roundRect) g.roundRect(o, o, core, core, core * 0.22); else g.rect(o, o, core, core);
+  g.fill();
+  aoTexture = new THREE.CanvasTexture(c);
+  return aoTexture;
+}
+
 /** The contact-occlusion texture and the fraction of it that is solid core. */
 export function contactOcclusionMap() {
   return { texture: contactOcclusionTexture(), core: AO_CORE };
@@ -2980,7 +3682,10 @@ export function createRigStage({ compH = 1080, pcss = PCSS_INSTALLED } = {}) {
       return rig;
     },
     dispose() {
-      for (const held of world.lightRig.byLid.values()) held.obj.shadow?.map?.dispose();
+      for (const held of world.lightRig.byLid.values()) {
+        held.obj.shadow?.map?.dispose();
+        held.shadowObj?.shadow?.map?.dispose();
+      }
       disposeLightRig(world.lightRig);
       cyc.mesh?.geometry?.dispose();
       cyc.mat?.dispose();

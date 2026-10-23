@@ -33,7 +33,7 @@ export const RIG_CLIP_DURATION_SECONDS = 5;
 // and keeps the worst-case recompile bounded.
 export const MAX_LIGHTS = 8;
 
-export const LIGHT_TYPES = ['directional', 'point', 'spot', 'ambient', 'hemisphere'];
+export const LIGHT_TYPES = ['directional', 'point', 'spot', 'area', 'ambient', 'hemisphere'];
 export const CYC_SHAPES = ['cyc', 'floor', 'wall', 'corner', 'room', 'cylinder', 'dome', 'disc', 'none'];
 export const CYC_MATERIAL_MODES = ['solid', 'shadowCatcher', 'image'];
 export const ENV_SOURCES = ['preset', 'custom', 'none'];
@@ -124,7 +124,7 @@ const R2D = 180 / Math.PI;
 //   dist  world distance from the rig origin (composition pixels)
 //
 // For a directional light only the direction matters — `dist` positions its shadow
-// camera. For point and spot it is a real position and drives the falloff.
+// camera. For point, spot and area it is a real position and drives the falloff.
 
 // The 3D pass scene is Y-UP — verified by rendering, not assumed: a mesh placed at
 // y = +540 draws at the TOP of the frame. (The editor's 2D layer space is +Y down,
@@ -173,6 +173,32 @@ export function candelaIntensity(uiIntensity, distWorld, decay = 2) {
   // number is already the received light.
   if (k === 0) return ui;
   return ui * Math.pow(d, k);
+}
+
+// ── Area (softbox) intensity ────────────────────────────────────────────────
+//
+// An area light is a lit rectangle: a softbox, a window, a bounce card. three's
+// RectAreaLight takes LUMINANCE, and a surface facing it at distance d receives
+// luminance x area / d^2 (its form factor) — so, like point and spot, the stored
+// number is normalised at apply time to mean what it means on a directional light:
+// what the subject at the light's TARGET receives, whatever the size and distance.
+// A bigger box at the same intensity therefore lights the same amount, only softer.
+export function areaLuminance(uiIntensity, distWorld, width, height) {
+  const ui = num(uiIntensity, 0, 0, Infinity);
+  const d = num(distWorld, 0, 0, Infinity);
+  const area = Math.max(1, num(width, 1, 1, Infinity) * num(height, 1, 1, Infinity));
+  return ui * (d * d) / area;
+}
+
+// A casting area light hands this share of its light to a companion directional
+// that carries the shadow: three's RectAreaLight has no shadow map. The rest stays
+// in the area light, so the broad highlight survives and the shadow reads as the
+// lighter, softer one a large source throws.
+export const AREA_SHADOW_SHARE = 0.5;
+
+/** Where a spot or area light aims, in world px (the rig origin unless set). */
+export function lightTarget(light) {
+  return { x: num(light?.targetX, 0), y: num(light?.targetY, 0), z: num(light?.targetZ, 0) };
 }
 
 // ── Legacy three-light default ──────────────────────────────────────────────
@@ -308,6 +334,11 @@ export function resolveEnvUrl(env) {
 
 export const SHADOW_DEFAULTS = Object.freeze({ mode: 'map', maxCasters: 2 });
 
+// A light's shadowBias / shadowNormalBias are in TEXELS of its shadow map, which is
+// fitted to the camera's view every frame — so one number means the same at any set
+// size, map size or resolution. Unset is automatic (rigSoftShadows.autoShadowBias).
+export const SHADOW_BIAS_MAX = 20;
+
 // Ordinary artwork stays a flat animated plate. These flags only opt that plate
 // into the Rig's shadow map; they never extrude it or turn it into a solid.
 export const SHADOW_PLATE_DEFAULTS = Object.freeze({
@@ -356,6 +387,14 @@ function normalizeLight(raw, index) {
   out.castShadow = raw.castShadow === true;
   out.shadowSoftness = num(raw.shadowSoftness, 1, 0, 10);
   out.shadowMapSize = pick(num(raw.shadowMapSize, 1024, 256, 4096), [256, 512, 1024, 2048, 4096], 1024);
+  // Shadow offsets in texels of the light's fitted map; absent = automatic. Only
+  // stored once set, so a saved rig's shape (and its look hash) is unchanged.
+  if (raw.shadowBias != null && Number.isFinite(Number(raw.shadowBias))) {
+    out.shadowBias = num(raw.shadowBias, 1, 0, SHADOW_BIAS_MAX);
+  }
+  if (raw.shadowNormalBias != null && Number.isFinite(Number(raw.shadowNormalBias))) {
+    out.shadowNormalBias = num(raw.shadowNormalBias, 0.5, 0, SHADOW_BIAS_MAX);
+  }
   if (type === 'point') {
     out.range = num(raw.range, 0, 0, 100000);
     out.decay = num(raw.decay, 2, 0, 4);
@@ -363,6 +402,13 @@ function normalizeLight(raw, index) {
   if (type === 'spot') {
     out.angle = num(raw.angle, 32, 1, 89);
     out.penumbra = num(raw.penumbra, 0.5, 0, 1);
+  }
+  if (type === 'area') {
+    // World px, like `dist`: a softbox is a physical size on the set.
+    out.width = num(raw.width, 800, 1, 100000);
+    out.height = num(raw.height, 800, 1, 100000);
+  }
+  if (type === 'spot' || type === 'area') {
     out.targetX = num(raw.targetX, 0, -100000, 100000);
     out.targetY = num(raw.targetY, 0, -100000, 100000);
     out.targetZ = num(raw.targetZ, 0, -100000, 100000);
@@ -692,12 +738,15 @@ const LIGHT_KF_CHANS = Object.freeze({
   dist: { label: 'Distance', unit: 'px', min: 0, max: 100000, step: 10, neutral: 3000 },
   angle: { label: 'Cone Angle', unit: 'deg', min: 1, max: 89, step: 1, neutral: 32 },
   penumbra: { label: 'Penumbra', unit: '', min: 0, max: 1, step: 0.01, neutral: 0.5 },
+  width: { label: 'Width', unit: 'px', min: 1, max: 100000, step: 10, neutral: 800 },
+  height: { label: 'Height', unit: 'px', min: 1, max: 100000, step: 10, neutral: 800 },
 });
 
 const LIGHT_KF_CHANS_BY_TYPE = Object.freeze({
   directional: ['intensity', 'az', 'elev', 'dist'],
   point: ['intensity', 'az', 'elev', 'dist'],
   spot: ['intensity', 'az', 'elev', 'dist', 'angle', 'penumbra'],
+  area: ['intensity', 'az', 'elev', 'dist', 'width', 'height'],
   ambient: ['intensity'],
   hemisphere: ['intensity'],
 });

@@ -20,8 +20,9 @@ import { canUseDepthParallax, getDepthParallaxEffect, getDepthTexture, getItemDe
 import { arcLengthToParam, contentRectInQuad, fitScaleForCell } from '../gridLayout';
 import { applyGsapEasing, evaluatePropertyTrack, getItemKeyframeValues, itemHasKeyframes } from '../gsapTransitions';
 import { imagePlateSize } from '../imagePlate';
+import { htmlClipPlateSize } from '../htmlClips';
 import { getInlineTextEditId } from '../inlineTextEdit';
-import { localPrs } from '../keyframeParenting';
+import { localPrs, setLayerPivotBox } from '../keyframeParenting';
 import { applyMotionParamKeyframes } from '../motionKf';
 import { drawMotionFrame } from '../motionTemplates';
 import { evaluateObjectMotionPath } from '../objectMotionPath';
@@ -31,10 +32,11 @@ import { measureScreenScale } from '../rasterDensityProject';
 import { isCameraBaked3dPlate, RIG_MEDIA_TYPE } from '../rig3d';
 import { isStrokeShape, resolveLineSettings, SHAPE_PATH_KF_KEY, withShapeSizeKeyframes } from '../shapePath';
 import { animatorsMove as txaAnimatorsMove, boxRects as txaBoxRects, caretRect as txaCaretRect, evaluate as txaEvaluate, glyphFor as txaGlyphFor, grainOf as txaGrainOf, groupBoxes as txaGroupBoxes, hToCanvas as txaHToCanvas, KF_PREFIX as TXA_KF_PREFIX, layerSettings as txaLayerSettings, liveAnimators as txaLiveAnimators, maskedXf as txaMaskedXf, motionKey as txaMotionKey, needsLayout as txaNeedsLayout, paintCss as txaPaintCss, rgbCss as txaRgbCss, unitTransform as txaUnitTransform, warpBegin as txaWarpBegin, warpEnd as txaWarpEnd } from '../textAnimators';
-import { clearTextFootprint, setTextFootprint } from '../textFootprint';
+import { clearTextFootprint, getTextFootprint, setTextFootprint } from '../textFootprint';
 import { buildPlaceholderRun, expandStaticPlaceholders, parsePlaceholderText } from '../textPlaceholders';
 import { DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT, resolveTextFontSize, TEXT_BG_GROW_APPEAR, TEXT_BG_REVEAL_STYLES, TEXT_BG_REVEAL_TYPES, TEXT_BORDER_STYLES, TransitionEasing } from '../types';
 import { getVectorAsset, isVectorMediaUrl } from '../vectorMedia';
+import { setVideoPlate, videoPlateScale } from '../videoPlate';
 import { selectedBackend } from '../videoRenderer';
 import { inverseVideoStabilizationSample, sampleVideoStabilization } from '../videoStabilization';
 import { ensureTextTexture } from './canvasHelpers';
@@ -45,7 +47,7 @@ import { getShapeSvgImage, getShapeTextureLayout, MAX_SHAPE_TEXTURE_DIM } from '
 import { SHAPE_PAINT_KEY_RE, TEXT_PAINT_KEY_RE, activeTextRun, applyTextLetterCase, buildTextRandomPlan, buildWrappedTokens, clamp, densityMotionCtx, drawShapeToCanvas, drawTextBgRevealBar, drawTextDecorationLine, getPlaceholderTexture, getTextPathArcTable, itemPaintFieldSignature, kernBetween, measureTextWithLetterSpacing, motionCtmSafe, paintTextWithLetterSpacing, probeMotionCtx, setActiveTextRun, strokeTextWithLetterSpacing, txaBaseRgb, txaHasTrack, txaScratch } from './textPaint';
 
 export function setupMesh(engine, env, mesh, material, item, clip, video, progress, durationSec = 0, cs = null, overrideTexture = null, parentXform = null, itemFollow = null) {
-  if (mesh?.userData) mesh.userData.cameraBaked3d = false;
+  if (mesh?.userData) { mesh.userData.cameraBaked3d = false; mesh.userData.particlePlate = false; mesh.userData.quadRect = null; mesh.userData.fxFrame = null; mesh.userData.mediaFrac = null; }
   if (!clip) {
     mesh.visible = false;
     return false;
@@ -76,6 +78,13 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
   // ratio. Same geometry rule as a vector layer, no density probe: its texture is
   // already the artwork.
   let isNativeImageLayer = false;
+  // An html clip whose page is not the frame's shape: its plate is the page (htmlClips.js).
+  let isHtmlPagePlate = false;
+  // A video draws on its own picture at its real size (videoPlate.js) — no letterbox
+  // bars. Its effects keep the frame-shaped box (videoFrameW × videoFrameH) around it.
+  let isVideoPlate = false;
+  let videoFrameW = W;
+  let videoFrameH = H;
   // Hoisted above the media branch: the adaptive raster density probe has to pose
   // the mesh before deciding how densely to rasterize it, and posing needs these.
   // Same expression as before, evaluated earlier — nothing between here and its old
@@ -1758,6 +1767,14 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // purely for its lights would try to resolve a video from an empty url.
     texture = null;
   } else {
+    // An html clip's page draws on a plate of the PAGE's shape (htmlClipPlateSize), not
+    // letterboxed into a frame-shaped one whose bars the shader paints opaque black.
+    const htmlPlate = clip.htmlSource ? htmlClipPlateSize(clip, W, H) : null;
+    if (htmlPlate) {
+      layerWidth = htmlPlate.width;
+      layerHeight = htmlPlate.height;
+      isHtmlPagePlate = true;
+    }
     texture = getVideoTextureInEngine(engine, video);
     if (!texture) {
       const fallbackTexture = material.uniforms.uTexture.value;
@@ -1871,6 +1888,26 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     }
   }
 
+  // A video draws on its own picture (videoPlate.js): the contain-fit rect the
+  // shader used to letterbox into, at the clip's REAL size when that is smaller —
+  // so no spare axis is left to paint opaque black. The aspect comes from the
+  // texture (uResolution: this frame, or the last one while a seek is pending) so
+  // the shader's fit is an exact identity; the size comes from the original file,
+  // so a proxy in the preview draws exactly what the export draws.
+  if (!overrideTexture && clip.mediaType === 'video' && !clip.htmlSource && !isHtmlPagePlate) {
+    const res = material.uniforms.uResolution.value;
+    if (res.x > 0 && res.y > 0) {
+      const realSize = videoPlateScale(clip, W, H);
+      const fitted = contentRectInQuad(W, H, res.x, res.y);
+      layerWidth = fitted.w * realSize;
+      layerHeight = fitted.h * realSize;
+      videoFrameW = W * realSize;
+      videoFrameH = H * realSize;
+      isVideoPlate = true;
+      setVideoPlate(item.id, { width: layerWidth, height: layerHeight, frameWidth: videoFrameW, frameHeight: videoFrameH });
+    }
+  }
+
   resetMaterialUniforms(material);
   material.uniforms.uCanvasSize.value.set(layerWidth, layerHeight);
   // EVERY override texture is one of this compositor's own render targets, so its
@@ -1891,6 +1928,10 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // This frame's picture IS a model / Rig 3D pass (a re-lit plate marks itself
     // in promotePlateMesh). Read by the composite's isBakedPass.
     if (clip?.mediaType === 'model3d' || clip?.mediaType === RIG_MEDIA_TYPE) mesh.userData.cameraBaked3d = true;
+    // A particle plate is filmed through the project camera as well, but it is a
+    // single-hop RT (below), so it carries its own flag: its identity quad must not
+    // depth-test or write depth at the composition plane, and nothing else changes.
+    mesh.userData.particlePlate = clip?.mediaType === PARTICLE_MEDIA_TYPE;
     // Particles and ordinary sequence plates are single-hop compositor RTs. On
     // WebGPU their V axis is opposite WebGL when sampled on this perspective
     // plane (lab pair 15; same defect as flipAdjustmentGeoV).
@@ -1971,6 +2012,15 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     cellXform = { prs, type: parentXform.type };
     if (fitted.cropX < 0.999 || fitted.cropY < 0.999) cellCrop = fitted;
   }
+  // The box a Transform origin pivots on (keyframeParenting.js applyPivot): the plate this layer draws on, or for
+  // text the laid-out block on its frame-wide plate. Published before the pose, which reads it.
+  if (item?.keyframeTransformOrigin && item.keyframeTransformOrigin !== 'center') {
+    const plated = clip.mediaType === 'shape' || clip.mediaType === 'text' || isVectorLayer || isNativeImageLayer || isHtmlPagePlate;
+    const fp = clip.mediaType === 'text' ? getTextFootprint(item.id) : null;
+    setLayerPivotBox(item.id, fp
+      ? { w: fp.width, h: fp.height, cx: fp.offsetX, cy: -fp.offsetY }
+      : { w: plated ? layerWidth : videoFrameW, h: plated ? layerHeight : videoFrameH, cx: 0, cy: 0 });
+  }
   applyMeshTransform(mesh, item, keyframeProps, W, H, cellXform, clip, itemFollow);
   // The layer's own scale (item × parenting × cell), before the plate-size and
   // shadow-expand multipliers below. The silhouette framing pass converts its
@@ -1985,7 +2035,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
   // plate is the artwork's own size, which is what makes it import at 1:1 instead
   // of being letterbox-fitted up to the frame — and a raster photo is the fourth,
   // for exactly the same reason: its plate is the picture, at the picture's ratio.
-  if (clip.mediaType === 'shape' || clip.mediaType === 'text' || isVectorLayer || isNativeImageLayer) {
+  // A video's fitted picture is the fifth (videoPlate.js).
+  if (clip.mediaType === 'shape' || clip.mediaType === 'text' || isVectorLayer || isNativeImageLayer || isHtmlPagePlate || isVideoPlate) {
     mesh.scale.x *= layerWidth / W;
     mesh.scale.y *= layerHeight / H;
   }
@@ -1998,11 +2049,14 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
   // applySilhouetteFraming draws them on the isolate after the key, so the box
   // framing here is switched off (the corner radius stays: it clips the plate).
   // A masked media layer's follow the masked silhouette the same way.
+  // A 3D model has no framing at all (the panel hides Border and Shadows): its
+  // plate is the full frame and its depth composite cuts everything past the
+  // silhouette, so a value saved before that would only leave a stray rim.
   const ccCompare = engine.ccCompare;
   const ccProbe = engine.ccProbe;
   applyFilterUniforms(material, item, keyframeProps, {
     reducedMotionPreview: env.interactivePreviewEnabled,
-    disableFraming: clip.mediaType === 'shape' || (clip.mediaType === 'text' && !!item?.textClipMask),
+    disableFraming: clip.mediaType === 'shape' || clip.mediaType === 'model3d' || (clip.mediaType === 'text' && !!item?.textClipMask),
     silhouetteFraming: isChromaKeyEnabled(item) || maskSilhouetteFraming(item, clip),
     disableLetterSpacing: clip.mediaType === 'text',
     // Color Correction: preview-only Before/After split, and the pickers' probe.
@@ -2092,6 +2146,27 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // text) needs the mesh grown by the same ratio or the two disagree.
     mesh.scale.x *= (layerWidth + 2 * planeExpand) / layerWidth;
     mesh.scale.y *= (layerHeight + 2 * planeExpand) / layerHeight;
+  }
+  // A video's masks, roto, effects, pins and AutoFill were all authored against the
+  // frame-shaped box it used to draw on. computeLayerBox grows the drawn quad back to
+  // that box, scaled with the picture (fxFrame), and mediaContentFrac reports where
+  // the picture sits inside it (mediaFrac), so none of them moves off the footage.
+  if (isVideoPlate) {
+    const pad = Math.max(0, planeExpand);
+    mesh.userData.fxFrame = [(videoFrameW + 2 * pad) / (layerWidth + 2 * pad), (videoFrameH + 2 * pad) / (layerHeight + 2 * pad)];
+    mesh.userData.mediaFrac = { cw: layerWidth / videoFrameW, ch: layerHeight / videoFrameH };
+  }
+  // What the layer really draws, in the quad's own units, for the painter's plane test (compositeSortDepth.js
+  // layerQuad): the plate without that shadow pad, and for text only the laid-out block — its plate is the whole
+  // frame, so text standing on a page would otherwise reach through the page and never be sorted in front of it.
+  {
+    const pad = Math.max(0, planeExpand);
+    const kx = W / (layerWidth + 2 * pad);
+    const ky = H / (layerHeight + 2 * pad);
+    const fp = clip.mediaType === 'text' ? getTextFootprint(item.id) : null;
+    mesh.userData.quadRect = fp
+      ? [(fp.offsetX - fp.width / 2) * kx, -(fp.offsetY + fp.height / 2) * ky, (fp.offsetX + fp.width / 2) * kx, -(fp.offsetY - fp.height / 2) * ky]
+      : pad > 0 ? [-layerWidth / 2 * kx, -layerHeight / 2 * ky, layerWidth / 2 * kx, layerHeight / 2 * ky] : null;
   }
   // Per-layer blend mode: composites this clip against the layers below it
   // (framebuffer in the base pass, accumulated render-target in the adjustment

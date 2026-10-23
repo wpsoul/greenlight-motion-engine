@@ -7,14 +7,13 @@
 import * as THREE from 'three';
 import { effectWindowAt } from '../adjustmentEffects';
 import { resumeBlendMode, suspendBlendMode } from '../clipShader';
-import { tieCoplanar } from '../compositeSortDepth';
 import { depthScanPhase, getDepthScanEffect, resolveDepthScanParams } from '../depthScanLayer';
 import { getFresnelRimEffect, isFresnelRimEnabled, resolveFresnelRimParams } from '../fresnelRimLayer';
 import { glassShapeOf, resolveGlassParams } from '../glassEffect';
 import { applyGsapEasing } from '../gsapTransitions';
 import { resolveModelOverlayFx } from '../model3dFxCatalog';
 import { perfRegistry } from '../perfRegistry.js';
-import { isCameraBaked3dPlate, RIG_CHANNEL_KIND, RIG_MEDIA_TYPE } from '../rig3d';
+import { isCameraBaked3dPlate, RIG_MEDIA_TYPE } from '../rig3d';
 import { shapeBoxSize, shapeCornerRadii, withShapeSizeKeyframes } from '../shapePath';
 import { shapePlateAt } from './meshTransform';
 import { PREVIEW_TIER } from './previewMedia';
@@ -70,73 +69,9 @@ export const _dofWorld = new THREE.Vector3();
 
 export const _dofView = new THREE.Vector3();
 
-// Compositing order.
-//
-// Channel order is a TIMELINE concern; what occludes what is decided by depth. Visual
-// layers are therefore composited back-to-front by their view-space distance, so a
-// layer with a nearer panZ really does come forward past a layer on a higher channel.
-//
-// Adjustment layers and clip masks are the deliberate exception: they are defined as
-// "everything BELOW me in the stack", so they act as barriers. Everything beneath one
-// is flushed into the accumulation buffer before it runs, which keeps its meaning
-// exactly as it is today. The consequence — two layers separated by an adjustment
-// cannot sort against each other — is the direct price of that exception, and it
-// matches how an adjustment layer behaves as a compositing boundary elsewhere.
-//
-// Ties keep channel order, and every layer defaults to panZ 0, so a project with no
-// depth authored sorts precisely as it always has.
-// The Rig channel is the one exception to the exception. It is pinned near the TOP of
-// the stack (directly under the camera) because a set and its lens read as one block
-// in the timeline — but a cyclorama is the BACKDROP, so it must composite first. Depth
-// sorting would normally get that right on its own, since the cyclorama is the farthest
-// thing in the frame; an adjustment layer or clip mask anywhere below it is a sort
-// barrier, and the rig would then land on top of everything under that barrier and
-// paint the comp out. Hoisting it here keeps its timeline position independent of what
-// it draws behind.
-// planeOf (optional): a channel → the plane its layer lies on (layerPlane) — layers sharing a tilted plane (a card
-// rotated in 3D and what lies on it) sort as one, keeping their channel order (compositeSortDepth.js).
-export function orderChannelsForComposite(channels, adjById, depthOf, planeOf) {
-  const out = [];
-  let run = [];
-  const flush = () => {
-    if (run.length > 1) {
-      const entries = run.map((channel, i) => ({ channel, i, d: depthOf(channel), plane: planeOf ? planeOf(channel) : null }));
-      if (planeOf) tieCoplanar(entries);
-      run = entries
-        // Farthest first: later draws land on top.
-        .sort((a, b) => (b.d - a.d) || (a.i - b.i))
-        .map((e) => e.channel);
-    }
-    for (const c of run) out.push(c);
-    run = [];
-  };
-  for (const channel of channels) {
-    if (channel.kind === RIG_CHANNEL_KIND) out.push(channel);
-  }
-  for (const channel of channels) {
-    if (channel.kind === RIG_CHANNEL_KIND) continue;
-    // A camera-LOCKED channel is a sort barrier for the same reason an adjustment
-    // layer is, and this one is not a nicety — it is a correctness bug without it.
-    //
-    // cameraForChannel films a locked channel with the NEUTRAL camera and every
-    // other channel with the POSED one. Their depths are therefore measured from
-    // two different cameras, so sorting them against each other compares
-    // distances that do not live in the same space. The moment the posed camera
-    // dollies back (camDolly < 0) every layer that follows it sorts BEHIND a
-    // locked layer that never moved — and a locked full-frame plate is opaque, so
-    // everything else in the comp vanishes mid-shot. Exactly what a tracked
-    // camera does: reproduce a shot that dollies, and the overlays disappear when
-    // its dolly crosses zero.
-    //
-    // Treating it as a barrier gives After Effects' rule: a 2D layer breaks the
-    // run of 3D layers and composites in STACKING order, while the 3D layers on
-    // either side still sort among themselves.
-    if (adjById.has(channel.id) || channel.cameraLocked) { flush(); out.push(channel); }
-    else run.push(channel);
-  }
-  flush();
-  return out;
-}
+// Compositing order: orderChannelsForComposite lives in compositeSortDepth.js (a leaf module, so
+// the node tests can reach it); re-exported here for the engine modules that import it from this one.
+export { orderChannelsForComposite } from '../compositeSortDepth';
 
 // The layer's quad in the plate's own uv space — the coordinate frame a layer
 // effect runs in. The chain always works on a full-frame plate, so without this
@@ -318,6 +253,27 @@ export function resolveModelFx3d(item, kfNow, clipNow, duration) {
 }
 
 export const PERF_SAMPLE_MS = 800;
+
+/*
+ * The composition camera's near plane, from its distance to the comp plane.
+ *
+ * Every depth comparison in the compositor — a flat layer against a model, two
+ * models against each other, coplanar layers 0.1 px apart — happens in a 24-bit
+ * depth buffer, and a perspective depth buffer's resolution is near / z²: at the
+ * old fixed near of 1 px one step was 0.15 px at 1600 px and 1 px at 4000 px. A
+ * card 2–3 px above a page model was then a handful of steps away, inside the noise
+ * of rasterizing a page triangle that runs metres off screen, and which surface won
+ * changed with the camera pose and the preview resolution: a widget or a stacked
+ * plate on the page flickered with the page while the Draft preview played. Tying
+ * near to the camera distance (1/64 of it: 34 px at 1080p) makes those comparisons
+ * ~34× finer. Only what comes within that distance of the lens is clipped — a layer
+ * there is magnified ~64× and fills the frame with a blur of a few of its pixels.
+ */
+export const COMPOSITE_NEAR_RATIO = 1 / 64;
+
+export function compositeNearPlane(distance) {
+  return Math.max(1, (Number(distance) || 0) * COMPOSITE_NEAR_RATIO);
+}
 
 export function getPerspectiveDistance(height, fovDeg = CAMERA_FOV) {
   const fovRad = THREE.MathUtils.degToRad(fovDeg);

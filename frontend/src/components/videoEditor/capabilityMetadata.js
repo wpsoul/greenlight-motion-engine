@@ -89,7 +89,7 @@ export function overlayEffectMetadata(definition, { defaultClip = false } = {}) 
     // PRO effects preview free and gate at render (Neon Glow) — advertised so
     // agents can warn before building a paywalled composition.
     pro: Boolean(definition.pro),
-    defaultMix: 100,
+    defaultMix: Number.isFinite(definition.defaultMix) ? definition.defaultMix : 100,
     defaultClip: Boolean(defaultClip),
     params,
     defaultParams: Object.fromEntries(params.map((param) => [param.key, cloneJson(param.default, null)])),

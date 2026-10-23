@@ -5,7 +5,9 @@ import { useVideoEditorStore } from './videoEditorStore';
 import { getTimelineLayout } from './speedUtils';
 import { getModelFootprint } from './model3dFootprint';
 import { imagePlateSize, subscribeImagePlate } from './imagePlate';
+import { htmlClipPlateSize } from './htmlClips';
 import { getTextFootprint, subscribeTextFootprint } from './textFootprint';
+import { getVideoPlate, subscribeVideoPlate } from './videoPlate';
 import { projectFramePoint } from './projectCamera';
 import { getItemKeyframeValues, evaluatePropertyTrack, evaluatePathTrack, itemHasKeyframes } from './gsapTransitions';
 import {
@@ -271,6 +273,9 @@ export function activeLayers(channels, clipsMap, time, width, height, fps = 30, 
       // SVG, and any raster photo that fits inside the frame — so its box is the
       // artwork, not the frame. Until it has decoded (or when it is bigger than the
       // frame and therefore fitted into it), the frame is the only honest fallback.
+      // A video's plate is the frame-shaped box its masks, pins and tracking were drawn
+      // on, shrunk with the picture when the clip is smaller than the frame (videoPlate.js).
+      const videoPlate = clip.mediaType === 'video' && !clip.htmlSource ? getVideoPlate(item.id) : null;
       const baseSize = clip.mediaType === 'shape'
         ? shapeSize(withShapeSizeKeyframes(item, keyProps), width, height)
         : isNullClip(clip)
@@ -279,7 +284,11 @@ export function activeLayers(channels, clipsMap, time, width, height, fps = 30, 
           ? (getModelFootprint(item.id) || { width, height })
           : clip.mediaType === 'image'
             ? (imagePlateSize(clip, width, height) || { width, height })
-            : { width, height };
+            : (clip.mediaType === 'html' || clip.htmlSource)
+              ? (htmlClipPlateSize(clip, width, height) || { width, height })
+              : videoPlate
+                ? { width: videoPlate.frameWidth, height: videoPlate.frameHeight }
+                : { width, height };
       // ── The SELECTION box, when it isn't the layer quad ──
       // A text layer draws on a frame-sized plate with the words placed inside it, so
       // the quad above is the whole preview however small the text is. The draw
@@ -304,6 +313,16 @@ export function activeLayers(channels, clipsMap, time, width, height, fps = 30, 
           cy: centre.cy + ox * Math.sin(rot) + oy * Math.cos(rot),
           width: footprint.width * sx,
           height: footprint.height * sy,
+        };
+      }
+      // A video draws only its picture (videoPlate.js) — the gizmo hugs that, while
+      // masks, pins and tracking keep the frame-shaped plate above.
+      if (videoPlate && (videoPlate.width < videoPlate.frameWidth - 0.5 || videoPlate.height < videoPlate.frameHeight - 0.5)) {
+        box = {
+          cx: centre.cx,
+          cy: centre.cy,
+          width: videoPlate.width * sx,
+          height: videoPlate.height * sy,
         };
       }
       layers.push({
@@ -608,13 +627,15 @@ export default function PreviewTransformOverlay({
   const clipsMap = useMemo(() => new Map(clips.map((clip) => [clip.id, clip])), [clips]);
   // Some layers only learn their box from the render loop: an image layer's own
   // artwork size (SVG always, a raster photo that fits inside the frame) once the
-  // file has decoded, and a text layer's laid-out block once it has been drawn. Both
-  // land outside React (the Player redraws its canvas without re-rendering anyone),
-  // so without these the gizmo would keep the frame-sized fallback until some
+  // file has decoded, a video's fitted picture once a frame has been drawn, and a
+  // text layer's laid-out block once it has been drawn. All land outside React
+  // (the Player redraws its canvas without re-rendering anyone), so without these
+  // the gizmo would keep the frame-sized fallback until some
   // unrelated state change happened to recompute the memo.
   const [vectorVersion, setVectorVersion] = useState(0);
   useEffect(() => subscribeImagePlate(() => setVectorVersion((version) => version + 1)), []);
   useEffect(() => subscribeTextFootprint(() => setVectorVersion((version) => version + 1)), []);
+  useEffect(() => subscribeVideoPlate(() => setVectorVersion((version) => version + 1)), []);
   const layers = useMemo(
     () => activeLayers(channels, clipsMap, currentTime, videoWidth, videoHeight, fps, { shownNullId: selectedItemId }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- vectorVersion is a recompute trigger, not an input

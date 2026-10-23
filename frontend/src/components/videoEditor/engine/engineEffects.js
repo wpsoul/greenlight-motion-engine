@@ -15,6 +15,7 @@ import { onBakeLanded } from '../asyncBakes';
 import { onDepthTextureLoaded } from '../depthParallax';
 import { setHtmlLiveFrameListener } from '../htmlLive';
 import { subscribeImagePlate } from '../imagePlate';
+import { subscribeVideoSize } from '../videoPlate';
 import { subscribeInlineTextEdit } from '../inlineTextEdit';
 import { initMaterialBackend } from '../materialFactory';
 import { setMockupSvgInvalidate } from '../mockupFrame';
@@ -494,9 +495,11 @@ export function watchEffectPackages(engine) {
 }
 
 export function repaintOnImagePlates(engine) {
-  return subscribeImagePlate(() => {
-    engine.renderFrame?.();
-  });
+  const repaint = () => { engine.renderFrame?.(); };
+  // A video's real size lands the same way (videoPlate.js): until then it fits the frame.
+  const offImage = subscribeImagePlate(repaint);
+  const offVideo = subscribeVideoSize(repaint);
+  return () => { offImage(); offVideo(); };
 }
 
 export function repaintOnMotionMediaFrames(engine) {

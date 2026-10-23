@@ -34,6 +34,27 @@ export function htmlClipCanvasSize(clip, videoSize) {
   return { w: Math.round(Number(videoSize?.w) || 1920), h: Math.round(Number(videoSize?.h) || 1080) };
 }
 
+// The plate an html clip's layer draws on, in composition px: the PAGE's shape, fit into
+// the frame the way the clip shader fits a picture (so at zoom 1 the page is exactly as
+// big as before, only without the bars). A video-type layer draws on a frame-sized
+// plate and letterboxes its picture into it, painting the bars OPAQUE BLACK — fine for
+// a video, wrong for a page: a 300x160 counter or a portrait card sat on a black 16:9
+// slab, its transparent background included. null — no size of its own, or the frame's
+// shape (within the shader's 0.01 tolerance) — keeps the frame-sized plate unchanged.
+// Takes the editor's html clip (`html`) or the Player's clip (`htmlCanvas`).
+export function htmlClipPlateSize(clip, frameW, frameH) {
+  if (!clip || !(clip.htmlSource || isHtmlClip(clip))) return null;
+  const w = Number(clip.htmlCanvas?.width) || Number(clip.html?.width) || 0;
+  const h = Number(clip.htmlCanvas?.height) || Number(clip.html?.height) || 0;
+  if (!(w >= 1 && h >= 1) || !(frameW > 0) || !(frameH > 0)) return null;
+  const aspect = w / h;
+  const frameAspect = frameW / frameH;
+  if (Math.abs(aspect - frameAspect) <= 0.01) return null;
+  return aspect > frameAspect
+    ? { width: frameW, height: frameW / aspect }
+    : { width: frameH * aspect, height: frameH };
+}
+
 export function htmlFpsToken(fps) {
   const v = Number(fps) || 30;
   if (Math.abs(v - Math.round(v)) < 1e-6) return String(Math.round(v));

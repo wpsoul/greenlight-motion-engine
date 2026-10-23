@@ -71,8 +71,8 @@ export function deriveTransitionSoundCues({ channels, clipsMap, layoutMap, trans
   return cues;
 }
 
-export function deriveParentIndex({ channels, layoutMap }) {
-  return buildParentIndex(channels, (ch) => layoutMap.get(ch.id));
+export function deriveParentIndex({ channels, layoutMap, clipsMap = null }) {
+  return buildParentIndex(channels, (ch) => layoutMap.get(ch.id), clipsMap ? (item) => clipsMap.get(item.clipId) : null);
 }
 
 export function deriveTextFontLoadRequest({ channels, clipsMap }) {

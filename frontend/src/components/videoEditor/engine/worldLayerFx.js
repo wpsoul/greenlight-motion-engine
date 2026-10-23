@@ -90,6 +90,9 @@ export function prepareWorldLayerFx(engine, layers, t) {
       used.add(item.id);
       fx.mesh.geometry = geo;
       fx.mesh.material = material;
+      // A video's mask lives in the frame-sized box around its picture (layerMesh.js fxFrame), not on the card.
+      fx.mesh.userData.fxFrame = mesh.userData?.fxFrame || null;
+      fx.mesh.userData.mediaFrac = mesh.userData?.mediaFrac || null;
       const cam = fx.camera;
       cam.left = bb.min.x;
       cam.right = bb.max.x;

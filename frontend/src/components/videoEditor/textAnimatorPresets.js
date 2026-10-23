@@ -39,16 +39,37 @@ const factory = function (T) {
   const KIN_TILE = 'Text in\nmotion';
   const SWEEP_SAMPLE = 'Build a premium, modern sports-tech\nlanding page for a running performance\napp with a full-screen cinematic hero\nand a bold white headline about speed';
 
-  // Glide Soft started as the AE "External Storage" word (GREEN PROJECT.aep, Pre-comp 18):
-  // a hard typewriter (Start 0→100, Smoothness 0, AE's 33 %/100 % ease = 'AE In'; spaces
-  // take no turn) and a blue blob matted to the letters that lags the typing and then
-  // overtakes it (a band as wide as the text). Its timing and its glide are the owner's,
-  // from the "Current" board's Project 1 (2026-10-17, a 2.4 s layer): typing 0–0.93 s,
+  // Glide Text (the default, first in the list) = the AE "External Storage" word (GREEN
+  // PROJECT.aep, Pre-comp 18), fitted to its render frame by frame: a hard typewriter (Start
+  // 0→100, Smoothness 0, AE's 33 %/100 % ease = 'AE In'; 1.0 s here, as spaces take no
+  // turn), a blue blob matted to the letters that lags the typing and then overtakes it (a
+  // band as wide as the text, its Offset path within 3 % of the blob's), and the word gliding
+  // left on the typing's own curve, so it SETTLES when the typing ends and holds. The AE layer
+  // just cut to the next word; the exit keeps going left and fades. Shipped as Glide Type
+  // (12.0.56), replaced by Glide Soft in 14.0.82, restored under this name (owner, 2026-10-23:
+  // agents put the never-resting glide on every text).
+  const GLIDE_TEXT = { id: 'glide-text', name: 'Glide Text', cat: 'sweep', sides: 'inOut', anchor: 'start', sample: 'External Storage',
+    labLayer: { size: 110, weight: 400, align: 'left', stage: '#05070a' },
+    description: 'Letters type in as the word glides left under a chasing blue band and settles, then it slides off to the left',
+    animators: [
+      { name: 'Type', range: { smooth: 0 },
+        effects: [['opacity', { opacity: 0 }]],
+        keys: { start: [[0, 0, 'AE In'], [1.0, 100]] } },
+      { name: 'Blue band', range: { start: 0, end: 100, shape: 'smooth', easeHigh: 40 },
+        effects: [['fill', { color: '#3e59ad' }]],
+        keys: { offset: [[0.3, -58, 'Power1 Out'], [1.3, 101]] } },
+      { name: 'Glide in', range: { around: 'all' },
+        effects: [['position', { x: em(2.5), y: 0 }]],
+        keys: { amount: [[0, 100, 'AE In'], [1.0, 0]] } },
+      { name: 'Glide out', range: { drive: 'time', animate: 'out', around: 'all', stagger: 0, duration: 0.5, curve: 'Power2 In' },
+        effects: [['position', { x: em(-1.5), y: 0 }], ['opacity', { opacity: 0 }]] }] };
+  // Glide Continuous (was Glide Soft, 14.0.82) is the same word with the owner's timing and
+  // glide, from the "Current" board's Project 1 (2026-10-17, a 2.4 s layer): typing 0–0.93 s,
   // the band 0.14–1.13 s, and the word gliding from +2.5 em to −2.5 em over the WHOLE
   // layer (that animator anchors to 'clip') on Smooth Glide — fast in, a slow pass
-  // through the middle, fast on. The exit keeps going left and fades. Glide Soft Stop
-  // glides on Glide Easing Stop instead: it all but stops in the middle.
-  const glideSoft = (id, name, curve, description) => ({
+  // through the middle, fast on: it never rests. The exit keeps going left and fades.
+  // Glide Soft Stop glides on Glide Easing Stop instead: it all but stops in the middle.
+  const glideThrough = (id, name, curve, description) => ({
     id, name, cat: 'sweep', sides: 'inOut', anchor: 'start', sample: 'External Storage',
     labLayer: { size: 110, weight: 400, align: 'left', stage: '#05070a' },
     description,
@@ -68,10 +89,11 @@ const factory = function (T) {
 
   const PRESETS = [
     // ── Sweep Reveal ──
-    glideSoft('glide-soft', 'Glide Soft', 'Smooth Glide',
-      'Letters type in under a chasing blue band as the word glides through, slow in the middle, then slides off to the left'),
-    glideSoft('glide-soft-stop', 'Glide Soft Stop', 'Glide Easing Stop',
-      'The same typing and band, but the word all but stops in the middle of its glide, then slides off to the left'),
+    GLIDE_TEXT,
+    glideThrough('glide-continuous', 'Glide Continuous', 'Smooth Glide',
+      'Letters type in under a chasing blue band as the word keeps gliding through the whole layer, slow in the middle, then slides off to the left'),
+    glideThrough('glide-soft-stop', 'Glide Soft Stop', 'Glide Easing Stop',
+      'The same typing and band, but the word glides through the whole layer and all but stops in the middle, then slides off to the left'),
     // The other ten: two animators each — the letters arrive one by one, fading in on the way
     // down, and a colour band (range 20–80, Smooth) runs across the text and
     // leaves it in the layer's own colour. They differ in how the letters land

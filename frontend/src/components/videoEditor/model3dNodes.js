@@ -12,9 +12,9 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, If, Discard, uniform, uv, vec2, vec3, vec4, clamp, select, max, diffuseColor, materialOpacity, screenUV, positionView, positionGeometry,
   float, int, ivec2, Loop, reference, renderGroup, texture, textureLoad, floor, exp2, min, abs,
-  vogelDiskSample, fract, dot, log2, fwidth, positionWorld,
+  vogelDiskSample, fract, dot, log2, fwidth, positionWorld, mix, dFdx, dFdy, length,
 } from 'three/tsl';
-import { veDisplayTransform } from './threeDisplayTransformNodes.js';
+import { veDisplayTransform, veToSRGB } from './threeDisplayTransformNodes.js';
 import { makeTslSampler } from './tslSampler.js';
 
 /** Null-safe binding facade; see tslSampler.js. */
@@ -42,6 +42,14 @@ export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, dept
   const l0 = floor(lv);
   const level = select(pcssHash3(floor(positionWorld.div(exp2(l0))).add(17)).lessThan(fract(lv)), l0.add(1), l0);
   const phi = pcssHash3(floor(positionWorld.div(exp2(level)))).mul(Math.PI * 2).toVar();
+  // WebGL's pcssReceiverSlope: the receiver's own depth gradient across the map, so
+  // every tap compares against the receiving surface's plane at that tap (no acne
+  // bands on slanted faces). Up front for the same reason as phi.
+  const sdx = dFdx(shadowCoord.xyz), sdy = dFdy(shadowCoord.xyz);
+  const det = sdx.x.mul(sdy.y).sub(sdx.y.mul(sdy.x));
+  const g = select(abs(det).greaterThan(1e-14),
+    vec2(sdx.z.mul(sdy.y).sub(sdx.y.mul(sdy.z)), sdx.x.mul(sdy.z).sub(sdx.z.mul(sdy.x))).div(det), vec2(0));
+  const dzUv = g.mul(min(float(1), float(16).div(max(length(g), 1e-9)))).toVar();
   const sum = float(0).toVar(), count = float(0).toVar();
   const nB = int(min(mapSize.x, 16)), nF = int(min(mapSize.x, 32));
   Loop({ start: int(0), end: nB, type: 'int', condition: '<' }, ({ i }) => {
@@ -50,7 +58,8 @@ export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, dept
     let sample = textureLoad(depthTexture, pixel);
     if (depthTexture.isArrayTexture) sample = sample.depth(depthLayer);
     const d = sample.r;
-    If(builder.renderer.reversedDepthBuffer ? d.greaterThan(shadowCoord.z) : d.lessThan(shadowCoord.z), () => {
+    const zr = shadowCoord.z.add(dot(dzUv, offset));
+    If(builder.renderer.reversedDepthBuffer ? d.greaterThan(zr) : d.lessThan(zr), () => {
       sum.addAssign(d); count.addAssign(1);
     });
   });
@@ -60,9 +69,10 @@ export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, dept
     const penumbra = min(separation.mul(k), cap).add(1.5).div(mapSize.x);
     const lit = float(0).toVar();
     Loop({ start: int(0), end: nF, type: 'int', condition: '<' }, ({ i }) => {
-      let sample = texture(depthTexture, shadowCoord.xy.add(vogelDiskSample(i, nF, phi).mul(penumbra)));
+      const o = vogelDiskSample(i, nF, phi).mul(penumbra);
+      let sample = texture(depthTexture, shadowCoord.xy.add(o));
       if (depthTexture.isArrayTexture) sample = sample.depth(depthLayer);
-      lit.addAssign(sample.compare(shadowCoord.z));
+      lit.addAssign(sample.compare(shadowCoord.z.add(dot(dzUv, o))));
     });
     result.assign(lit.div(float(nF)));
   });
@@ -107,6 +117,10 @@ export function createModelTonePassNodeMaterial() {
     uResolution: uniform(new THREE.Vector2(1, 1)),
     uExposure: uniform(1),
     uDisplay: uniform(1),
+    // Screens (model3dConfig.screen/screens): coverage of display-referred media,
+    // which skips the scene's tone curve — see model3dTonePass.js.
+    uScreenMask: makeSampler(),
+    uScreenMaskOn: uniform(0),
   };
 
   const material = new THREE.MeshBasicNodeMaterial();
@@ -134,7 +148,9 @@ export function createModelTonePassNodeMaterial() {
      * moment it starts catching a shadow: ACES desaturates it, and a bare encode
      * washes it out (the second sRGB encode of #e11d48 is #f15f91 — measured).
      */
-    const mapped = select(u.uDisplay.greaterThan(0.5), veDisplayTransform(lin, u.uExposure), lin);
+    const scene = select(u.uDisplay.greaterThan(0.5), veDisplayTransform(lin, u.uExposure), lin);
+    const screen = u.uScreenMask.sample(screenUV).r.mul(u.uScreenMaskOn);
+    const mapped = mix(scene, veToSRGB(lin), screen);
     return vec4(mapped.mul(a), a);
   })();
 

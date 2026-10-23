@@ -433,6 +433,39 @@ export const api = {
   socialTrendsHide: (mbId, frameId, cardId) =>
     request(`/moodboards/${mbId}/social/trends/${frameId}/items/${cardId}/hide`, { method: "POST", body: JSON.stringify({}) }),
 
+  // AI Social posting: the Posts frame (data.social.kind "posts") and its post cards
+  // (data.social.kind "post"). Every change goes through these; the backend lays the
+  // frame out again and the canvas reads the result back.
+  // → { accounts, connections }: each account posts through one of the posting connections
+  socialAccounts: () => request(`/social/accounts`),
+  socialPutAccounts: (accounts) => request(`/social/accounts`, { method: "PUT", body: JSON.stringify({ accounts }) }),
+  socialAllPosts: (limit = 50) => request(`/social/posts?limit=${limit}`),
+  socialPostsCreate: (mbId, body = {}) =>
+    request(`/moodboards/${mbId}/social/posts`, { method: "POST", body: JSON.stringify(body) }),
+  socialPostsGet: (mbId, frameId) => request(`/moodboards/${mbId}/social/posts/${frameId}`),
+  socialPostsLayout: (mbId, frameId) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/layout`, { method: "POST", body: JSON.stringify({}) }),
+  socialPostsLook: (mbId, frameId, look) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/look`, { method: "PUT", body: JSON.stringify({ look }) }),
+  socialPostsSettings: (mbId, frameId, settings) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/settings`, { method: "PUT", body: JSON.stringify(settings) }),
+  // → { card_id, post, problems }
+  socialPostAdd: (mbId, frameId, body) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/items`, { method: "POST", body: JSON.stringify(body) }),
+  socialPostEdit: (mbId, frameId, cardId, body) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/items/${cardId}`, { method: "PUT", body: JSON.stringify(body) }),
+  // action: approve | cancel | unschedule | retry | post-now | next-slot | remove
+  socialPostAction: (mbId, frameId, cardId, action) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/items/${cardId}/${action}`, { method: "POST", body: JSON.stringify({}) }),
+
+  // Connections (Settings ▸ Social ▸ Accounts): named accounts and sites for posting and Support. Keys go in, never out.
+  connectionsList: (type) => request(`/connections${type ? `?type=${encodeURIComponent(type)}` : ""}`),
+  connectionCreate: (body) => request(`/connections`, { method: "POST", body: JSON.stringify(body) }),
+  connectionUpdate: (id, body) => request(`/connections/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) }),
+  connectionDelete: (id) => request(`/connections/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // → { ok, who?, channels?, abilities?, error? }
+  connectionTest: (id) => request(`/connections/${encodeURIComponent(id)}/test`, { method: "POST", body: JSON.stringify({}) }),
+
   // WordPress export
   listWordpressSites: () => request("/wordpress/sites"),
   addWordpressSite: (site) => request("/wordpress/sites", { method: "POST", body: JSON.stringify(site) }),
@@ -1095,11 +1128,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  importPipelinePreset: (boardId, presetId, position = null) =>
+  // starterText (AI Workflows ▸ My workflows ▸ Run): the placed copy's Starter note says this instead
+  importPipelinePreset: (boardId, presetId, position = null, starterText = null) =>
     request(`/moodboards/${encodeURIComponent(boardId)}/pipelines/import-preset`, {
       method: "POST",
-      body: JSON.stringify({ preset_id: presetId, position }),
+      body: JSON.stringify({ preset_id: presetId, position, ...(starterText != null ? { starter_text: starterText } : {}) }),
     }),
+  // what a local preset places: { steps: [{ name, role }], counts: { pictures, videos, notes, … }, starter: text | null }
+  getPipelinePresetSummary: (presetId) => request(`/pipelines/presets/${encodeURIComponent(presetId)}/summary`),
   importPipelinePresetFile: async (boardId, file, position = null) => {
     const form = new FormData();
     form.append("file", file);
@@ -1240,6 +1276,15 @@ export const api = {
   // `has_data: false`, so switching to one must fetch it with getVideoProject.
   listVideoProjects: (mbId, { activeDataOnly = false } = {}) =>
     request(`/moodboards/${mbId}/video-projects${activeDataOnly ? '?data=active' : ''}`),
+  // No payloads at all: names, summaries and pictures (the canvas's Video Editor project picker).
+  listVideoProjectCards: (mbId) => request(`/moodboards/${encodeURIComponent(mbId)}/video-projects?data=none`),
+  // {counts: {boardId: n}} for the boards that have video projects.
+  getVideoProjectCounts: () => request(`/video-projects/counts`),
+  // What a Video Editor project card shows (name, board name, summary, pictures); 404 once the project is removed.
+  getVideoProjectCard: (mbId, projectId) =>
+    request(`/moodboards/${encodeURIComponent(mbId)}/video-projects/${encodeURIComponent(projectId)}/card`),
+  getVideoProjectGlvideoUrl: (mbId, projectId) =>
+    `${API}/moodboards/${encodeURIComponent(mbId)}/video-projects/${encodeURIComponent(projectId)}/glvideo`,
   getVideoProjectsRefreshRevision: (mbId) => request(`/moodboards/${mbId}/video-projects-refresh-revision`),
   getVideoProject: (mbId, projectId) => request(`/moodboards/${mbId}/video-projects/${projectId}`),
   // Search everything (⌘K): the cards on other boards whose title matches (the open board's own come from the canvas).

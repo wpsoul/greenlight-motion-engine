@@ -19,6 +19,7 @@
  */
 import * as THREE from 'three';
 import { createVideoRenderer } from '../videoRenderer';
+import { compositeNearPlane } from './compositeHelpers';
 
 export function createEngineRenderer(engine, {
   canvas, backend, width, height, fov, distance,
@@ -59,7 +60,8 @@ export function createEngineRenderer(engine, {
   }).catch(() => { /* the ready path already reports its own failure */ });
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(fov, width / height, 1, 100000);
+  // Near tied to the comp distance: depth precision (compositeHelpers.compositeNearPlane).
+  const camera = new THREE.PerspectiveCamera(fov, width / height, compositeNearPlane(distance), 100000);
   camera.position.set(0, 0, distance);
   camera.lookAt(0, 0, 0);
 

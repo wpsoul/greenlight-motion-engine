@@ -67,6 +67,23 @@ const PCSS_DIR = `#else
 			capTexels = max( ( packed - kq * 1024.0 ) * 0.25, 1.0 );
 			k = exp2( kq / 256.0 ) - 1.0;
 		}
+		// Receiver-plane depth bias: how the receiver's own map depth changes across
+		// the map (d depth / d uv), from screen derivatives. Every tap compares against
+		// the receiver's plane AT THAT TAP rather than its depth at the centre — on a
+		// slanted face the disk otherwise found the face itself as its blocker, which
+		// drew as acne bands across every lit surface of a double-sided asset.
+		vec2 pcssReceiverSlope( vec3 c ) {
+			vec3 dx = dFdx( c );
+			vec3 dy = dFdy( c );
+			float det = dx.x * dy.y - dx.y * dy.x;
+			vec2 g = abs( det ) > 1e-14
+				? vec2( dx.z * dy.y - dx.y * dy.z, dx.x * dy.z - dx.z * dy.x ) / det
+				: vec2( 0.0 );
+			// A pixel quad straddling a silhouette has no single plane and its gradient
+			// explodes; no lit face needs a slope this steep.
+			float m = length( g );
+			return m > 16.0 ? g * ( 16.0 / m ) : g;
+		}
 
 		float getShadow( sampler2D shadowMap, vec2 shadowMapSize, float shadowIntensity, float shadowBias, float shadowRadius, vec4 shadowCoord ) {
 			float shadow = 1.0;
@@ -78,6 +95,7 @@ const PCSS_DIR = `#else
 			#endif
 			// Before the branch: derivatives are undefined in divergent control flow.
 			float phi = pcssPhi();
+			vec2 dzUv = pcssReceiverSlope( shadowCoord.xyz );
 			bool inFrustum = shadowCoord.x >= 0.0 && shadowCoord.x <= 1.0 && shadowCoord.y >= 0.0 && shadowCoord.y <= 1.0;
 			if ( inFrustum && shadowCoord.z <= 1.0 ) {
 				float capTexels; float k;
@@ -92,11 +110,13 @@ const PCSS_DIR = `#else
 				float search = capTexels * texel;
 				float blockerSum = 0.0; float blockers = 0.0;
 				for ( int i = 0; i < nB; i ++ ) {
-					float d = texture2D( shadowMap, shadowCoord.xy + ( i == 0 ? vec2( 0.0 ) : pcssVogel( i - 1, nB - 1, phi ) * search ) ).r;
+					vec2 o = i == 0 ? vec2( 0.0 ) : pcssVogel( i - 1, nB - 1, phi ) * search;
+					float d = texture2D( shadowMap, shadowCoord.xy + o ).r;
+					float zr = shadowCoord.z + dot( dzUv, o );
 					#ifdef USE_REVERSED_DEPTH_BUFFER
-						if ( d > shadowCoord.z ) { blockerSum += d; blockers += 1.0; }
+						if ( d > zr ) { blockerSum += d; blockers += 1.0; }
 					#else
-						if ( d < shadowCoord.z ) { blockerSum += d; blockers += 1.0; }
+						if ( d < zr ) { blockerSum += d; blockers += 1.0; }
 					#endif
 				}
 				if ( blockers > 0.0 ) {
@@ -115,10 +135,13 @@ const PCSS_DIR = `#else
 							texture2D( shadowMap, base + vec2( texel, 0.0 ) ).r,
 							texture2D( shadowMap, base + vec2( 0.0, texel ) ).r,
 							texture2D( shadowMap, base + vec2( texel ) ).r );
+						// The receiver's plane at each of the four texel centres.
+						float zb = shadowCoord.z + dot( dzUv, base - shadowCoord.xy );
+						vec4 zq = zb + vec4( 0.0, dzUv.x, dzUv.y, dzUv.x + dzUv.y ) * texel;
 						#ifdef USE_REVERSED_DEPTH_BUFFER
-							vec4 taps = step( depths, vec4( shadowCoord.z ) );
+							vec4 taps = step( depths, zq );
 						#else
-							vec4 taps = step( vec4( shadowCoord.z ), depths );
+							vec4 taps = step( zq, depths );
 						#endif
 						lit += mix( mix( taps.x, taps.y, f.x ), mix( taps.z, taps.w, f.x ), f.y );
 					}
@@ -233,6 +256,21 @@ export function lightSpread(softness, compH) {
 }
 
 /**
+ * Automatic shadow offsets, in TEXELS of the light's fitted map (the rig light's
+ * `shadowBias` / `shadowNormalBias` replace them when set):
+ *   depth  — along the light: depth quantisation and curvature inside a texel;
+ *   normal — along the surface normal: what slope acne a filter's taps still see.
+ * With the receiver-plane bias (WebGL PCSS above, and its WebGPU twin) the taps
+ * follow the receiving surface, so a small normal offset is enough and shadows stay
+ * attached at contact. Plain PCF compares every tap with the centre depth and needs
+ * more. Flat double-sided plates have no back face to hide behind and need the most.
+ */
+export function autoShadowBias({ planeBias = true, plates = false } = {}) {
+  if (plates) return { depth: 1, normal: 1.5 };
+  return planeBias ? { depth: 1, normal: 0.5 } : { depth: 1, normal: 1.25 };
+}
+
+/**
  * The packed `shadow.radius` for one light, from its fitted shadow camera.
  *
  * Directional (orthographic): depth is linear across [near, far].
@@ -250,7 +288,8 @@ export function pcssRadiusFor(light, { softness, compH, mapSize, subjectDist }) 
   let worldPerDepth;
   if (light.isDirectionalLight) {
     texelWorld = Math.max(1e-6, (cam.right - cam.left) / mapSize);
-    worldPerDepth = far - near;
+    // An orthographic fit may start BEHIND the light's position (near < 0).
+    worldPerDepth = Math.max(1e-3, cam.far - cam.near);
   } else if (light.isSpotLight) {
     const z = Math.max(near, Math.min(far, subjectDist));
     texelWorld = Math.max(1e-6, (2 * z * Math.tan(Math.max(1e-3, light.angle))) / mapSize);

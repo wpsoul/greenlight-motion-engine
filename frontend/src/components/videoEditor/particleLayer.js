@@ -45,6 +45,29 @@ const SPRITE_INDEX = { 'soft-disc': 0, star: 1, spark: 2 };
 const _size = new THREE.Vector2();
 const _mv = new THREE.Matrix4();
 const _worldPos = new THREE.Vector3();
+const _boxCorner = new THREE.Vector3();
+
+// The posed Solver Box in world space and the eye, for ordering this layer against
+// 3D models (compositeSortDepth.js orderByBoxes): particles over a page draw after it.
+function solverBoxRange(outer, size, cam) {
+  if (!size) return null;
+  const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  let near = Infinity;
+  let far = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    _boxCorner.set((i & 1 ? 0.5 : -0.5) * size.x, (i & 2 ? 0.5 : -0.5) * size.y, (i & 4 ? 0.5 : -0.5) * size.z)
+      .applyMatrix4(outer.matrixWorld);
+    box[0] = Math.min(box[0], _boxCorner.x); box[3] = Math.max(box[3], _boxCorner.x);
+    box[1] = Math.min(box[1], _boxCorner.y); box[4] = Math.max(box[4], _boxCorner.y);
+    box[2] = Math.min(box[2], _boxCorner.z); box[5] = Math.max(box[5], _boxCorner.z);
+    const d = -_boxCorner.applyMatrix4(cam.matrixWorldInverse).z;
+    near = Math.min(near, d);
+    far = Math.max(far, d);
+  }
+  if (!box.every(Number.isFinite)) return null;
+  cam.getWorldPosition(_boxCorner);
+  return { near: Math.max(cam.near, near), far: Math.max(cam.near, far), box, eye: [_boxCorner.x, _boxCorner.y, _boxCorner.z] };
+}
 
 // ── Shaders ────────────────────────────────────────────────────────────────────
 
@@ -1607,6 +1630,7 @@ export function renderParticleLayer(renderer, opts) {
   entry.outer.getWorldPosition(_worldPos);
   _worldPos.applyMatrix4(cam.matrixWorldInverse);
   let viewDistance = -_worldPos.z;
+  const viewRange = solverBoxRange(entry.outer, system.solver?.bounds?.size, cam);
   entry.depthSum = 0;
   entry.depthCount = 0;
 
@@ -1832,7 +1856,7 @@ export function renderParticleLayer(renderer, opts) {
       entry.gpuCanvas = g.canvas;
     }
     entry.gpuTexture.needsUpdate = true;
-    return { texture: entry.gpuTexture, viewDistance, drawn: -1 };
+    return { texture: entry.gpuTexture, viewDistance, viewRange, drawn: -1 };
   }
 
   // ── Draw. The renderer is shared, so every piece of state touched here is
@@ -1930,9 +1954,9 @@ export function renderParticleLayer(renderer, opts) {
   renderer.autoClear = prevAutoClear;
   renderer.setClearColor(prevClear, prevClearAlpha);
 
-  if (!drawn) return { texture: null, viewDistance, drawn: 0 };
+  if (!drawn) return { texture: null, viewDistance, viewRange, drawn: 0 };
   if (entry.depthCount) viewDistance = entry.depthSum / entry.depthCount;
-  return { texture: entry.target.texture, viewDistance, drawn };
+  return { texture: entry.target.texture, viewDistance, viewRange, drawn };
 }
 
 // ── World view ────────────────────────────────────────────────────────────────

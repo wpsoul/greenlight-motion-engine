@@ -21,6 +21,7 @@ Rules:
 - The camera lives on a channel marked `"kind": "camera"`. **A project may have at most one camera channel, and it must be LAST in the `channels` array** (channel order is z-order; last renders highest). The editor re-pins it on every write and on load, so a project authored with the camera elsewhere is silently reordered — emit it last to avoid surprising diffs. Put several camera clips on it to chain moves; the clip under the playhead wins, and outside every camera clip the camera is neutral.
 - Camera clips are synthetic (no `url`) and are keyframed with their own property registry, using the ordinary `propertyKeyframes` shape (positions 0–100 % of the clip).
 - Any channel can opt out with `"cameraLocked": true` — it renders exactly as if there were no camera (watermarks, fixed captions).
+- A camera-locked layer is a 2D layer, as in After Effects: it composites in STACK order and never depth-tests against 3D. Above a model layer in the stack it draws over the model (a flash, a title at the comp plane needs no pulling toward the camera); at the very bottom of the stack (a full-frame backdrop) it stays behind everything, the Scene Rig's cyclorama included. 3D layers on either side of a locked layer still occlude each other by depth.
 
 ```json
 {

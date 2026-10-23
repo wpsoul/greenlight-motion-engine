@@ -72,8 +72,8 @@ Then ask for a video, for example *"Make a 10-second opening-day video for my co
 
 Limits:
 
-- **After the connector changes, remove it and add it again.** Chat apps keep the tool list and the page from the
-  moment you added it.
+- **Updates to the video page reach you by themselves.** Only when the tools themselves change (rarely) do you
+  remove the connector and add it again: chat apps keep the tool list from the moment you added it.
 - **The model only sees what your browser renders.** It has no screen of its own: it sees the frames the page in
   the chat rendered. With the page closed, there is nothing to look at.
 - **Your files.** Your files never leave your browser. A share link, or another browser, asks for them again.
@@ -145,7 +145,8 @@ This is optional. A terminal has no in-chat page, so `look_at_video` has no fram
 stills` is how a coding agent sees its video. The server is still useful:
 
 - `build_video` turns a short scene script into a full project. The agent saves
-  `https://mcp.greenlightdash.pro/motion/b/<build id>.json` as `project.json` and goes on with the CLI.
+  `https://mcp.greenlightdash.pro/motion/b/<build id>.json` as `project.json` and goes on with the CLI. The CLI's
+  `script` command does the same on your computer, with the same converter.
 - `share_video` makes a link you open in Chrome.
 
 Claude Code:
@@ -172,14 +173,15 @@ Any other client takes the same Streamable HTTP URL, with no auth.
 ## The CLI
 
 ```sh
-npx greenlight-motion@0.1.0 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
-npx greenlight-motion@0.1.0 init my-video   # a working starter: index.html, project.json, assets/
-npx greenlight-motion@0.1.0 check my-video  # missing files, template mistakes, blank frames, broken plugins
-npx greenlight-motion@0.1.0 stills my-video # frames and a labelled contact sheet, to look at
-npx greenlight-motion@0.1.0 render my-video --fps 60 --motion-blur
-npx greenlight-motion@0.1.0 review my-video --open   # the page with Notes; they land in my-video/review/
-npx greenlight-motion@0.1.0 pack my-video   # everything in ONE html file
-npx greenlight-motion@0.1.0 pack my-video --glvideo  # ONE .glvideo: double-clicked, it opens in GreenLight Dash
+npx greenlight-motion@0.1.1 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
+npx greenlight-motion@0.1.1 init my-video   # a working starter: index.html, project.json, assets/
+npx greenlight-motion@0.1.1 script my-video # my-video/script.json (a scene script) → project.json, the Video Editor's presets
+npx greenlight-motion@0.1.1 check my-video  # missing files, template mistakes, blank frames, broken plugins
+npx greenlight-motion@0.1.1 stills my-video # frames and a labelled contact sheet, to look at
+npx greenlight-motion@0.1.1 render my-video --fps 60 --motion-blur
+npx greenlight-motion@0.1.1 review my-video --open   # the page with Notes; they land in my-video/review/
+npx greenlight-motion@0.1.1 pack my-video   # everything in ONE html file
+npx greenlight-motion@0.1.1 pack my-video --glvideo  # ONE .glvideo: double-clicked, it opens in GreenLight Dash
 ```
 
 Other commands:
@@ -199,7 +201,7 @@ The engine is one classic script, so it runs from a double-clicked file, a CDN o
 
 ```html
 <div id="app"></div>
-<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.1.0/dist/greenlight-motion.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.1.1/dist/greenlight-motion.js"></script>
 <script>
   GreenLightMotion.mountPage(document.getElementById('app'), {
     project: { /* project.json */ },

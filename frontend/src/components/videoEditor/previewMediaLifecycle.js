@@ -118,6 +118,55 @@ export function getPreviewVideoSeekPolicy({
 }
 
 /**
+ * START ALIGNMENT. A paused buffer about to start while the project plays (on
+ * Play, after a jump, after a fresh load, at a cut) must start ON the clock: a
+ * buffer started behind stays behind, because the playing tolerances above
+ * (0.08 s in a hand-off, 0.5 s after it) leave a small lag alone for good.
+ * `ahead` is the buffer's position minus the clock's, in source seconds.
+ *   'go'   close enough — start now
+ *   'wait' ahead of the clock — stay paused until the clock reaches its frame
+ *   'seek' behind (or far ahead) — seek `lead` s past the clock and wait there
+ *
+ * WebKit touch tier (`jumpHold`): a frame or three behind just starts and the
+ * 0.12 s lead covers its 40–90 ms paused seek. Elsewhere a paused seek is cheap,
+ * so the window is 1.5 project frames behind (at least 35 ms) to half a frame
+ * ahead, scaled by the playback rate (a 2× clip covers two source frames per
+ * timeline frame). Without it a video loaded cold started the 60–80 ms its load
+ * took behind the clock — and behind a cut-out of the same shot playing above it.
+ * One realignment per start (`realigned`): a seek that lands late starts where it
+ * landed instead of seeking again.
+ */
+export function resolveStartAlignment({ ahead = 0, rate = 1, fps = 30, jumpHold = false, realigned = false } = {}) {
+  if (jumpHold) {
+    return { align: ahead >= -0.1 && ahead <= 0.03 ? 'go' : ahead > 0.03 && ahead <= 0.4 ? 'wait' : 'seek', lead: 0.12 };
+  }
+  const r = Math.min(16, Math.max(0.0625, Math.abs(Number(rate)) || 1));
+  const frame = 1 / Math.max(1, Number(fps) || 30);
+  const lead = 0.08 * r;
+  if (ahead > 0.5 * frame * r) return { align: ahead <= 0.4 * r || realigned ? 'wait' : 'seek', lead };
+  return { align: ahead >= -Math.max(1.5 * frame, 0.035) * r || realigned ? 'go' : 'seek', lead };
+}
+
+/**
+ * CATCH-UP. A PLAYING video that runs off the others is pulled back by a small
+ * playbackRate trim — never a seek, which would interrupt a playing stream (see
+ * getPreviewVideoSeekPolicy). `excess` is its offset from the reference in
+ * timeline seconds (− behind, + ahead); the factor closes it over ~0.4 s (faster
+ * overshoots: the offset is read a frame late), at most ±8 %. It starts past a
+ * sixth of a project frame — two layers of one shot a third of a frame apart —
+ * and stops inside a twentieth (`trimming` = already on),
+ * in 0.5 % steps so the rate is not rewritten every frame. The case it exists
+ * for: an alpha WebM cut-out (software VP9) gets going 10–30 ms after the copy of
+ * its shot underneath, and the playing tolerances above never pull it back.
+ */
+export function resolveRateTrim({ excess = 0, fps = 30, trimming = false } = {}) {
+  const frame = 1 / Math.max(1, Number(fps) || 30);
+  if (!Number.isFinite(excess) || Math.abs(excess) < (trimming ? 0.05 : 0.16) * frame) return 1;
+  const trim = Math.max(-0.08, Math.min(0.08, -excess / 0.4));
+  return 1 + Math.round(trim / 0.005) * 0.005;
+}
+
+/**
  * A prepared <video> is not actually ready for a hard cut until its VideoTexture
  * has been uploaded once. Track that upload by source, target project frame, and
  * texture identity so the render loop primes once rather than on every tick.

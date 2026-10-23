@@ -279,7 +279,7 @@ function Transport({ duration, playing, currentTime, onPlay, onStep, loop, onLoo
       <div className="glm-time"><b>{clock(t, 2)}</b><span>/ {clock(duration, 2)}</span></div>
       <div className="glm-now">{now.length ? <><span>Now</span><b>{now.join(' · ')}</b></> : null}</div>
       <div className="glm-tgroup">
-        <button type="button" className="glm-icon" aria-pressed={loop} onClick={onLoop} title="Loop">{Icon.loop}<span>Loop</span></button>
+        <button type="button" className="glm-icon" aria-pressed={loop} onClick={onLoop} aria-label="Loop" title="Loop">{Icon.loop}<span>Loop</span></button>
       </div>
     </div>
   );

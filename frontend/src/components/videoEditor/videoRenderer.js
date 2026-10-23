@@ -352,11 +352,46 @@ export function createVideoRenderer({ canvas, backend = 'webgl', width, height }
      */
     const { installVideoEditorToneMappingNode } = await import('./threeDisplayTransformNodes.js');
     installVideoEditorToneMappingNode(renderer, THREE.CustomToneMapping);
+    syncRefreshSnapshots(renderer);
     console.warn('[ve] WebGPU backend live — ' + describeAdapter(probe.info));
     return renderer;
   })();
 
   return { renderer, backendName: 'webgpu', ready };
+}
+
+/*
+ * three's WebGPU skips re-uploading an object's uniforms (its world matrix
+ * included) when NodeMaterialObserver says nothing changed since the snapshot it
+ * keeps per render object. That snapshot is only written by the change check —
+ * but the FIRST object of each render() call that shares a material's observer
+ * refreshes by the render-id shortcut, uploading its current matrix WITHOUT
+ * updating the snapshot. Render the same object at pose B that way, then at pose
+ * A again: the check compares A with the stale snapshot A, finds no change, and
+ * the GPU draws pose B. A model pass renders the same meshes at several playhead
+ * times (render priming, scrubbing), so parts of a character came out at another
+ * frame's pose — Clawd's legs scattered and his body gone, now and then.
+ * Re-taking the snapshot on every refresh keeps it equal to what was uploaded.
+ * Observers that refresh unconditionally (node materials, skinned meshes) never
+ * read it, so they are left alone.
+ */
+function syncRefreshSnapshots(renderer) {
+  const nodes = renderer._nodes;
+  if (!nodes || typeof nodes.needsRefresh !== 'function' || nodes.glSnapshotSync) return;
+  const needsRefresh = nodes.needsRefresh.bind(nodes);
+  nodes.needsRefresh = (renderObject) => {
+    const refresh = needsRefresh(renderObject);
+    if (refresh) {
+      const monitor = renderObject.getMonitor?.();
+      if (monitor?.renderObjects && !monitor.hasNode && !monitor.hasAnimation
+        && typeof monitor.getRenderObjectData === 'function') {
+        monitor.renderObjects.delete(renderObject);
+        monitor.getRenderObjectData(renderObject);
+      }
+    }
+    return refresh;
+  };
+  nodes.glSnapshotSync = true;
 }
 
 // Settings that are identical on both backends and safe to apply before init.

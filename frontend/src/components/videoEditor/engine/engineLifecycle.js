@@ -14,7 +14,7 @@ import { disposeRigCropTargets } from '../rigDeform';
 import { disposeChannelStates, resizeChannelStates } from './channelStates';
 import { disposeCompositePipeline, flipAdjustmentGeoV, buildCompositePipeline } from './compositePipeline';
 import { disposeEngine3d } from './modules3d';
-import { getPerspectiveDistance } from './compositeHelpers';
+import { compositeNearPlane, getPerspectiveDistance } from './compositeHelpers';
 import { createEngineRenderer, stopEngineRenderer, disposeEngineRenderer } from './engineRenderer';
 import { disposeBackgroundShader } from './background';
 import { disposeWarmUp } from './warmUp';
@@ -235,6 +235,7 @@ export function resizeEngine(engine, sizeVideoW, sizeVideoH, sizeRenderW, sizeRe
   engine.previewRenderSize = { w: sizeRenderW, h: sizeRenderH };
   camera.aspect = sizeVideoW / sizeVideoH;
   camera.position.z = getPerspectiveDistance(sizeVideoH);
+  camera.near = compositeNearPlane(camera.position.z);
   camera.updateProjectionMatrix();
   const posed = engine.posedCamera;
   if (posed) {

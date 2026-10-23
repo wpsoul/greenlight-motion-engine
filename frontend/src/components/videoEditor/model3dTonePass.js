@@ -15,6 +15,13 @@ uniform sampler2D uTexture;
 uniform vec2 uResolution;
 uniform float uExposure;
 uniform float uDisplay;
+// Screens (model3dConfig.screen/screens) carry display-referred media — a UI, a page,
+// a video. Their coverage (depth-tested, so whatever stands in front still hides
+// them) skips the scene's tone curve: the pixel is the media's own colour, exactly
+// what the same file shows as a 2D layer. AgX cannot reach saturated colours at all,
+// so no pre-correction in the screen material could do this.
+uniform sampler2D uScreenMask;
+uniform float uScreenMaskOn;
 ${DISPLAY_TRANSFORM_GLSL}
 void main() {
   vec2 uv = gl_FragCoord.xy / uResolution;
@@ -30,6 +37,7 @@ void main() {
   // catching a shadow: ACES desaturates it, and a bare encode washes it out (the
   // second sRGB encode of #e11d48 is #f15f91 — measured, not guessed).
   vec3 mapped = uDisplay > 0.5 ? veDisplayTransform(lin, uExposure) : lin;
+  if (uScreenMaskOn > 0.5) mapped = mix(mapped, veToSRGB(lin), texture2D(uScreenMask, uv).r);
   gl_FragColor = vec4(mapped * a, a);
 }
 `;
@@ -46,6 +54,8 @@ export function createModelTonePassMaterial() {
       uResolution: { value: new THREE.Vector2(1, 1) },
       uExposure: { value: 1 },
       uDisplay: { value: 1 },
+      uScreenMask: { value: null },
+      uScreenMaskOn: { value: 0 },
     },
     vertexShader: TONEMAP_VERT,
     fragmentShader: TONEMAP_FRAG,

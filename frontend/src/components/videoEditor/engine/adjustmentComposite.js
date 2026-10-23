@@ -10,12 +10,15 @@
  */
 import * as THREE from 'three';
 import { applyAdjustmentUniforms, applyPremultipliedBlendMode } from '../clipShader';
-import { layerPlane, layerSortDepth } from '../compositeSortDepth';
+import { normalizeBlendMode } from '../blendModes';
+import { layerPlane, layerQuad, layerSortDepth } from '../compositeSortDepth';
 import { getItemKeyframeValues, getItemPeakKeyframeScale } from '../gsapTransitions';
 import { isLayerMaskEnabled } from '../layerMask';
 import { buildMockupDevice, layoutMockupFrame, mockupSeatTransform } from '../mockupFrame';
+import { depthFromViewDistance, modelDofParams } from '../modelDof';
 import { getCameraCoCRadius, getCameraDofSettings } from '../projectCamera';
 import { isCameraBaked3dPlate } from '../rig3d';
+import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 import { hasVisibleTransitionPackageInstances } from '../transitionPackageRuntime';
 import { selectedBackend } from '../videoRenderer';
 import { cameraForChannel } from './camera';
@@ -29,7 +32,7 @@ import { applyBackdropBlur as applyBackdropBlurInEngine, applyGlass as applyGlas
 import { computeLayerBox, layerPlaneBox } from './layerWarps';
 import { applyMeshTransform, resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
 import { measureMotionBlur as measureMotionBlurInEngine, renderLayerAccumBlur as renderLayerAccumBlurInEngine, renderLayerGlow as renderLayerGlowInEngine, renderLayerMotionBlur as renderLayerMotionBlurInEngine, renderLayerTrail as renderLayerTrailInEngine } from './motionPasses';
-import { ensurePassTarget as ensurePassTargetInEngine } from './passPool';
+import { ensureMipPassTarget as ensureMipPassTargetInEngine, ensurePassTarget as ensurePassTargetInEngine } from './passPool';
 import { ensureAdjustmentTargets as ensureAdjustmentTargetsInEngine, ensureDepthProbeTarget as ensureDepthProbeTargetInEngine } from './renderTargets';
 import { _platePos, seatLayerMesh, unseatLayerMesh } from './compositeHelpers';
 
@@ -122,7 +125,9 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     const clip = env.clipsMap.get(item?.clipId);
     const gridPlate = !!(cs?.currMesh?.visible && cs.currMesh.userData?.gridWorldPos)
       || !!(cs?.prevMesh?.visible && cs.prevMesh.userData?.gridWorldPos);
-    return gridPlate || isCameraBaked3dPlate(clip, item)
+    // A particle plate too: renderParticleLayer films the Solver Box through the
+    // project camera already.
+    return gridPlate || isCameraBaked3dPlate(clip, item) || clip?.mediaType === PARTICLE_MEDIA_TYPE
       ? camera
       : cameraForChannel(channel, engine.posedCamera, camera);
   };
@@ -163,8 +168,28 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     if (!mesh?.visible || mesh.userData?.gridWorldPos) return null;
     return layerPlane(mesh);
   };
+  // The quad a channel's layer covers, for the plane test that keeps a turned card in front of the floor it stands
+  // on (compositeSortDepth.js orderByPlanes). Null for a model, a camera-baked or particle pass and a grid plate:
+  // their identity quads say nothing about where they draw.
+  const quadOfChannel = (channel) => {
+    const cs = engine.channelStates.get(channel.id);
+    if (!cs || engine.modelDepth.has(channel.id)) return null;
+    const mesh = cs.currMesh?.visible ? cs.currMesh : cs.prevMesh;
+    const u = mesh?.userData;
+    if (!mesh?.visible || u?.gridWorldPos || u?.cameraBaked3d || u?.particlePlate) return null;
+    return layerQuad(mesh);
+  };
+  const sortCam = cameraForChannel(null, engine.posedCamera, camera);
+  sortCam.updateMatrixWorld();
+  // A 3D model's world box, for ordering models against each other by which is on the camera's side of which
+  // (compositeSortDepth.js orderByBoxes): a floating card after the page under it.
+  const boxOfChannel = (channel) => {
+    const range = engine.modelDepthRange.get(channel.id);
+    return range?.box && range.eye ? range : null;
+  };
   const compositeOrder = orderChannelsForComposite(
-    getChannelsBottomToTop(env.channels), adjById, depthOfChannel, planeOfChannel
+    getChannelsBottomToTop(env.channels), adjById, depthOfChannel, planeOfChannel,
+    quadOfChannel, sortCam.getWorldPosition(new THREE.Vector3()), boxOfChannel,
   );
   // A model is real geometry, so a flat layer near it has to be cut by its SURFACE,
   // not by its silhouette. Depth mode turns the layer quads into depth-testing,
@@ -214,19 +239,32 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     const cs = engine.channelStates.get(channel.id);
     return !!cs && [cs.currMesh, cs.prevMesh].some((m) => m?.visible && m.userData?.cameraBaked3d === true);
   };
+  // A particle plate is filmed through the camera too, so its identity quad has no
+  // depth of its own either — but it stays a single-hop RT, so it is not a baked pass.
+  const isParticlePlate = (channel) => {
+    const cs = engine.channelStates.get(channel.id);
+    return !!cs && [cs.currMesh, cs.prevMesh].some((m) => m?.visible && m.userData?.particlePlate === true);
+  };
+  // A camera-LOCKED layer is a 2D layer (After Effects' rule, see orderChannelsForComposite): it lands over
+  // everything below it in the stack and never occludes what comes after. It must not depth-test either way —
+  // it is filmed by the NEUTRAL camera, so its depth and the posed camera's 3D depths are not in one space. A
+  // locked layer above the models at the comp plane was rejected wherever a model stood nearer than that plane
+  // (the whole layer, on a set the camera flies close to); one at the bottom wrote a wall that cut the models.
+  const isLockedFlat = (channel) => !!channel.cameraLocked;
   const setModelQuadDepth = (channel) => {
     if (!depth3d) return;
-    const isModel = engine.modelDepthTex.has(channel.id) || isBakedPass(channel);
+    const isModel = engine.modelDepthTex.has(channel.id) || isBakedPass(channel) || isParticlePlate(channel);
+    const flat = isModel || isLockedFlat(channel);
     const cs = engine.channelStates.get(channel.id);
     if (!cs) return;
     for (const m of [cs.currMaterial, cs.prevMaterial]) {
       if (!m) continue;
-      m.depthTest = !isModel;
-      m.depthWrite = !isModel;
+      m.depthTest = !flat;
+      m.depthWrite = !flat;
     }
   };
   const stampModelDepth = (channel, target) => {
-    if (!depth3d || !depthStampScene) return;
+    if (!depth3d || !depthStampScene || isLockedFlat(channel)) return;
     const tex = engine.modelDepthTex.get(channel.id);
     if (!tex) return;
     depthStampMaterial.uniforms.uDepth.value = tex;
@@ -237,23 +275,92 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   // Draw an isolate with real per-pixel depth: colour and depth are tested and
   // written in one fragment pass, so two crossing surfaces alternate which one is
   // in front across the overlap instead of one flat quad winning everywhere.
-  const compositeWithDepth = (colorTarget, depthTexture, target, blendMode, fallback = -1) => {
+  //
+  // A 3D pass with transparent meshes also hands back its opaque + transparent depth
+  // (`tdepth`, model3dLayer renderTransparentDepth). Then it takes two draws:
+  // everything but a card tests AND writes depth as always — a transparent surface
+  // over the pass's own opaque one included, at that opaque depth; then the cards
+  // (a transparent surface with nothing opaque of the pass behind it: a soft
+  // contact shadow, a glass pane) at their own depth, tested and never written — held
+  // for after every opaque surface of the frame when it can be (cardsDeferred below).
+  const splitDraws = engine.depthCompositeSplitScene && engine.depthCompositeTranslucentScene
+    ? [[engine.depthCompositeSplitMaterial, engine.depthCompositeSplitScene],
+      [engine.depthCompositeTranslucentMaterial, engine.depthCompositeTranslucentScene]]
+    : null;
+  const deferredCards = [];
+  let cardsDeferred = false;
+  const compositeWithDepth = (colorTarget, depthTexture, target, blendMode, fallback = -1, tdepth = null) => {
     if (!depthTexture || !depthCompositeScene || !depthCompositeMaterial || !colorTarget?.texture) return false;
-    depthCompositeMaterial.uniforms.uColor.value = colorTarget.texture;
-    depthCompositeMaterial.uniforms.uDepth.value = depthTexture;
-    depthCompositeMaterial.uniforms.uFallback.value = Number.isFinite(fallback) ? fallback : -1;
-    applyPremultipliedBlendMode(depthCompositeMaterial, blendMode);
+    const draws = tdepth && splitDraws ? splitDraws : [[depthCompositeMaterial, depthCompositeScene]];
     renderer.setRenderTarget(target);
-    renderer.render(depthCompositeScene, orthoCamera);
+    for (const [material, scene] of draws) {
+      // The cards' draw, held: a storage-identity copy of the plate (the scratch
+      // targets are reused by the next layer), drawn after the loop.
+      if (cardsDeferred && draws === splitDraws && material === engine.depthCompositeTranslucentMaterial) {
+        const held = ensurePassTargetInEngine(engine, `cards:${deferredCards.length}`, colorTarget.width, colorTarget.height, false);
+        if (held) {
+          engine.seqPlateCopyMaterial.uniforms.uTexture.value = colorTarget.texture;
+          renderer.setRenderTarget(held);
+          renderer.setClearColor(0x000000, 0);
+          renderer.clear(true, true, true);
+          renderer.render(engine.seqPlateCopyScene, orthoCamera);
+          renderer.setRenderTarget(target);
+          deferredCards.push({ held, depthTexture, tdepth, blendMode, fallback });
+          continue;
+        }
+      }
+      material.uniforms.uColor.value = colorTarget.texture;
+      material.uniforms.uDepth.value = depthTexture;
+      material.uniforms.uFallback.value = Number.isFinite(fallback) ? fallback : -1;
+      material.uniforms.uDepthTexel?.value.set(
+        1 / Math.max(1, depthTexture.image?.width || read.width),
+        1 / Math.max(1, depthTexture.image?.height || read.height));
+      if (draws === splitDraws) material.uniforms.uTDepth.value = tdepth;
+      applyPremultipliedBlendMode(material, blendMode);
+      renderer.render(scene, orthoCamera);
+    }
+    // Where the tested draw lost (something earlier stands in front), composite the
+    // source UNDER the stack (compositePipeline.js depthCompositeUnderMaterial). Before
+    // this a partly transparent layer that happened to composite before a model behind
+    // it — a soft shadow, a 30 % tint — wrote depth there and the model never reached
+    // it: the pixel showed the empty comp through its transparency (a dark halo). The
+    // compositing order is a sort by centres, which a 10 m page under a card gets
+    // wrong; per pixel this does not depend on it. Normal blending only.
+    const under = engine.depthCompositeUnderMaterial;
+    if (under && engine.depthCompositeUnderScene && normalizeBlendMode(blendMode) === 'normal') {
+      under.uniforms.uColor.value = colorTarget.texture;
+      under.uniforms.uDepth.value = depthTexture;
+      under.uniforms.uFallback.value = Number.isFinite(fallback) ? fallback : -1;
+      under.uniforms.uDepthTexel?.value.set(
+        1 / Math.max(1, depthTexture.image?.width || read.width),
+        1 / Math.max(1, depthTexture.image?.height || read.height));
+      // With a transparent-depth pass, only its opaque part goes under (pass 1).
+      if (under.uniforms.uPass) under.uniforms.uPass.value = draws === splitDraws ? 1 : 0;
+      if (under.uniforms.uTDepth) under.uniforms.uTDepth.value = tdepth || depthTexture;
+      renderer.render(engine.depthCompositeUnderScene, orthoCamera);
+    }
     return true;
   };
   // A camera-baked 3D pass (model, cyclorama, re-lit plate). Its proxy quad has no
   // useful z of its own, so the pass's own depth buffer is the authority and there
   // is nothing outside it to keep — unless a real-3D effect put light past a
   // model's silhouette, which then sits at the model's centre depth.
-  const compositePhysicalDepth = (channel, colorTarget, target, blendMode) =>
-    compositeWithDepth(colorTarget, engine.modelDepthTex.get(channel.id), target, blendMode,
-      engine.modelSpillDepth.get(channel.id) ?? -1);
+  //
+  // A defocused pass blurs past its silhouette (modelDofFor below): that spill
+  // stands at the pass's centre depth, as an effect's spill does, instead of being
+  // cut back to the sharp outline. (An antialiased silhouette pixel the depth
+  // resolve left empty takes its neighbour's depth instead — the composite pass.)
+  const compositePhysicalDepth = (channel, colorTarget, target, blendMode, defocused = false) => {
+    const centre = engine.modelDepth.get(channel.id);
+    // A centre at or behind the lens (a page model the camera stands over) has no
+    // depth to give: depthFromViewDistance clamps it to the near plane, and the spill
+    // then stood in front of everything composited after the model.
+    const blurSpill = defocused && Number.isFinite(centre) && centre > camera.near
+      ? depthFromViewDistance(centre, camera.near, camera.far)
+      : -1;
+    return compositeWithDepth(colorTarget, engine.modelDepthTex.get(channel.id), target, blendMode,
+      engine.modelSpillDepth.get(channel.id) ?? blurSpill, engine.modelTransparentDepthTex.get(channel.id) || null);
+  };
 
   /*
    * An ORDINARY layer's own depth, for the isolate branch.
@@ -297,8 +404,20 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   // along THIS channel's camera's viewing axis rather than by subtracting world
   // z from a fixed camera z. For a neutral pose the two are identical, which
   // keeps existing projects rendering exactly as before.
+  //
+  // A camera-baked 3D pass that hands back its depth is blurred PER PIXEL
+  // (cameraDof.js createCameraDofDepthMaterial): each pixel by the CoC of its
+  // own distance. Its CoC here is then the largest any of its pixels can have
+  // — the bounding box's nearest or farthest point — which only decides whether
+  // the pass needs the DOF stage at all.
+  const modelDofFor = (channel, scale) => {
+    if (channel.cameraLocked || !engine.cameraDofDepthScene || !engine.modelDepthTex.has(channel.id)) return null;
+    return modelDofParams(dof, engine.modelDepthRange.get(channel.id), engine.modelDepth.get(channel.id), scale);
+  };
   const cocForChannel = (channel, cs, chCam) => {
     if (!(dof.enabled && dof.aperture > 0 && dof.blurLevel > 0) || channel.cameraLocked) return 0;
+    const perPixel = modelDofFor(channel, 1);
+    if (perPixel) return perPixel.peakPx;
     const modelDist = engine.modelDepth.get(channel.id);
     // The model pass handed back its bounding-box centre's real view-space
     // distance; its plane is a neutral quad and would read as z = 0.
@@ -310,6 +429,31 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     chCam.updateMatrixWorld();
     const viewZ = -_dofView.copy(world).applyMatrix4(chCam.matrixWorldInverse).z;
     return getCameraCoCRadius(dof, Math.max(1, viewZ));
+  };
+
+  // The DOF pass's source on the camera axis, with a mip chain: each tap reads the
+  // level of the spacing between taps (cameraDof.js tapLod), so a wide blur of thin
+  // bright detail averages it instead of aliasing on it. On WebGL a blit is a plain
+  // copy, and camera axis and quad plate are the same orientation. Without a mip
+  // target the pass reads the plain plate as before.
+  const blitInto = (src, dest, identity = false) => {
+    const material = identity ? engine.seqPlateCopyMaterial : blitMaterial;
+    material.uniforms.uTexture.value = src.texture;
+    renderer.setRenderTarget(dest);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, true, true);
+    renderer.render(identity ? engine.seqPlateCopyScene : blitScene, orthoCamera);
+  };
+  const dofSourceOf = (src, cameraAxis) => {
+    const size = `${src.width}x${src.height}`;
+    const mip = ensureMipPassTargetInEngine(engine, `dof:mip:${size}`, src.width, src.height);
+    if (!mip) return { target: cameraAxis ? src : plateToCameraAxisInEngine(engine, src), mip: false };
+    // On WebGPU the plain blit IS plateToCameraAxis (one uv() hop re-stores the V
+    // axis); a source already on the camera axis takes the storage-identity copy
+    // instead, which keeps its axis. WebGL: both are the same plain copy.
+    blitInto(src, mip, cameraAxis && selectedBackend() === 'webgpu'
+      && !!engine.seqPlateCopyMaterial && !!engine.seqPlateCopyScene);
+    return { target: mip, mip: true };
   };
 
   // Whether a channel's active layer carries any per-layer effect at all.
@@ -472,24 +616,46 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     // only the untouched isolate still is one.
     const outCamAxis = () => out === rt.c && rtcCameraAxis;
     if (defocused) {
-      dofMaterial.uniforms.uTexture.value = (outCamAxis() ? out : plateToCameraAxisInEngine(engine, out)).texture;
-      dofMaterial.uniforms.uResolution.value.set(rt.d.width, rt.d.height);
-      dofMaterial.uniforms.uRadiusPx.value = Math.min(64, coc * ss);
-      dofMaterial.uniforms.uHighlightGain.value = dof.highlightGain / 100;
-      dofMaterial.uniforms.uSamples.value = env.interactivePreviewEnabled ? 24 : 40;
+      // A 3D pass with depth blurs per pixel; every other layer as one plane.
+      const perPixel = modelDofFor(channel, ss);
+      const dm = perPixel ? engine.cameraDofDepthMaterial : dofMaterial;
+      const dofSrc = dofSourceOf(out, outCamAxis());
+      dm.uniforms.uTexture.value = dofSrc.target.texture;
+      dm.uniforms.uMipOn.value = dofSrc.mip ? 1 : 0;
+      dm.uniforms.uResolution.value.set(rt.d.width, rt.d.height);
+      if (perPixel) {
+        // Opaque + transparent depth when the pass has it: a soft card is a surface
+        // to the blur, not empty space.
+        const depthTex = engine.modelTransparentDepthTex.get(channel.id) || engine.modelDepthTex.get(channel.id);
+        dm.uniforms.uDepth.value = depthTex;
+        dm.uniforms.uDepthTexel.value.set(1 / Math.max(1, depthTex?.image?.width || rt.d.width),
+          1 / Math.max(1, depthTex?.image?.height || rt.d.height));
+        dm.uniforms.uNear.value = camera.near;
+        dm.uniforms.uFar.value = camera.far;
+        dm.uniforms.uFocusDistance.value = perPixel.focusDistance;
+        dm.uniforms.uCocScale.value = perPixel.cocScale;
+        dm.uniforms.uMaxCocPx.value = perPixel.maxCocPx;
+        dm.uniforms.uReachPx.value = perPixel.peakPx;
+        dm.uniforms.uSpreadPx.value = perPixel.spreadPx;
+        dm.uniforms.uSpreadSamples.value = env.interactivePreviewEnabled ? 12 : 20;
+      } else {
+        dm.uniforms.uRadiusPx.value = Math.min(64, coc * ss);
+      }
+      dm.uniforms.uHighlightGain.value = dof.highlightGain / 100;
+      dm.uniforms.uSamples.value = env.interactivePreviewEnabled ? 24 : 40;
       // Focus area, in this target's pixels. gl_FragCoord has y up, the focus
       // point is authored y-down like every other % field in the editor.
-      dofMaterial.uniforms.uFocusPointPx.value.set(
+      dm.uniforms.uFocusPointPx.value.set(
         (dof.focusX / 100) * rt.d.width,
         (1 - dof.focusY / 100) * rt.d.height
       );
       const focusOuterPx = (dof.focusWidth / 100) * rt.d.width;
-      dofMaterial.uniforms.uFocusOuterPx.value = focusOuterPx;
-      dofMaterial.uniforms.uFocusInnerPx.value = focusOuterPx * 0.5;
+      dm.uniforms.uFocusOuterPx.value = focusOuterPx;
+      dm.uniforms.uFocusInnerPx.value = focusOuterPx * 0.5;
       renderer.setRenderTarget(rt.d);
       renderer.setClearColor(0x000000, 0);
       renderer.clear(true, true, true);
-      renderer.render(dofScene, orthoCamera);
+      renderer.render(perPixel ? engine.cameraDofDepthScene : dofScene, orthoCamera);
       out = rt.d;
     }
 
@@ -680,8 +846,51 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   }
   engine.colorRefKeys = colorRefKeysUsed;
 
+  // A camera-locked backdrop at the bottom of the stack (composited first — see
+  // orderChannelsForComposite) is held ASIDE in a 3D frame: the rest composites over
+  // transparency and the backdrop lands under the finished stack. Drawn first, it left
+  // nothing transparent for a model's under-draw (compositeWithDepth) to fill, so a
+  // soft shadow composited before the page it lies on showed the backdrop as a rim.
+  // The same picture only while everything above blends plain "over": an adjustment,
+  // a clip mask, another blend mode or a layer that reads the stack keeps the old way.
+  const lockedLead = new Set();
+  for (const ch of compositeOrder) {
+    if (!ch.cameraLocked || adjById.has(ch.id)) break;
+    lockedLead.add(ch);
+  }
+  const deferLead = depth3d && lockedLead.size > 0 && lockedLead.size < compositeOrder.length
+    && !!engine.backdropUnderScene && !!engine.seqPlateCopyScene
+    && compositeOrder.every((ch) => lockedLead.has(ch) || (!adjById.has(ch.id)
+      && normalizeBlendMode(engine.layerItems.get(ch.id)?.blendMode) === 'normal'
+      && !engine.shaderBlendLayers.has(ch.id) && !engine.backdropLayers.has(ch.id) && !engine.glassLayers.has(ch.id)));
+  let leadPlate = null;
+  // Cards (a transparent surface with no opaque surface of its own in its pass: a soft
+  // contact shadow, a glass pane) composite AFTER every opaque surface of the frame, at
+  // their own depth, tested and not written — an ordinary renderer's order, opaque
+  // first and transparent last. Composited in place they blended over whatever the
+  // stack held so far: a contact shadow on a card floating over the page, with the
+  // page composited first, showed the page through it as a white plate, and the card
+  // in between, behind the shadow, was turned away. Held only while nothing in the
+  // frame swaps the stack's target (they test against its depth at the end).
+  cardsDeferred = depth3d && !!splitDraws && !!engine.seqPlateCopyScene
+    && compositeOrder.every((ch) => !adjById.has(ch.id) && !engine.shaderBlendLayers.has(ch.id)
+      && !engine.backdropLayers.has(ch.id) && !engine.glassLayers.has(ch.id));
+  deferredCards.length = 0;
+
   // Depth order, not channel order — see orderChannelsForComposite.
   for (const channel of compositeOrder) {
+    if (deferLead && !leadPlate && !lockedLead.has(channel)) {
+      leadPlate = ensurePassTargetInEngine(engine, 'lockedBackdrop', read.width, read.height, false);
+      if (leadPlate) {
+        engine.seqPlateCopyMaterial.uniforms.uTexture.value = read.texture;
+        renderer.setRenderTarget(leadPlate);
+        renderer.setClearColor(0x000000, 0);
+        renderer.clear(true, true, true);
+        renderer.render(engine.seqPlateCopyScene, orthoCamera);
+        renderer.setRenderTarget(read);
+        renderer.clear(true, false, false);
+      }
+    }
     const cs = engine.channelStates.get(channel.id);
     if (!cs) continue;
     // A consumed matte source never draws itself: its pixels only feed the
@@ -834,7 +1043,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
           const tmp = read; read = write; write = tmp;
         }
         setModelQuadDepth(channel);
-        if (engine.modelDepthTex.has(channel.id)) {
+        if (engine.modelDepthTex.has(channel.id) && !isLockedFlat(channel)) {
           // The proxy quad has no physical Z. Isolate its finished colour, then
           // combine that colour with the pass's real depth in one tested draw.
           renderer.setRenderTarget(rt.c);
@@ -874,7 +1083,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
         // before any effect reshapes it. Only in a 3D frame, and never for a
         // camera-baked pass — that one carries its own depth already, or (a
         // shadow-only backdrop) deliberately none.
-        const ownDepth = depth3d && !engine.modelDepthTex.has(channel.id) && !isBakedPass(channel)
+        const ownDepth = depth3d && !isLockedFlat(channel) && !engine.modelDepthTex.has(channel.id) && !isBakedPass(channel) && !isParticlePlate(channel)
           ? layerDepthPass(cs, chCam)
           : null;
         const ownFallback = ownDepth
@@ -947,8 +1156,8 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
         // A shader blend mode reads the stack, so it cannot ride the depth-
         // tested draw: it composites flat (the plate's own depth is dropped
         // for that frame), through the blendComposite ping-pong.
-        const depthed = !shaderBlend && (engine.modelDepthTex.has(channel.id)
-          ? compositePhysicalDepth(channel, out, read, layerItem?.blendMode)
+        const depthed = !shaderBlend && (engine.modelDepthTex.has(channel.id) && !isLockedFlat(channel)
+          ? compositePhysicalDepth(channel, out, read, layerItem?.blendMode, defocused)
           : (ownDepth
             ? compositeWithDepth(out, ownDepth, read, layerItem?.blendMode, ownFallback)
             : false));
@@ -970,6 +1179,32 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
         resumeChannelBlend(cs);
       }
     }
+  }
+
+  // The held cards, over the finished opaque stack (see cardsDeferred above).
+  if (deferredCards.length) {
+    const mat = engine.depthCompositeTranslucentMaterial;
+    renderer.setRenderTarget(read);
+    for (const card of deferredCards) {
+      mat.uniforms.uColor.value = card.held.texture;
+      mat.uniforms.uDepth.value = card.depthTexture;
+      mat.uniforms.uFallback.value = Number.isFinite(card.fallback) ? card.fallback : -1;
+      mat.uniforms.uDepthTexel?.value.set(
+        1 / Math.max(1, card.depthTexture.image?.width || read.width),
+        1 / Math.max(1, card.depthTexture.image?.height || read.height));
+      mat.uniforms.uTDepth.value = card.tdepth;
+      applyPremultipliedBlendMode(mat, card.blendMode);
+      renderer.render(engine.depthCompositeTranslucentScene, orthoCamera);
+    }
+    applyPremultipliedBlendMode(mat, 'normal');
+    deferredCards.length = 0;
+  }
+
+  // The held-aside camera-locked backdrop, under everything (see lockedLead above).
+  if (leadPlate) {
+    engine.backdropUnderMaterial.uniforms.uTexture.value = leadPlate.texture;
+    renderer.setRenderTarget(read);
+    renderer.render(engine.backdropUnderScene, orthoCamera);
   }
 
   // Flatten onto an opaque backdrop (project background, else black) before the

@@ -1,9 +1,9 @@
 // ── Smart render cache: the editor-side controller ──
 // One per editor. Holds the cost map the Player feeds while playing live, the
 // segment fingerprints of the current timeline, the rendered entries, and the
-// background job queue (one server render at a time). The ruler line subscribes
-// through subscribe/getSnapshot (useSyncExternalStore), so nothing here re-renders
-// the editor. Pure logic lives in renderCache.js.
+// background job queue (one server render at a time). The ruler line and the
+// toolbar status subscribe through subscribe/getSnapshot (useSyncExternalStore), so
+// nothing here re-renders the editor. Pure logic lives in renderCache.js.
 
 import {
   RENDER_CACHE_SEGMENT_SEC,
@@ -17,6 +17,7 @@ import {
   cachedEntryAt,
   partitionEntries,
   renderCacheRuns,
+  renderCacheParts,
   loadRenderCacheEntries,
   saveRenderCacheEntries,
   sanitizeRenderCacheMode,
@@ -28,6 +29,9 @@ export const RENDER_CACHE_IDLE_MS = 5000;
 // came back loses little.
 export const RENDER_CACHE_JOB_SEC = 4;
 const POLL_MS = 600;
+// A cancelled job is followed until the server says it ended (its browser closed).
+const WIND_DOWN_POLL_MS = 250;
+const WIND_DOWN_MAX_MS = 8000;
 const NOTIFY_MS = 120;
 const MAX_FAILURES = 3;
 
@@ -64,10 +68,14 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
     entries: [],
     storageKey: null,
     job: null,              // { t0, t1, segments, segHashes, id, cancelled, progress }
+    windDown: null,         // id of a cancelled server job that may still be closing
+    hot: null,              // { t0, t1 } the toolbar status points at (lit on the ruler)
+    targetFps: null,        // the bar playback was measured against (status text)
     failures: 0,
     playing: false,
     lastActivity: now(),
     idleTimer: null,
+    idleArmedAt: null,      // when the idle timer was set: Smart renders at idleArmedAt + IDLE
     notifyTimer: null,
     drainQueue: false,      // "Render cache now": keep going until the plan is empty
     deps: null,             // { save, createJob, getJob, cancelJob, otherRenderActive, getPlayhead, cacheSize }
@@ -107,17 +115,51 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
 
   function buildSnapshot() {
     const hashes = active() && needsHashes() ? getHashes() : null;
+    const pending = st.job ? new Set(st.job.segments) : null;
     const runs = hashes ? renderCacheRuns({
       costMap: st.costMap,
       hashes,
       entries: st.entries,
-      pending: st.job ? new Set(st.job.segments) : null,
+      pending,
       duration: st.duration,
     }) : [];
+    const parts = hashes ? renderCacheParts({
+      costMap: st.costMap,
+      hashes,
+      entries: st.entries,
+      pending,
+      progress: st.job?.progress || 0,
+      duration: st.duration,
+    }) : [];
+    const measured = parts.filter((p) => p.state !== 'cached' && Number.isFinite(p.fps)).map((p) => p.fps);
+    // The wait before Smart renders by itself (the status clock): the idle timer,
+    // while there is something left to render and nothing renders.
+    let next = null;
+    let countdown = null;
+    if (hashes && st.idleArmedAt != null && !st.job) {
+      const plan = planCacheJobs({
+        costMap: st.costMap,
+        hashes,
+        entries: st.entries,
+        playhead: st.deps.getPlayhead?.() || 0,
+        duration: st.duration,
+        maxJobSec: RENDER_CACHE_JOB_SEC,
+      });
+      if (plan.length) {
+        next = { t0: plan[0].t0, t1: plan[0].t1 };
+        countdown = { since: st.idleArmedAt, ms: RENDER_CACHE_IDLE_MS };
+      }
+    }
     return {
       mode: st.mode,
       enabled: st.enabled,
       runs,
+      parts,
+      lowestFps: measured.length ? Math.min(...measured) : null,
+      targetFps: st.targetFps,
+      next,
+      countdown,
+      hot: st.hot,
       job: st.job ? { t0: st.job.t0, t1: st.job.t1, progress: st.job.progress } : null,
       entries: st.entries.length,
       failures: st.failures,
@@ -138,12 +180,23 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
   }
 
   // ── Idle scheduling ──
+  // The toolbar status's clock shows this timer: it starts when the timer is set
+  // (after an activity, or when a part turns red) and ends when Smart renders.
   function armIdle() {
     clearTimeout(st.idleTimer);
     st.idleTimer = null;
-    if (!active() || st.mode !== 'smart' || st.playing || !st.deps || !hasSlowSegments(st.costMap)) return;
+    const wasArmed = st.idleArmedAt != null;
+    st.idleArmedAt = null;
+    if (!active() || st.mode !== 'smart' || st.playing || !st.deps || !hasSlowSegments(st.costMap)) {
+      if (wasArmed) notify();
+      return;
+    }
+    st.idleArmedAt = now();
+    notify();
     st.idleTimer = setTimeout(() => {
       st.idleTimer = null;
+      st.idleArmedAt = null;
+      notify();
       if (now() - st.lastActivity >= RENDER_CACHE_IDLE_MS - 50 && !st.playing) runNext();
       else armIdle();
     }, RENDER_CACHE_IDLE_MS);
@@ -157,9 +210,32 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
     const job = st.job;
     if (job && !job.cancelled && !st.drainQueue && st.mode === 'smart') {
       job.cancelled = true;
-      if (job.id) st.deps?.cancelJob?.(job.id)?.catch?.(() => {});
+      stopServerJob(job);
     }
     armIdle();
+  }
+
+  // A cancelled render is not gone at once: the server still stops it and closes
+  // its browser. Frames measured while that happens play against its work, so
+  // until the server says the job ended they count as low-confidence (a slow one
+  // is ignored), the same as frames measured while a job runs.
+  function stopServerJob(job) {
+    if (!job.id || job.stopSent) return;
+    job.stopSent = true;
+    const id = job.id;
+    st.windDown = id;
+    st.deps?.cancelJob?.(id)?.catch?.(() => {});
+    (async () => {
+      const until = now() + WIND_DOWN_MAX_MS;
+      while (st.windDown === id && !st.disposed && now() < until) {
+        await new Promise((r) => setTimeout(r, WIND_DOWN_POLL_MS));
+        try {
+          const status = await st.deps?.getJob?.(id);
+          if (['completed', 'failed', 'cancelled'].includes(status?.status)) break;
+        } catch { /* keep following it until the cap */ }
+      }
+      if (st.windDown === id) st.windDown = null;
+    })();
   }
 
   // ── The job runner ──
@@ -212,11 +288,14 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
       rememberJobId(job.id);
       let misses = 0;
       for (;;) {
-        await new Promise((r) => setTimeout(r, POLL_MS));
+        // Checked before the wait too: a cancel that came while the job was being
+        // created reaches the server now, not a poll later.
         if (job.cancelled) {
-          st.deps.cancelJob?.(job.id).catch?.(() => {});
+          stopServerJob(job);
           throw new SkipJob('cancelled');
         }
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        if (job.cancelled) continue;
         let status;
         try {
           status = await st.deps.getJob(job.id);
@@ -330,13 +409,21 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
       noteActivity();
     },
     noteActivity,
+    // The toolbar status points at a part: the ruler lights its runs.
+    setHot(range) {
+      const next = range ? { t0: range.t0, t1: range.t1 } : null;
+      if (next?.t0 === st.hot?.t0 && next?.t1 === st.hot?.t1) return;
+      st.hot = next;
+      notifyNow();
+    },
 
     // Player hooks
     isActive: active,
     isRendering: () => !!st.job,
     recordSample(sample) {
       if (!active()) return;
-      if (recordCostSample(st.costMap, sample, RENDER_CACHE_SEGMENT_SEC, !!st.job)) {
+      if (sample?.targetMs > 0) st.targetFps = 1000 / sample.targetMs;
+      if (recordCostSample(st.costMap, sample, RENDER_CACHE_SEGMENT_SEC, !!st.job || !!st.windDown)) {
         notify();
         armIdle(); // a segment just turned slow (or back) — the healer may have work
       }
@@ -400,6 +487,7 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
         verdicts: Object.fromEntries([...st.costMap.segs.entries()].map(([i, s]) => [i, `${s.verdict}:${s.gaps.length}:${s.gaps.length ? (1000 / (s.gaps.reduce((a, b) => a + b, 0) / s.gaps.length)).toFixed(1) : '-'}fps`])),
         entries: st.entries.map((e) => ({ url: e.url, t0: e.t0, t1: e.t1, w: e.w, h: e.h, fps: e.fps, segs: Object.keys(e.segHashes).length })),
         job: st.job ? { t0: st.job.t0, t1: st.job.t1, id: st.job.id, progress: st.job.progress } : null,
+        windDown: st.windDown,
         failures: st.failures,
         hashRuns: st.hashRuns,
         idleInMs: Math.max(0, RENDER_CACHE_IDLE_MS - (now() - st.lastActivity)),

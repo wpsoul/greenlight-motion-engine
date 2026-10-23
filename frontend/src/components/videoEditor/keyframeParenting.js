@@ -125,7 +125,7 @@ export function isFullCopy(item) {
  * the layout in (rather than computing it) keeps this module free of speedUtils
  * and lets the Player reuse the layouts it already memoized per frame.
  */
-export function buildParentIndex(channels, layoutFor) {
+export function buildParentIndex(channels, layoutFor, clipFor = null) {
   const byId = new Map();
   (channels || []).forEach((channel, channelIndex) => {
     if (!channel) return;
@@ -146,6 +146,9 @@ export function buildParentIndex(channels, layoutFor) {
         startTime,
         endTime,
         duration: Math.max(0, endTime - startTime),
+        // The item's clip, where the caller has one: Motion Follow sizes the tracked
+        // layer's box from it (videoPlate.js real size).
+        clip: clipFor ? clipFor(item) || null : null,
       });
     });
   });
@@ -327,6 +330,77 @@ export function localAxisScale(item, kf) {
   return { x, y };
 }
 
+// ── Transform origin: the pivot ──────────────────────────────────────────────
+//
+// `keyframeTransformOrigin` (the keyframe panel's Origin: 'center', 'top', 'bottom left', …, or CSS-style
+// 'x% y%') is the point of the layer that Rotate X / Y / Z and the keyframed Scale turn and grow about — static
+// and keyed values alike, in 3D as in 2D, exactly as the panel's preview has always shown it. Position keeps its
+// meaning: Pan X / Y / Z place the layer's CENTRE as it rests unrotated, and the static Scale sizes the layer about
+// that centre. So a card with Origin 'bottom' and Rotate X −90 stands up on the line its bottom edge lay on.
+//
+// The pivot sits on the layer's own box: the drawn plate for a shape, picture, SVG or html page, the laid-out
+// block for text (whose plate is wider than its words). The render publishes that box per item each frame
+// (setLayerPivotBox, before it poses the layer); until it has, the frame is the box.
+const ORIGIN_WORDS = { left: [-0.5, null], right: [0.5, null], top: [null, 0.5], bottom: [null, -0.5], center: [null, null] };
+const originCache = new Map();
+// → { ox, oy } in −0.5…0.5 of the box (y UP), or null for the centre (no pivot shift: the old behaviour exactly).
+export function parseTransformOrigin(value) {
+  if (typeof value !== 'string') return null;
+  const key = value.trim().toLowerCase();
+  if (!key || key === 'center' || key === 'centre' || key === 'center center') return null;
+  if (originCache.has(key)) return originCache.get(key);
+  let ox = 0;
+  let oy = 0;
+  const parts = key.split(/\s+/).slice(0, 2);
+  parts.forEach((part, k) => {
+    const word = ORIGIN_WORDS[part === 'centre' ? 'center' : part];
+    if (word) {
+      if (word[0] !== null) ox = word[0];
+      if (word[1] !== null) oy = word[1];
+      return;
+    }
+    const pct = /^(-?[\d.]+)%$/.exec(part);
+    if (pct && Number.isFinite(Number(pct[1]))) {
+      // CSS order: the first percentage is x, the second y (y down).
+      if (k === 0) ox = Number(pct[1]) / 100 - 0.5; else oy = 0.5 - Number(pct[1]) / 100;
+    }
+  });
+  const out = ox === 0 && oy === 0 ? null : { ox, oy };
+  if (originCache.size > 64) originCache.clear();
+  originCache.set(key, out);
+  return out;
+}
+
+const pivotBoxes = new Map();
+// box = { w, h, cx, cy }: the layer's box in composition px at Scale 1, its centre relative to the plate centre
+// (y up). Called by the render for every layer it poses.
+export function setLayerPivotBox(itemId, box) {
+  if (!itemId || !box || !(box.w > 0) || !(box.h > 0)) return;
+  pivotBoxes.set(itemId, { w: box.w, h: box.h, cx: num(box.cx), cy: num(box.cy) });
+}
+export function getLayerPivotBox(itemId) {
+  return pivotBoxes.get(itemId) || null;
+}
+
+// Move `prs` so the origin point stays where it is when the layer turns (and grows by its keyed Scale):
+// p += o − R·Sk·o, o = the pivot's offset from the layer centre at the static Scale.
+function applyPivot(prs, item, kf, W, H) {
+  const origin = parseTransformOrigin(item.keyframeTransformOrigin);
+  if (!origin) return prs;
+  const box = pivotBoxes.get(item.id) || { w: W, h: H, cx: 0, cy: 0 };
+  const zoom = num(item.zoom, 1);
+  const bx = zoom * num(item.scaleX, 1);
+  const by = zoom * num(item.scaleY, 1);
+  const ox = (box.cx + origin.ox * box.w) * bx;
+  const oy = (box.cy + origin.oy * box.h) * by;
+  // The keyed part of the scale (the static part already sizes the box above).
+  const kx = Math.abs(bx) > 1e-9 ? prs.sx / bx : 1;
+  const ky = Math.abs(by) > 1e-9 ? prs.sy / by : 1;
+  const m = prsLinear({ rx: prs.rx, ry: prs.ry, rz: prs.rz, sx: kx, sy: ky, sz: 1 });
+  const t = transform3(m, ox, oy, 0);
+  return { ...prs, px: prs.px + ox - t.x, py: prs.py + oy - t.y, pz: prs.pz - t.z };
+}
+
 /**
  * An item's own effective PRS at one moment — base fields plus its keyframed PRS
  * values — in canonical (THREE-space) form. Mirror is deliberately excluded.
@@ -334,8 +408,16 @@ export function localAxisScale(item, kf) {
  * The arithmetic (and every sign) mirrors applyMeshTransform in Player.jsx: that
  * is the definition of where a layer sits, and an unparented layer must resolve to
  * byte-identical numbers through this path.
+ *
+ * A layer with a Transform origin turns about it (applyPivot above).
  */
 export function localPrs(item, kf, W, H) {
+  if (!item) return identityPrs();
+  const prs = ownPrs(item, kf, W, H);
+  return item.keyframeTransformOrigin ? applyPivot(prs, item, kf, num(W, 1920), num(H, 1080)) : prs;
+}
+
+function ownPrs(item, kf, W, H) {
   if (!item) return identityPrs();
   const width = num(W, 1920);
   const height = num(H, 1080);

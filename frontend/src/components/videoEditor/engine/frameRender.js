@@ -20,7 +20,7 @@ import { isBezierWarpEnabled } from '../bezierWarp';
 import { isShaderBlendMode } from '../blendModes';
 import { isChromaKeyEnabled } from '../chromaKeyLayer';
 import { createBlitMaterial } from '../clipShader';
-import { layerPlane, layerSortDepth } from '../compositeSortDepth';
+import { layerPlane, layerQuad, layerSortDepth } from '../compositeSortDepth';
 import { isCornerPinEnabled } from '../cornerPinLayer';
 import { isDepthScanEnabled } from '../depthScanLayer';
 import { isDrosteEnabled } from '../drosteLayer';
@@ -50,7 +50,7 @@ import { releaseIdleTransitionCaptures } from '../transitionPackageRuntime';
 import { renderAdjustmentComposite as renderAdjustmentCompositeInEngine, setLayerDepthMode as setLayerDepthModeInEngine } from './adjustmentComposite';
 import { repaintAnimatedBackground } from './background';
 import { poseEngineCamera } from './camera';
-import { renderChannel as renderChannelInEngine } from './channelRender';
+import { prePoseWorldModels, renderChannel as renderChannelInEngine } from './channelRender';
 import { getChannelsBottomToTop, isClipMaskItem, orderChannelsForComposite, resolveActiveIndex, resolveGlassLayer } from './compositeHelpers';
 import { clamp01 } from './layerHelpers';
 import { isTexturePinned as isTexturePinnedInEngine } from './mediaTextures';
@@ -152,6 +152,9 @@ export function renderFrame(engine, env) {
   engine.rcDrewCache = !!rcTexture;
   engine.rcMediaOnly = !!rcTexture;
   try {
+    // Every 3D model where it is THIS frame before the first pass renders the Rig's
+    // shared shadow map (channelRender.prePoseWorldModels).
+    prePoseWorldModels(engine, env, engine.currentTime);
     for (const channel of env.channels) renderChannelInEngine(engine, env, channel, engine.currentTime);
   } finally {
     engine.rcMediaOnly = false;
@@ -819,6 +822,11 @@ export function renderFrame(engine, env) {
     if (!hasGridPlate && channel.items.some((it) => env.clipsMap.get(it.clipId)?.mediaType === 'grid')) {
       hasGridPlate = true;
     }
+    // A particle plate likewise: renderParticleLayer has already filmed the box
+    // through the posed camera.
+    if (!hasGridPlate && channel.items.some((it) => env.clipsMap.get(it.clipId)?.mediaType === PARTICLE_MEDIA_TYPE)) {
+      hasGridPlate = true;
+    }
   }
   const mixedCameraLock = cameraPosed && (hasLocked || hasGridPlate) && hasPosed;
   if ((adjustments.length > 0 || cameraDofActive || glowLayers.size > 0 || overlayFx.size > 0
@@ -861,7 +869,15 @@ export function renderFrame(engine, env) {
           const mesh = cs && (cs.currMesh?.visible ? cs.currMesh : cs.prevMesh);
           return mesh?.visible ? layerSortDepth(mesh, passCam) : 0;
         };
-        orderChannelsForComposite(stack, new Map(), depthOf, planeOf)
+        // …and on the right side of every flat layer it stands on (compositeSortDepth.js orderByPlanes). A model, a
+        // camera-baked or particle pass and a grid plate sit on identity quads that say nothing about where they draw.
+        const quadOf = (channel) => {
+          const cs = engine.channelStates.get(channel.id);
+          const mesh = cs && (cs.currMesh?.visible ? cs.currMesh : cs.prevMesh);
+          const u = mesh?.userData;
+          return !mesh?.visible || u?.gridWorldPos || u?.cameraBaked3d || u?.particlePlate ? null : layerQuad(mesh);
+        };
+        orderChannelsForComposite(stack, new Map(), depthOf, planeOf, quadOf, passCam.getWorldPosition(new THREE.Vector3()))
           .forEach((c, k) => { engine.channelStates.get(c.id).group.renderOrder = k + 1; });
         engine.planeOrderApplied = true;
       } else if (engine.planeOrderApplied) {

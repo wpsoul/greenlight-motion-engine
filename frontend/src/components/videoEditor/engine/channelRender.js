@@ -19,7 +19,8 @@ import { getDepthCameraShift } from '../depthParallax';
 import { activeEffectPrecomposeStage } from '../effectTransitionOrder';
 import { applyCrossTransition, applyGsapEasing, applyLayerTransition, getItemKeyframeValues, integratePathRate, itemHasKeyframes } from '../gsapTransitions';
 import { bindHtmlLiveCanvas, htmlLiveCanvas, htmlLivePrepare } from '../htmlLive';
-import { localPrs } from '../keyframeParenting';
+import { applyParenting, localPrs } from '../keyframeParenting';
+import { applyMotionFollowToPrs } from '../motionTracking';
 import { isLayerMaskEnabled } from '../layerMask';
 import { layerDriveTableFor } from '../layerVelocity';
 import { withFlatEffects } from '../model3dFxCatalog';
@@ -35,17 +36,78 @@ import { isCameraBaked3dPlate, isScenePlate, RIG_MEDIA_TYPE } from '../rig3d';
 import { prerenderPlaybackClip } from '../sequencePrerender';
 import { getSpeedAtTime } from '../speedUtils';
 import { hideTransitionPackageInstances, renderTransitionPackage } from '../transitionPackageRuntime';
-import { isAdvancedLayerTransition, isContainerClip, LayerTransitionType, TransitionEasing, TransitionType } from '../types';
+import { isAdvancedLayerTransition, isContainerClip, LayerTransitionType, SEQUENCE_MAX_DEPTH, TransitionEasing, TransitionType } from '../types';
 import { hasVideoStabilization } from '../videoStabilization';
 import { applyCameraRig } from './camera';
+import { ensureSequenceState as ensureSequenceStateInEngine } from './channelStates';
 import { _platePos, resolveActiveIndex } from './compositeHelpers';
 import { bakeableLayerStack, calculateVideoTime, layerContentBox } from './layerHelpers';
+import { playbackRateTrim } from './mediaClock';
 import { getClipPlaybackUrl, normalizeUrl, primePreparedVideoTexture as primePreparedVideoTextureInEngine } from './mediaTextures';
 import { resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
 import { requestModel3dModule } from './modules3d';
 import { mediaActivation } from './previewMedia';
 import { deactivateTransitionPackageMedia as deactivateTransitionPackageMediaInEngine, syncTransitionPackageMedia as syncTransitionPackageMediaInEngine } from './transitions';
 import { CLIP_BOUNDARY_CONVERGE_S, CLIP_HANDOFF_SYNC_MS, IDLE_CHANNEL_PRELOAD_LEAD, NEXT_CLIP_PRELOAD_WINDOW, _modelSize, _plateQuat, _plateScale, easeLayerSlot, resolveModelFx3d } from './compositeHelpers';
+
+/*
+ * Stage an UPCOMING container (sequence / grid) for its first frame while playing.
+ * Its inner media live in its own channel states, which nothing visits until the
+ * container is live — so a video inside it used to get its source ON the cut: 3–4
+ * black frames while it decoded, then a start 60–80 ms behind the clock (and
+ * behind a cut-out of the same shot playing above the container). Each inner
+ * channel's entry clip is staged the way the outer preloads stage a top-level one:
+ * source, entry frame, primed texture, on the buffer it will play from. A nested
+ * container at the entry is staged the same way, one level down. `timeInClip` is
+ * the container's own clip time at the moment it goes live (0 at a cut).
+ */
+function stageContainerEntry(engine, env, seqItem, seqClip, timeInClip, rateScale, depth, scopeKey) {
+  if (depth > SEQUENCE_MAX_DEPTH || !isContainerClip(seqClip)) return;
+  const st = ensureSequenceStateInEngine(engine, seqItem.id, seqClip);
+  if (!st) return;
+  const localTime = calculateVideoTime(seqItem, Math.max(0, timeInClip));
+  const innerRate = rateScale * getSpeedAtTime(seqItem.speedPoints, 0);
+  const getClip = (id) => {
+    const c = st.clipsMap.get(id);
+    if (!c || c.mediaType !== 'sequence' || engine.exporting) return c;
+    return prerenderPlaybackClip(c, engine.videoSize.w, engine.videoSize.h, env.projectFps) || c;
+  };
+  for (const ch of seqClip.sequence.channels) {
+    if (ch.visible === false || !ch.items?.length) continue;
+    const cs = st.channelStates.get(ch.id);
+    const layout = st.layouts.get(ch.id);
+    if (!cs || !layout) continue;
+    // The clip live at the entry, else the first to start soon after it.
+    let index = resolveActiveIndex(layout, localTime);
+    if (index < 0) {
+      for (let i = 0; i < layout.length; i += 1) {
+        const lead = layout[i].startTime - localTime;
+        if (lead > 0 && lead <= IDLE_CHANNEL_PRELOAD_LEAD) { index = i; break; }
+      }
+    }
+    if (index < 0) continue;
+    const item = ch.items[index];
+    const clip = item ? getClip(item.clipId) : null;
+    if (!clip) continue;
+    const itemTime = Math.max(0, localTime - layout[index].startTime);
+    const itemScope = `${scopeKey}:${item.id}`;
+    if (isContainerClip(clip)) {
+      stageContainerEntry(engine, env, item, clip, itemTime, innerRate, depth + 1, itemScope);
+      continue;
+    }
+    if (clip.mediaType !== 'video') continue;
+    const video = index % 2 === 0 ? cs.videos.a : cs.videos.b;
+    const progress = layout[index].duration > 0 ? Math.min(1, itemTime / layout[index].duration) : 0;
+    const speed = getSpeedAtTime(item.speedPoints, progress) * innerRate;
+    if (Math.abs(video.playbackRate - speed) > 0.05) video.playbackRate = speed;
+    const target = calculateVideoTime(item, itemTime);
+    if (clip.htmlSource) {
+      htmlLivePrepare(clip, target, { fps: env.projectFps, videoSize: engine.videoSize, instance: itemScope });
+    }
+    env.syncVideo(video, clip, target, { allowPlayback: false, idleStaging: true });
+    primePreparedVideoTextureInEngine(engine, video, clip, target, env.projectFps);
+  }
+}
 
 export function renderChannel(engine, env, channel, time, ctx = null) {
   const cs = (ctx ? ctx.channelStates : engine.channelStates).get(channel.id);
@@ -145,12 +207,23 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
       }
       horizon.sort((a, b) => a.lead - b.lead);
       const preparedParity = new Set();
+      let stagedContainer = false;
       for (const { index } of horizon) {
         if (preparedParity.size >= 2) break;
-        const parity = index % 2;
-        if (preparedParity.has(parity)) continue;
         const upcomingItem = channel.items[index];
         const upcomingClip = upcomingItem ? getClip(upcomingItem.clipId) : null;
+        // A container plays from its own channel states, not this channel's
+        // buffers: stage the soonest one's entry and leave both parities free.
+        if (isContainerClip(upcomingClip)) {
+          if (!stagedContainer) {
+            stagedContainer = true;
+            stageContainerEntry(engine, env, upcomingItem, upcomingClip, 0, ctx?.rateScale || 1, (ctx?.depth || 0) + 1,
+              ctx?.scopeKey ? `${ctx.scopeKey}:${upcomingItem.id}` : upcomingItem.id);
+          }
+          continue;
+        }
+        const parity = index % 2;
+        if (preparedParity.has(parity)) continue;
         if (upcomingClip?.mediaType !== 'video') continue;
         const upcomingVideo = parity === 0 ? cs.videos.a : cs.videos.b;
         const upcomingSpeed = getSpeedAtTime(upcomingItem.speedPoints, 0);
@@ -385,8 +458,13 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     });
     if (res?.viewDistance != null) engine.modelDepth.set(channel.id, res.viewDistance);
     else engine.modelDepth.delete(channel.id);
+    if (res?.viewRange) engine.modelDepthRange.set(channel.id, res.viewRange);
+    else engine.modelDepthRange.delete(channel.id);
     if (res?.depthTexture) engine.modelDepthTex.set(channel.id, res.depthTexture);
     else engine.modelDepthTex.delete(channel.id);
+    // Opaque + transparent depth (a contact-shadow card has none of its own).
+    if (res?.depthTexture && res?.transparentDepthTexture) engine.modelTransparentDepthTex.set(channel.id, res.transparentDepthTexture);
+    else engine.modelTransparentDepthTex.delete(channel.id);
     if (res?.spillDepth >= 0) engine.modelSpillDepth.set(channel.id, res.spillDepth);
     else engine.modelSpillDepth.delete(channel.id);
     return res?.texture || null;
@@ -414,7 +492,13 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     const { w: pW, h: pH } = engine.videoSize;
     const locked = ctx || channel.cameraLocked || engine.worldActive;
     const kfNow = itemHasKeyframes(pItem) ? getItemKeyframeValues(pItem, itemProgress) : null;
-    const prs = localPrs(pItem, kfNow, pW, pH);
+    // The box's WHOLE pose — parent and Motion Follow included. Its plate stays at
+    // frame identity (applyMeshTransform), so this is the only place either applies.
+    const pParent = pItem === item ? itemParentXform : poseFor(pItem);
+    const pFollow = pItem === item ? itemFollow : resolveFollowInEngine(engine, levelParentIndex, pItem, time);
+    const pLocal = localPrs(pItem, kfNow, pW, pH);
+    const pPosed = pParent ? applyParenting(pParent.prs, pLocal, pParent.type) : pLocal;
+    const prs = pFollow ? applyMotionFollowToPrs(pPosed, pFollow, pW, pH) : pPosed;
     const buf = renderer.getDrawingBufferSize(_modelSize);
     // Keyed by the SCOPED runtime key, not the bare item id: the same item id can
     // appear at two levels once a solver is grouped into a sequence.
@@ -680,6 +764,8 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     // depth texture: translucent particles must not cut the layers behind them.
     if (res?.viewDistance != null) engine.modelDepth.set(channel.id, res.viewDistance);
     else engine.modelDepth.delete(channel.id);
+    if (res?.viewRange) engine.modelDepthRange.set(channel.id, res.viewRange);
+    else engine.modelDepthRange.delete(channel.id);
     return res?.texture || null;
   };
 
@@ -718,8 +804,11 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     });
     if (res?.viewDistance != null) engine.modelDepth.set(channel.id, res.viewDistance);
     else engine.modelDepth.delete(channel.id);
+    if (res?.viewRange) engine.modelDepthRange.set(channel.id, res.viewRange);
+    else engine.modelDepthRange.delete(channel.id);
     if (res?.depthTexture) engine.modelDepthTex.set(channel.id, res.depthTexture);
     else engine.modelDepthTex.delete(channel.id);
+    engine.modelTransparentDepthTex.delete(channel.id);
     engine.modelSpillDepth.delete(channel.id);
     return res?.texture || null;
   };
@@ -805,7 +894,9 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     if (!isCameraBaked3dPlate(pClip, pItem)) {
       mod.syncPlateLayer(renderer, opts);
       engine.modelDepth.delete(channel.id);
+      engine.modelDepthRange.delete(channel.id);
       engine.modelDepthTex.delete(channel.id);
+      engine.modelTransparentDepthTex.delete(channel.id);
       engine.modelSpillDepth.delete(channel.id);
       return false;
     }
@@ -814,8 +905,11 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     if (!res?.texture) return false;
     if (res.viewDistance != null) engine.modelDepth.set(channel.id, res.viewDistance);
     else engine.modelDepth.delete(channel.id);
+    if (res.viewRange) engine.modelDepthRange.set(channel.id, res.viewRange);
+    else engine.modelDepthRange.delete(channel.id);
     if (res.depthTexture) engine.modelDepthTex.set(channel.id, res.depthTexture);
     else engine.modelDepthTex.delete(channel.id);
+    engine.modelTransparentDepthTex.delete(channel.id);
     engine.modelSpillDepth.delete(channel.id);
 
     resetMaterialUniforms(material);
@@ -863,7 +957,8 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   const htmlHeld = engine.exportActive || engine.warmUp?.hidden;
   if (clip.mediaType === 'video') {
     const speed = getSpeedAtTime(item.speedPoints, itemProgress) * rateScale;
-    if (Math.abs(activeVideo.playbackRate - speed) > 0.05) activeVideo.playbackRate = speed;
+    // × the catch-up trim syncVideo may hold on it (mediaClock.js), which this must not undo
+    if (Math.abs(activeVideo.playbackRate - speed * playbackRateTrim(activeVideo)) > 0.05) activeVideo.playbackRate = speed;
     if (activeVideo.preservesPitch) activeVideo.preservesPitch = false;
     if (activeVideo.mozPreservesPitch) activeVideo.mozPreservesPitch = false;
     const videoVol = item.volume ?? 100;
@@ -904,6 +999,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
       frameAccurate: isLayerMaskEnabled(item) || env.rotoPreview?.itemId === item.id
         || hasVideoStabilization(item),
       nearCutBoundary,
+      rate: speed,
     });
   }
 
@@ -915,7 +1011,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
 
     if (prevClip?.mediaType === 'video') {
       const prevSpeed = getSpeedAtTime(prevItem.speedPoints, prevProgress) * rateScale;
-      if (Math.abs(previousVideo.playbackRate - prevSpeed) > 0.05) previousVideo.playbackRate = prevSpeed;
+      if (Math.abs(previousVideo.playbackRate - prevSpeed * playbackRateTrim(previousVideo)) > 0.05) previousVideo.playbackRate = prevSpeed;
       if (previousVideo.preservesPitch) previousVideo.preservesPitch = false;
       if (previousVideo.mozPreservesPitch) previousVideo.mozPreservesPitch = false;
       const prevVideoVol = prevItem.volume ?? 100;
@@ -943,6 +1039,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
       if (!engine.exportActive && !prevLiveHtml) env.syncVideo(previousVideo, prevClip, targetTime, {
         frameAccurate: isLayerMaskEnabled(prevItem) || env.rotoPreview?.itemId === prevItem.id
           || hasVideoStabilization(prevItem),
+        rate: prevSpeed,
       });
     }
 
@@ -1181,6 +1278,12 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     env.syncVideo(previousVideo, nextClip, nextTargetTime, { allowPlayback: false });
     primePreparedVideoTextureInEngine(engine, previousVideo, nextClip, nextTargetTime, env.projectFps);
   }
+  // The next clip is a container: stage the media its first frame plays.
+  if (env.isPlaying && !engine.exportActive && nextItem && isContainerClip(nextClip)
+    && timeUntilNextClip > 0 && timeUntilNextClip <= preloadLead) {
+    stageContainerEntry(engine, env, nextItem, nextClip, 0, rateScale, (ctx?.depth || 0) + 1,
+      ctx?.scopeKey ? `${ctx.scopeKey}:${nextItem.id}` : nextItem.id);
+  }
 
   if (engine.rcMediaOnly) {
     resolveSequenceTexture(item, clip, timeInClip, itemProgress, itemParentXform);
@@ -1193,7 +1296,9 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // Scan, Fresnel Rim, Running Glow), and WebGL depth-tested the picture
   // against a surface that is no longer there.
   engine.modelDepth.delete(channel.id);
+  engine.modelDepthRange.delete(channel.id);
   engine.modelDepthTex.delete(channel.id);
+  engine.modelTransparentDepthTex.delete(channel.id);
   engine.modelSpillDepth.delete(channel.id);
   env.setupMesh(
     cs.currMesh, cs.currMaterial, item, clip, activeVideo, itemProgress, itemLayout.duration, cs,
@@ -1310,4 +1415,40 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // A package that owns this frame keeps its media running; everything else on
   // this channel has none to run.
   if (!packageActive) deactivateTransitionPackageMediaInEngine(cs);
+}
+
+/**
+ * Pose every top-level 3D model for `time` BEFORE any channel draws (renderFrame).
+ *
+ * The Scene Rig's shadow map is rendered once per frame, by the frame's first 3D
+ * pass. Posed only in their own passes, models on later channels were still in last
+ * frame's pose then, so their shadows on everything drawn before them trailed them
+ * by a frame wherever a frame is drawn once — playback above all (an export's
+ * settling repaint hid it there). Same item, keyframes and clip time as
+ * resolveModelTexture. A render-cache frame draws no 3D pass and no shadow map, so it
+ * poses nothing.
+ */
+export function prePoseWorldModels(engine, env, time) {
+  const mod = engine.model3d;
+  if (!mod?.poseModelLayer || engine.worldActive || engine.rcMediaOnly) return;
+  const rig = engine.activeRigAt(time);
+  if (!rig) return;
+  const { w, h } = engine.videoSize;
+  for (const channel of env.channels) {
+    if (channel.visible === false || channel.cameraLocked || !channel.items?.length) continue;
+    const layout = env.layoutMap.get(channel.id);
+    const index = layout ? resolveActiveIndex(layout, time) : -1;
+    if (index < 0) continue;
+    const item = channel.items[index];
+    const clip = env.clipsMap.get(item?.clipId);
+    if (clip?.mediaType !== 'model3d') continue;
+    const itemLayout = layout[index];
+    const timeInClip = time - itemLayout.startTime;
+    const progress = itemLayout.duration > 0 ? Math.max(0, Math.min(1, timeInClip / itemLayout.duration)) : 0;
+    const kfNow = itemHasKeyframes(item) ? getItemKeyframeValues(item, progress) : null;
+    mod.poseModelLayer({
+      item, clip, prs: localPrs(item, kfNow, w, h), W: w, H: h,
+      time: Math.max(0, timeInClip), rig, frameToken: engine.frameToken,
+    });
+  }
 }

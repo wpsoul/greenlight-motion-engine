@@ -463,15 +463,15 @@ export function pinCameraChannelTop(channels) {
 
 // ── World space ↔ camera props ──
 //
-// Player poses each channel's RIG with the inverse of the camera move while the
-// shared PerspectiveCamera sits still at (0, 0, D). So with rig matrix M = T·R·S,
-// the camera's real world matrix is M⁻¹·C, giving
+// The render camera is cameraProxyFromPose:
 //
-//   position = R⁻¹ · ( camX/100·W , -camY/100·H , D - camDolly )
+//   position = R⁻¹ · ( camX/100·W/zoom , -camY/100·H/zoom , D - camDolly )
 //
-// and these two functions are that relation in each direction. camZoom is left
-// out on purpose: it is a LENS zoom (rig.scale is x/y only), so it changes
-// magnification without moving the viewpoint.
+// and these two functions are that relation in each direction. The pan is divided by
+// camZoom there (camX/camY are screen-space), so it must be here too: without it a
+// rig or path camera, the World View gizmo and an imported (Blender) camera all sat
+// off their world position by 1/zoom whenever the zoom was not 1. camZoom stays a
+// LENS zoom — for a given world position it changes magnification, not the viewpoint.
 
 /** Rig rotation (the inverse of the camera's own orientation) for a pose. */
 function rigQuaternion(values) {
@@ -483,11 +483,17 @@ function rigQuaternion(values) {
   ));
 }
 
+function poseZoom(values) {
+  const zoom = num(values?.camZoom, 1);
+  return zoom > 0 ? zoom : 1;
+}
+
 export function cameraWorldPosition(values, width, height) {
   const D = perspectiveDistance(height);
+  const zoom = poseZoom(values);
   return new THREE.Vector3(
-    (num(values?.camX) / 100) * width,
-    -(num(values?.camY) / 100) * height,
+    ((num(values?.camX) / 100) * width) / zoom,
+    (-(num(values?.camY) / 100) * height) / zoom,
     D - num(values?.camDolly)
   ).applyQuaternion(rigQuaternion(values).invert());
 }
@@ -500,9 +506,10 @@ export function cameraPropsForWorldPoint(position, camQuat, values, width, heigh
   const D = perspectiveDistance(height);
   const rigQuat = camQuat ? camQuat.clone().invert() : rigQuaternion(values);
   const q = position.clone().applyQuaternion(rigQuat);
+  const zoom = poseZoom(values);
   const out = {
-    camX: round4((q.x / width) * 100),
-    camY: round4(-(q.y / height) * 100),
+    camX: round4((q.x / width) * 100 * zoom),
+    camY: round4(-(q.y / height) * 100 * zoom),
     camDolly: round4(D - q.z),
   };
   if (camQuat) {

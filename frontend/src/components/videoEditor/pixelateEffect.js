@@ -1,7 +1,8 @@
 import { fxBoxHomographies, homographyApply, invertHomography } from './homography';
 
 /*
- * Pixelate — the picture rebuilt from flat blocks, as an Overlay Effect.
+ * Mosaic (id `pixelate`, named after After Effects' Mosaic) — the picture rebuilt
+ * from flat blocks, as an Overlay Effect.
  *
  * Look-dev and gates: html/pixelate-lab/ + tests/pixelate-lab/verify_lab.mjs
  * (the maths), tests/pixelate/ (the app, both backends).
@@ -219,7 +220,7 @@ const cellsSize = (p, c) => pixelateGrid(p, c).count;
 
 export const PIXELATE_EFFECT = {
   id: 'pixelate',
-  name: 'Pixelate',
+  name: 'Mosaic',
   group: 'Display',
   animated: false,
   // The blocks ARE the new edge: clipping them back to the item's smooth
@@ -228,7 +229,7 @@ export const PIXELATE_EFFECT = {
   params: PIXELATE_PARAMS,
   colorPresets: [
     { name: 'Soft Blocks', params: { size: 36, stretch: 0, sampling: 0, grid: 1, offsetX: 0, offsetY: 0 } },
-    { name: 'Mosaic', params: { size: 22, stretch: 0, sampling: 0, grid: 0, offsetX: 0, offsetY: 0 } },
+    { name: 'Tiles', params: { size: 22, stretch: 0, sampling: 0, grid: 0, offsetX: 0, offsetY: 0 } },
     { name: '8-bit', params: { size: 10, stretch: 0, sampling: 1, grid: 1, offsetX: 0, offsetY: 0 } },
     { name: 'Giant Pixels', params: { size: 120, stretch: 0, sampling: 0, grid: 0, offsetX: 0, offsetY: 0 } },
     { name: 'Columns', params: { size: 30, stretch: -80, sampling: 0, grid: 1, offsetX: 0, offsetY: 0 } },

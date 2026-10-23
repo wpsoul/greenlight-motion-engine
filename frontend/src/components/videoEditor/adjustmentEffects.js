@@ -1645,19 +1645,91 @@ vec4 fx(vec2 uv) {
     name: 'Film Grain',
     group: 'Glitch',
     animated: true,
+    // The look the user picked in html/film-grain-lab.html: a quiet, still grain.
+    // A fresh entry starts at this Mix (makeDefaultEffect); a saved one keeps its own.
+    defaultMix: 32,
     params: [
-      { key: 'amount', slot: 0, label: 'Amount', min: 0, max: 1, step: 0.01, default: 0.25 },
-      { key: 'size', slot: 1, label: 'Size', min: 1, max: 8, step: 0.5, default: 1.5, suffix: 'px' },
-      { key: 'animate', slot: 2, label: 'Animate', type: 'select', default: 1,
+      { key: 'amount', slot: 0, label: 'Amount', min: 0, max: 1, step: 0.01, default: 0.2 },
+      // Grain px at 1080p (the frame's short side), so preview and export match.
+      { key: 'size', slot: 1, label: 'Size', min: 1, max: 8, step: 0.5, default: 2, suffix: 'px' },
+      { key: 'animate', slot: 2, label: 'Animate', type: 'select', default: 0,
         options: [{ value: 1, label: 'On' }, { value: 0, label: 'Off' }] },
+      { key: 'color', slot: 3, label: 'Color', min: 0, max: 1, step: 0.01, default: 0.1 },
     ],
+    // Grain that reads as film, not as sensor noise: soft clumped grains (two
+    // rotated layers of smooth noise plus a little per-pixel bite) with a bell-
+    // shaped value spread, strongest in the midtones, thinning in the
+    // highlights, and squeezed to nothing at 0 and 1 so it never clips black
+    // to grey or white to grey. Color splits it per dye layer. The lattice is
+    // integer-hashed (bit-exact on both backends) and printed on the layer.
     fragment: /* glsl */ `
+vec4 grHash4(vec2 p, float seed) {
+  uvec2 v = uvec2(ivec2(floor(p)) + 32768);
+  v.x += uint(seed) * 747796405u;
+  v = v * 1664525u + 1013904223u;
+  v.x += v.y * 1664525u;
+  v.y += v.x * 1664525u;
+  v ^= v >> 16u;
+  v.x += v.y * 1664525u;
+  v.y += v.x * 1664525u;
+  v ^= v >> 16u;
+  return vec4(vec2(v & 65535u), vec2(v >> 16u)) / 65536.0;
+}
+// One corner's grain values: luma, and two chroma axes when Color is on.
+vec3 grCorner(vec2 c, float seed, float chroma) {
+  vec4 h = grHash4(c, seed * 2.0);
+  vec3 g = vec3(h.x + h.y - 1.0, 0.0, 0.0);
+  if (chroma > 0.001) {
+    vec4 h2 = grHash4(c, seed * 2.0 + 1.0);
+    g.yz = vec2(h.z + h.w - 1.0, h2.x + h2.y - 1.0);
+  }
+  return g;
+}
+// Value noise over the corner values, divided by the interpolation's own
+// spread: plain value noise swells on the lattice and dips mid-cell, and that
+// periodic swell is the grid the eye picks out of fake grain.
+vec3 grLayer(vec2 p, float seed, float chroma) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 w = f * f * (3.0 - 2.0 * f);
+  vec4 k = vec4((1.0 - w.x) * (1.0 - w.y), w.x * (1.0 - w.y), (1.0 - w.x) * w.y, w.x * w.y);
+  vec3 s = grCorner(i, seed, chroma) * k.x
+    + grCorner(i + vec2(1.0, 0.0), seed, chroma) * k.y
+    + grCorner(i + vec2(0.0, 1.0), seed, chroma) * k.z
+    + grCorner(i + vec2(1.0, 1.0), seed, chroma) * k.w;
+  return s * inversesqrt(max(dot(k, k), 1e-4));
+}
 vec4 fx(vec2 uv) {
   vec4 base = texture2D(uTexture, uv);
-  float tt = uParams[2] > 0.5 ? floor(uTime * 24.0) : 0.0;
-  vec2 gp = floor(fxCoord(uv) / max(1.0, uParams[1]));
-  float n = hash21(gp + tt * 1.37) - 0.5;
-  vec3 col = clamp(unpremult(base) + n * uParams[0], 0.0, 1.0);
+  float amt = uParams[0];
+  if (amt <= 0.001) return base;
+  float chroma = clamp(uParams[3], 0.0, 1.0);
+  float frame = uParams[2] > 0.5 ? floor(uTime * 24.0) : 0.0;
+  vec4 jit = grHash4(vec2(frame, 17.0), 3.0) * 64.0;
+  // 1080p-reference px on the layer's own lattice.
+  float pxScale = max(min(uResolution.x, uResolution.y) / 1080.0, 1e-3);
+  vec2 p = fxCoord(uv) / pxScale;
+  float size = max(uParams[1], 1.0);
+  vec2 pa = rot2(0.41) * p / size + jit.xy;
+  vec2 pb = rot2(-0.93) * p / (size * 2.1) + jit.zw + 517.0;
+  vec3 n = grLayer(pa, frame, chroma) + 0.42 * grLayer(pb, frame + 9973.0, chroma);
+  // Coarse grain still has fine grains inside it; without them a big grain
+  // reads as a watery blur. Fades in above ~2 px, skipped below.
+  float wc = 0.6 * smoothstep(1.5, 4.0, size);
+  if (wc > 0.001) {
+    vec2 pc = rot2(2.17) * p / (size * 0.45) + jit.yx + 1291.0;
+    n.x += wc * grLayer(pc, frame + 19937.0, 0.0).x;
+  }
+  // Per-pixel bite, so the grain keeps a crisp edge.
+  vec4 hf = grHash4(fxCoord(uv), frame * 2.0 + 7.0);
+  n.x += 0.3 * (hf.x + hf.y - 1.0);
+  n *= inversesqrt((1.2664 + wc * wc) / 6.0);
+  vec3 c = clamp(unpremult(base), 0.0, 1.0);
+  float l = luma(c);
+  float resp = mix(0.55, 1.0, smoothstep(0.0, 0.3, l)) * (1.0 - 0.7 * smoothstep(0.5, 1.0, l));
+  vec3 room = max(sqrt(clamp(4.0 * c * (1.0 - c), 0.0, 1.0)), vec3(0.18));
+  vec3 rgb = vec3(n.x) + chroma * 1.3 * (n.y * vec3(0.7071, -0.7071, 0.0) + n.z * vec3(0.4082, 0.4082, -0.8165));
+  vec3 col = clamp(c + rgb * (amt * 0.22 * resp) * room, 0.0, 1.0);
   return vec4(col * base.a, base.a);
 }
 `,
@@ -2889,7 +2961,7 @@ ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'lut'), 0
 // with its lab-verified maths; html/overlay-effects-lab.html is the look-dev.
 ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'lut'), 0,
   FAST_BLUR_EFFECT, GRID_LINES_EFFECT, ASCII_EFFECT);
-// Pixelate (html/pixelate-lab is the look-dev) sits beside CRT Pixel Matrix in Display.
+// Mosaic (`pixelate`; html/pixelate-lab is the look-dev) sits beside CRT Pixel Matrix in Display.
 ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'crtMatrix') + 1, 0, PIXELATE_EFFECT);
 // Posterize (AE Posterize, html/posterize-lab is the look-dev) sits beside Colorama in Color.
 ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'colorama') + 1, 0, POSTERIZE_EFFECT);
@@ -3562,7 +3634,8 @@ export function makeEid() {
 export function makeDefaultEffect(id) {
   const def = getAdjustmentEffect(id);
   if (!def) return null;
-  const eff = { id, eid: makeEid(), enabled: true, mix: 100, params: defaultEffectParams(id) };
+  const mix = Number.isFinite(def.defaultMix) ? def.defaultMix : 100;
+  const eff = { id, eid: makeEid(), enabled: true, mix, params: defaultEffectParams(id) };
   if (def.isCustom) eff.code = DEFAULT_CUSTOM_EFFECT_CODE;
   return eff;
 }

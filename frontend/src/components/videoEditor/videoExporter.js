@@ -1,7 +1,7 @@
 import { Muxer as Mp4Muxer, ArrayBufferTarget as Mp4Target, StreamTarget as Mp4StreamTarget } from 'mp4-muxer';
 import { Muxer as WebmMuxer, ArrayBufferTarget as WebmTarget, StreamTarget as WebmStreamTarget } from 'webm-muxer';
 import { audioFadeGainWindow } from './audioFade';
-import { estimateDetailBitrate } from './renderBitrate';
+import { autoQuantizerFor, estimateDetailBitrate } from './renderBitrate';
 import { measureEncoderDelay, insertAudioEditList, createPrimingStreamPatcher } from './mp4AudioPriming';
 
 const AUDIO_SAMPLE_RATE = 48000;
@@ -663,11 +663,23 @@ export async function exportVideo(opts) {
   // without it (older encoders reject the property outright).
   const { bitrateMode, ...compatBaseConfig } = baseConfig;
   const configQueue = [];
+  // Automatic bitrate: constant quality first (see AUTO_QUANTIZER in renderBitrate) —
+  // a bitrate target makes the hardware encoder alternate sharp and starved frames.
+  // An explicit Render Settings bitrate is honoured as a target, as before, and an
+  // encoder without quantizer mode falls through to the variable-bitrate configs.
+  const quantizerFor = new Map();
   for (const codec of (framesMode ? [] : codecCandidates)) {
+    const q = bitrate ? null : autoQuantizerFor(codec, width, height, fps, duration);
+    if (q) {
+      const config = { ...baseConfig, codec, bitrateMode: 'quantizer' };
+      quantizerFor.set(config, q);
+      configQueue.push(config);
+    }
     configQueue.push({ ...baseConfig, codec });
     configQueue.push({ ...compatBaseConfig, codec });
   }
-  const configLabel = (c) => c.codec + (c.bitrateMode ? ` bitrateMode=${c.bitrateMode}` : '');
+  const configLabel = (c) => c.codec + (c.bitrateMode ? ` bitrateMode=${c.bitrateMode}` : '')
+    + (quantizerFor.has(c) ? ` q=${quantizerFor.get(c).quantizer}` : '');
 
   const tryConfigure = (config) => {
     try {
@@ -761,7 +773,9 @@ export async function exportVideo(opts) {
     ? '[export-phase] alpha frames mode (PNG → ffmpeg), entering frame loop'
     : '[export-phase] encoder configured codec=' + selectedConfig.codec
       + ' via=' + selectedVia + ' size=' + width + 'x' + height
-      + ' bitrate=' + selectedConfig.bitrate + ', entering frame loop');
+      + (quantizerFor.has(selectedConfig)
+        ? ' quantizer=' + quantizerFor.get(selectedConfig).quantizer
+        : ' bitrate=' + selectedConfig.bitrate) + ', entering frame loop');
 
   // Per-frame watchdog: in the headless renderer a clip's seek occasionally never
   // resolves, which would hang the whole export (and freeze the progress bar). Cap
@@ -812,6 +826,8 @@ export async function exportVideo(opts) {
   // renders get dropped back on the timeline as edit sources, the app was
   // manufacturing precisely the files its own seek path cannot handle.
   const keyFrameInterval = Math.max(1, Math.round(fps * 2));
+  // Set when the encoder took a quantizer config: every frame then carries its QP.
+  const frameQuantizer = (selectedConfig && quantizerFor.get(selectedConfig)) || null;
 
   // CPU pixel capture. VideoFrames built from any GPU-backed source (the WebGL
   // canvas itself, an ImageBitmap of it, even a 2D canvas copy) intermittently
@@ -963,7 +979,7 @@ export async function exportVideo(opts) {
     mark0('frame0: captured');
 
     const keyFrame = i % keyFrameInterval === 0;
-    encoder.encode(frame, { keyFrame });
+    encoder.encode(frame, frameQuantizer ? { keyFrame, [frameQuantizer.kind]: { quantizer: frameQuantizer.quantizer } } : { keyFrame });
     frame.close();
     mark0('frame0: encoded');
 

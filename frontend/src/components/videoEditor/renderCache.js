@@ -22,8 +22,10 @@ export const RENDER_CACHE_SEGMENT_SEC = 1;
 export const RENDER_CACHE_MODES = Object.freeze(['off', 'smart', 'user']);
 export const DEFAULT_RENDER_CACHE_MODE = 'smart';
 // Bumped when what a cached file means changes (format, alignment, hashing), so
-// every entry recorded under the old meaning stops matching.
-export const RENDER_CACHE_FORMAT = 'rc1';
+// every entry recorded under the old meaning stops matching. rc2: a video whose
+// shape differs from the project no longer draws black bars; rc3: a video smaller
+// than the project draws at its real size (videoPlate.js).
+export const RENDER_CACHE_FORMAT = 'rc3';
 // Items are counted into a segment if they come this close to it: motion blur
 // samples around the frame time, and a few effects read neighbouring frames.
 const EXTENT_MARGIN_SEC = 0.25;
@@ -435,6 +437,49 @@ export function renderCacheRuns({ costMap, hashes, entries, pending, duration, s
     else runs.push({ t0, t1, state });
   }
   return runs;
+}
+
+/**
+ * The slow PARTS of the timeline for the toolbar status: runs of segments that are
+ * slow or cached, each with what is left to do. A render job covers at most a few
+ * seconds, so it can take half of a part — the part stays one.
+ * `fps` = the lowest measured frame rate among the segments still to render (all of
+ * them once cached, from the live measurement), null when none was measured.
+ * `progress` = the share already cached, plus the running job's share of the rest.
+ * Returns [{ t0, t1, state: 'slow' | 'pending' | 'cached', fps, progress }].
+ */
+export function renderCacheParts({
+  costMap, hashes, entries, pending = null, progress = 0, duration, segSec = RENDER_CACHE_SEGMENT_SEC,
+}) {
+  const n = hashes?.length || 0;
+  const end = Number.isFinite(duration) ? duration : n * segSec;
+  const jobShare = Math.max(0, Math.min(1, Number(progress) || 0));
+  const groups = [];
+  let cur = null;
+  for (let i = 0; i < n; i += 1) {
+    const cached = !!entryForSegment(entries, i, hashes[i]);
+    if (!cached && segmentVerdict(costMap, i) !== 'slow') {
+      cur = null;
+      continue;
+    }
+    if (!cur) {
+      cur = [];
+      groups.push(cur);
+    }
+    cur.push({ i, cached, pending: !cached && !!pending?.has(i), fps: segmentFps(costMap, i) });
+  }
+  return groups.map((segs) => {
+    const open = segs.filter((s) => !s.cached);
+    const busy = open.filter((s) => s.pending).length;
+    const measured = (open.length ? open : segs).map((s) => s.fps).filter(Number.isFinite);
+    return {
+      t0: segs[0].i * segSec,
+      t1: Math.min(end, (segs[segs.length - 1].i + 1) * segSec),
+      state: !open.length ? 'cached' : busy ? 'pending' : 'slow',
+      fps: measured.length ? Math.min(...measured) : null,
+      progress: (segs.length - open.length + jobShare * busy) / segs.length,
+    };
+  });
 }
 
 // ── Storage ──
