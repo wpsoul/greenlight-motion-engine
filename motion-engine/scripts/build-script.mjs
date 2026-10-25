@@ -28,7 +28,7 @@ const stubs = {
     b.onLoad({ filter: /.*/, namespace: 'stand-in' }, () => ({ contents: 'const f = () => undefined; module.exports = new Proxy(f, { get: () => f });', loader: 'js' }));
   },
 };
-const opts = (entry, plugins) => ({ ...entry, bundle: true, format: 'esm', platform: 'neutral', write: false,
+const opts = (entry, plugins) => ({ ...entry, bundle: true, format: 'esm', platform: 'neutral', write: false, loader: { '.md': 'text' },
   mainFields: ['module', 'main'], conditions: ['import', 'module', 'default'], logLevel: 'silent', plugins, define: { 'import.meta.env': '{}' } });
 const MAIN = { entryPoints: [path.join(ENGINE_SRC, 'sceneScriptBundle.js')] };
 

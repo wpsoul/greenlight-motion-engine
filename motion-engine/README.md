@@ -17,16 +17,16 @@ The agent writes the video as data: a `project.json` and its files. The engine t
 ## Quick start
 
 ```bash
-npx greenlight-motion@0.1.1 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
-npx greenlight-motion@0.1.1 init my-video   # a working starter: index.html, project.json, assets/
+npx greenlight-motion@0.1.2 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
+npx greenlight-motion@0.1.2 init my-video   # a working starter: index.html, project.json, assets/
 # edit my-video/project.json, put pictures / video / sound in my-video/assets/
 # or: write my-video/script.json (a scene script, skill/references/scene-script.md), then
-npx greenlight-motion@0.1.1 script my-video # script.json → project.json with the Video Editor's own presets
-npx greenlight-motion@0.1.1 check my-video  # what to fix: missing files, template mistakes, blank frames, broken plugins
-npx greenlight-motion@0.1.1 stills my-video # frames + a labelled contact sheet, to look at
-npx greenlight-motion@0.1.1 render my-video --fps 60 --motion-blur
-npx greenlight-motion@0.1.1 pack my-video   # everything in ONE html file
-npx greenlight-motion@0.1.1 pack my-video --glvideo   # ONE .glvideo: double-clicked, it opens in GreenLight Dash
+npx greenlight-motion@0.1.2 script my-video # script.json → project.json with the Video Editor's own presets
+npx greenlight-motion@0.1.2 check my-video  # what to fix: missing files, template mistakes, blank frames, broken plugins
+npx greenlight-motion@0.1.2 stills my-video # frames + a labelled contact sheet, to look at
+npx greenlight-motion@0.1.2 render my-video --fps 60 --motion-blur
+npx greenlight-motion@0.1.2 pack my-video   # everything in ONE html file
+npx greenlight-motion@0.1.2 pack my-video --glvideo   # ONE .glvideo: double-clicked, it opens in GreenLight Dash
 ```
 
 Also: `trace` (every animated layer's values frame by frame, plus the layer's moments), `set key=value`
@@ -72,15 +72,20 @@ The engine is one classic script, so it runs from a double-clicked file, a CDN o
 
 ```html
 <div id="app"></div>
-<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.1.1/dist/greenlight-motion.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.1.2/dist/greenlight-motion.js"></script>
 <script>
-  GreenLightMotion.mountPage(document.getElementById('app'), {
+  GreenLightMotion.mountStudio(document.getElementById('app'), {
     project: { /* project.json */ },
     assets: { 'asset:photo.jpg': 'data:image/jpeg;base64,…' },   // ref → data: / blob: / https: URL or Blob
-    theme: 'auto',                                                 // 'dark' (default) | 'light' | 'auto'
   });
 </script>
 ```
+
+`mountStudio` is the page every GreenLight surface shows (a project folder's page, a chat's GreenLight Motion page, a
+shared link, a review card on a board): the preview with Edit · Notes · Highlight, the inspector, the layers and Render.
+Its review (notes with drawings, highlights, changes) is text to copy for your agent; a host can send it elsewhere
+(`config.save`). `GreenLightMotion.mountPage(el, { project, assets, theme })` is the plain page under it, without the
+review interface.
 
 Without the page UI (in the browser, through a bundler or the ESM build; Node runs only the CLI):
 

@@ -1,0 +1,9 @@
+/* No green focus outline anywhere in the card (owner, 2026-10-24). Buttons and chips show no ring; a field you type
+   in shows a quiet grey edge instead of the accent. Loaded last, so it wins over the engine page's
+   `.glm-app :focus-visible` and every lab rule. */
+body *:focus,body *:focus-visible{outline:none!important}
+body .glm-app .glm-toggle input:focus-visible+u{outline:none!important}
+.mn-note-text:focus,.mn-reply-text:focus,.hl-note:focus,.hl-panel[data-mode=edit] .hl-note:focus,.glm-app .glm-rvnote textarea:focus{border-color:#4a5352!important}
+.hl-it-note:focus{border-bottom-color:#4a5352!important}
+.lab-inspector .mi-text:focus{border-color:#4a5352!important}
+.lab-inspector .mi-number:focus{background:#202326!important}

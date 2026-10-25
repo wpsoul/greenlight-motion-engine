@@ -1,0 +1,250 @@
+/* Review lab: the top mode tabs, sources, preview chip, save for agent, lab bar. */
+
+/* Top bar: title · badge · status | the tabs, centred over the preview | save state · save · Open · Render */
+body:not(.original) .glm-app .glm-top{position:relative}
+body .glm-top h1{order:0}body .glm-top .glm-badge{order:1}body .glm-top .glm-mode{order:3}
+body .glm-top .glm-tbtn:not(.glm-notes-btn){order:7}body .glm-top .glm-xbtn{order:9}
+.rv-state{order:5}.rv-save{order:8}
+body:not(.rv-mode-edit) .glm-top .glm-mode{display:none}
+body.rv-mode-edit .rv-state,body.rv-mode-edit .rv-save{display:none}
+body:not(.rv-mode-edit) .rv-state{margin-left:auto}
+
+/* The engine page's own review notes (localStorage glm-review:<project>, shared by every file:// page) draw numbered
+   flags on the ruler that this card's Notes don't list: the card's Notes replace them, so their flags stay hidden. */
+body:not(.original) #app .glm-flag,body:not(.original) #app .glm-review{display:none}
+body:not(.rv-mode-notes) .mn-ink,body:not(.rv-mode-notes) .mn-text-edit{display:none!important}
+
+/* Edit · Notes · Highlight: ONE rounded section holding three chips; the current one filled, its icon green */
+.rv-switch{position:absolute;left:calc(10px + var(--lab-left) + (100% - 20px - var(--lab-left) - var(--lab-right)) / 2);top:calc(50% + 3px);transform:translate(-50%,-50%);display:flex;align-items:center;gap:2px;padding:2px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#151718}
+.rv-sw{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 13px 0 11px;border:0;border-radius:8px;background:transparent;color:#a4aaa6;font:600 12px system-ui,-apple-system,sans-serif;white-space:nowrap;cursor:pointer;transition:background .15s,color .15s}
+.rv-sw svg{flex:none;width:14px;height:14px;color:#8b918e;transition:color .15s}
+.rv-sw:hover{color:#fff;background:rgba(255,255,255,.05)}
+.rv-sw[aria-pressed=true]{background:rgba(255,255,255,.13);color:#fff;cursor:default}
+.rv-sw[aria-pressed=true] svg{color:#33efab}
+.rv-sw:focus-visible{outline:2px solid #33efab;outline-offset:1px}
+.rv-count{min-width:16px;height:15px;padding:0 4px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:600;font-variant-numeric:tabular-nums;color:#bfeedd;background:rgba(51,239,171,.12);box-sizing:border-box}
+.rv-count:empty{display:none}
+.rv-sw.rv-replied .rv-count{position:relative}
+.rv-sw.rv-replied .rv-count:after{content:'';position:absolute;top:-3px;right:-3px;width:7px;height:7px;border-radius:50%;background:#ffb020;box-shadow:0 0 0 2px #111}
+
+/* save for agent: the highlight editor's state dot + outlined button */
+.rv-state{display:flex;align-items:center;gap:6px;flex:none;font-size:11px;color:#a4aaa6;white-space:nowrap;font-variant-numeric:tabular-nums}
+.rv-state i{width:6px;height:6px;border-radius:50%;background:#5c6360;flex:none}
+.rv-state[data-s=changed] i,.rv-state[data-s=unsaved] i{background:#f5c04e}
+.rv-state[data-s=saved] i{background:#33efab}.rv-state[data-s=saved]{color:#bfeedd}
+.rv-save{display:inline-flex;align-items:center;gap:7px;flex:none;height:28px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:#a4aaa6;font:11px system-ui,-apple-system,sans-serif;white-space:nowrap;cursor:pointer;transition:background .15s,color .15s}
+.rv-save:hover{color:#edf1ee;background:#ffffff09}.rv-save:disabled{opacity:.45;cursor:default}
+.rv-pop{position:fixed;top:54px;right:24px;z-index:300;width:460px;max-width:calc(100vw - 32px);background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:9px;box-sizing:border-box;font:12px system-ui,-apple-system,sans-serif;color:#ddd}
+.rv-pop[hidden]{display:none}.rv-pop-msg{margin:0;line-height:1.5}.rv-pop-msg b{color:#33efab;font-weight:600}
+.rv-pop textarea{width:100%;height:220px;resize:vertical;background:#111;border:1px solid #333;border-radius:6px;color:#dfe6e3;font:11px/1.5 system-ui,-apple-system,sans-serif;padding:8px;box-sizing:border-box}
+.rv-pop-row{display:flex;gap:6px;justify-content:flex-end}
+.rv-cta{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid #3a3a42;background:#26262c;color:#d4d4d8;font:11px system-ui;cursor:pointer}.rv-cta:hover{background:#2f2f37}
+
+/* preview chip: which source is on screen */
+body .glm-view{position:relative}
+.rv-chip,.rv-reel{position:absolute;z-index:6;display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:6px;background:rgba(17,17,17,.78);border:1px solid rgba(255,255,255,.08);font:11px system-ui,-apple-system,sans-serif;color:#e5e5e5;white-space:nowrap;pointer-events:none;box-sizing:border-box}
+.rv-chip[hidden]{display:none}.rv-chip b{font-weight:600}
+.rv-reel{display:none;border-color:rgba(51,239,171,.45);color:#33efab;font-weight:600;font-variant-numeric:tabular-nums}.rv-reel.rv-on{display:flex}
+.rv-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+
+/* left: sources, the highlight editor's poster rows (16:9 posters for a 16:9 film) */
+.rv-srcs{display:flex;flex-direction:column;gap:2px}
+.rv-src{display:flex;align-items:center;gap:10px;width:100%;padding:7px 8px 7px 6px;border:1px solid transparent;border-radius:8px;background:transparent;color:#e5e5e5;text-align:left;cursor:pointer;transition:background .15s,border-color .15s;font:12px system-ui,-apple-system,sans-serif}
+.rv-src:hover{background:#1e2022}.rv-src.rv-on{background:#202326;border-color:#edf1ee}
+.rv-src-po{width:64px;height:36px;flex:none;border-radius:5px;background:#000 center/cover no-repeat;box-shadow:0 0 0 1px #2a2a2a}
+.rv-src-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.rv-src-tx b{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:#edf1ee;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rv-src-tx small{font-size:10.5px;color:#868d8b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rv-src-tx em{font-style:normal;font-size:10.5px;color:#7d8480;font-variant-numeric:tabular-nums}.rv-src-tx em.rv-has{color:#bfeedd}
+.rv-kbd,.lab-side .rv-kbd{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:4px;box-sizing:border-box;background:#202326;border:1px solid #2e3335;color:#c8ceca;font:500 10px/1 system-ui;align-self:flex-start;margin-top:2px}
+.rv-src.rv-on .rv-kbd{border-color:#edf1ee;color:#edf1ee}
+.lab-rail button[hidden],.key-row[hidden]{display:none!important}
+.rv-keys-h{margin:14px 4px 2px;font-size:9.5px;font-weight:700;letter-spacing:.055em;text-transform:uppercase;color:#c8ceca}.rv-keys-h:first-child{margin-top:6px}
+
+/* lab bar: the look and the number of sources (lab-only chrome, in the left footer) */
+.rv-labbar{gap:10px;padding:10px}
+.rv-labbar-rows{display:flex;flex-direction:column;gap:5px;flex:1;min-width:0}
+.rv-labbar-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:9.5px;color:#7d8480;letter-spacing:.04em;text-transform:uppercase}
+.rv-seglab{display:flex;gap:2px}
+.rv-seglab button{min-width:24px;height:20px;padding:0 6px;border:0;border-radius:4px;background:transparent;color:#868d8b;font:500 10.5px system-ui;cursor:pointer}
+.rv-seglab button:hover{color:#edf1ee;background:rgba(255,255,255,.045)}
+.rv-seglab button[aria-pressed=true]{color:#33efab;background:rgba(51,239,171,.1)}
+
+@media(max-width:1300px){body:not(.rv-mode-edit) .glm-top .glm-tbtn:not(.glm-notes-btn) span{display:none}}
+@media(max-width:1150px){.rv-state span{display:none}
+  .rv-src{flex-wrap:wrap;gap:6px;padding:6px}.rv-src-po{width:100%;height:auto;aspect-ratio:16/9}.rv-src-tx{flex-basis:100%}.rv-src .rv-kbd{display:none}.rv-src-tx small{display:none}}
+@media(max-width:900px){.rv-switch{left:50%}}
+
+/* ── narrow (a chat, a tablet, a phone): ONE column at its full height, and the page scrolls — a box that scrolls
+   inside a chat can't be scrolled on a phone (the chat page's body.flow rule). Order: the app bar and the tabs,
+   the rail (its pane opens in place), the preview, the transport, the timeline, then the mode's panel. ── */
+@media (max-width: 900px) {
+  html, body { height: auto; }
+  body { display: flex; flex-direction: column; min-height: 100vh; background: #111 radial-gradient(circle, rgba(255,255,255,.13) .8px, transparent .9px) 0 0/15px 15px; }
+  body:not(.original) #app, body:not(.original) #app .glm-app, body:not(.original) #app .glm-main { display: contents; }
+  body:not(.original) #app .glm-top { order: 1; }
+  body:not(.original) .lab-side { order: 2; }
+  body:not(.original) #app .glm-view { order: 3; }
+  body:not(.original) #app .glm-transport { order: 4; }
+  body:not(.original) #app .glm-tlwrap { order: 5; }
+  body:not(.original) #app .glm-side { order: 6; }
+
+  /* the app bar: the title and its buttons, then the three tabs on their own row */
+  body:not(.original) #app .glm-top { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px 0; min-height: 0; background: #111; }
+  body:not(.original) #app .glm-top h1 { flex: 1 1 auto; min-width: 0; }
+  body:not(.original) #app .glm-badge, body:not(.original) #app .glm-mode { display: none; }
+  body:not(.original) #app .glm-top .glm-tbtn span { display: none; }
+  body:not(.rv-mode-edit) .rv-state { margin-left: 0; }
+  .rv-state span { display: none; }
+  body:not(.original) #app .glm-top::after { content: ''; order: 19; flex-basis: 100%; height: 0; }   /* the section starts its own row */
+  .rv-switch { position: static; transform: none; order: 20; flex: none; margin: 2px auto 8px; }
+
+  /* the rail: a row of buttons; the open one's pane shows in place, at its full height */
+  body:not(.original) .lab-side { position: static; display: flex; flex-direction: column; width: auto; margin: 10px 12px 0; top: auto; bottom: auto; left: auto; border: 1px solid var(--lab-line); border-radius: 10px; background: #151718; box-shadow: none; overflow: visible; }
+  body:not(.original) .lab-side .lab-rail { width: auto; flex-direction: row; align-items: stretch; gap: 2px; padding: 4px; border: 0; }
+  body:not(.original) .lab-side .lab-rail button { flex: 1; width: auto; flex-direction: row; justify-content: center; gap: 6px; padding: 4px 6px; font-size: 11px; }
+  body:not(.original) .lab-side .lab-rail button[hidden] { display: none; }
+  body:not(.original) .lab-side .lab-rail button span { width: 26px; height: 26px; }
+  body:not(.original) .lab-side .rail-space { display: none; }
+  body:not(.original) .lab-side .lab-pane { display: none; }
+  body:not(.original) .lab-side.expanded { width: auto; }
+  body:not(.original) .lab-side.expanded .lab-pane { display: flex; border-top: 1px solid #202325; }
+  body:not(.original) .lab-side .lab-pane-body { overflow: visible; flex: none; }
+
+  /* the preview at the film's shape, the transport, the timeline at its full height */
+  body:not(.original) #app .glm-view { margin: 10px 12px 0; height: auto; min-height: 0; aspect-ratio: 16 / 9; flex: none; }
+  body:not(.original) #app .glm-transport { margin: 0; padding: 6px 12px; }
+  body:not(.original) #app .glm-tlwrap { margin: 10px 12px 0; height: auto; min-height: 0; padding-bottom: 10px; border-bottom: 1px solid var(--lab-line); border-radius: 10px; }
+  body:not(.original) #app .glm-rows { max-height: none; }
+  body.rv-mode-highlight:not(.original) #app .glm-tlwrap, body.rv-mode-notes:not(.original) #app .glm-tlwrap { padding: 0; }
+  body.rv-mode-highlight #app .glm-tlwrap > :not(.hl-tl), body.rv-mode-notes #app .glm-tlwrap > :not(.hl-tl) { display: none; }
+  body.rv-mode-highlight .hl-tl, body.rv-mode-notes .hl-tl { position: relative; inset: auto; padding-bottom: 8px; }
+
+  /* the mode's panel: in the flow, at its full height — nothing scrolls inside it */
+  body:not(.original) #app .glm-side { margin: 10px 12px 16px; height: auto; min-height: 0; overflow: visible; position: relative; }
+  body .lab-inspector, body .mn-panel, body .hl-panel { position: relative; inset: auto; }
+  body .mi-scroll, body .mn-panel-scroll, body .hl-list, body .hl-sec-list, body #app .glm-panel, body #app .glm-dbody { overflow: visible; max-height: none; flex: none; }
+  body:not(.original) #app .glm-side.has-lab-inspector .glm-track, body.rv-mode-notes #app .glm-track, body.rv-mode-highlight #app .glm-track { display: none; }
+  body.rv-mode-notes .lab-inspector, body.rv-mode-highlight .lab-inspector { display: none; }
+  body:not(.original) #app .glm-track, body:not(.original) #app .glm-track > * { height: auto; }
+
+  #lab-toast { bottom: 20px; }
+  .rv-pop { top: auto; bottom: 16px; left: 16px; right: 16px; width: auto; }
+}
+@media (max-width: 520px) {
+  .rv-save span { display: none; }
+  .hl-tltools { overflow-x: auto; scrollbar-width: none; }
+}
+/* fingers: bigger targets for the nudges, the list's buttons and the timeline tools */
+@media (pointer: coarse) and (max-width: 900px) {
+  .hl-nb, .hl-tph { min-width: 30px; height: 32px; }
+  .hl-ib { width: 32px; height: 32px; }
+  .hl-cta, .hl-prim { height: 34px; }
+  .hl-tsb { height: 42px; min-width: 48px; }
+  .hl-it-note { height: 32px; }
+  .rv-sw { font-size: 13px; }
+}
+
+/* the engine page's `.glm-app button { font: inherit }` would resize these: their own sizes */
+.glm-app .rv-sw{font:600 12px system-ui,-apple-system,sans-serif}
+.glm-app .rv-save{font:400 11px system-ui,-apple-system,sans-serif}
+@media (pointer:coarse) and (max-width:900px){.glm-app .rv-sw{font-size:13px}}
+
+/* no "Timeline" title over the timeline: the tools start at its left edge */
+body:not(.original) .glm-tlwrap:before{content:none}
+
+/* the inspector's numbers: drag the value sideways to change it; a click types */
+.lab-inspector .mi-number{cursor:ew-resize}.lab-inspector .mi-number:focus{cursor:text}
+body.mi-scrubbing,body.mi-scrubbing *{cursor:ew-resize!important;user-select:none!important}
+
+/* Edit · the layer timeline's toolbar row (where the Timeline title was): Text · Shape · Marker | Duplicate · Copy ·
+   Paste · Mute · Delete — the Highlight toolbar's compact buttons (icon over a 9.5 px label) */
+.rv-nav-pane{padding:0;display:flex;flex-direction:column}
+.rv-nav-pane .ve-navigator{flex:1;min-height:0}
+.rv-edit-toolbar{position:absolute;left:12px;right:12px;top:3px;height:38px;z-index:5;display:flex;align-items:center;gap:5px}
+body:not(.rv-mode-edit) .rv-edit-toolbar{display:none}
+.rv-tsep{width:1px;height:26px;flex:none;margin:0 2px;background:rgb(218 220 224 / 10%)}
+.rv-act{flex:none;min-width:46px;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;height:38px;padding:3px 6px 2px;border:1px solid transparent;border-radius:8px;background:none;color:#8f9793;white-space:nowrap;cursor:pointer;transition:background .15s,color .15s}
+.glm-app .rv-act{font:400 9.5px/1 system-ui,-apple-system,sans-serif;letter-spacing:.02em}
+.rv-act svg{width:16px;height:16px;flex:none}
+.rv-act:hover:not(:disabled){background:#202324;color:#edf1ee}
+.rv-act:disabled{opacity:.4;cursor:not-allowed}
+.rv-act.is-on{background:#26282b;color:#d6d9dc;border-color:#383c3f;box-shadow:inset 0 1px 2px rgb(0 0 0 / 35%)}
+.rv-act[data-act=text]:not(:disabled),.rv-act[data-act=shape]:not(:disabled),.rv-act[data-act=marker]:not(:disabled){color:#a4aaa6}
+.rv-act[data-act=del]:hover:not(:disabled){color:#ff8a8f;background:rgba(239,68,68,.1)}
+.ve-nav-layer.is-muted .ve-nav-name,.ve-nav-layer.is-muted .ve-nav-glyph{opacity:.45}
+@media(max-width:650px){.rv-edit-toolbar{left:6px;right:6px;overflow-x:auto;scrollbar-width:none}.rv-act{min-width:38px;padding:3px 3px 2px}}
+/* markers: purple pins on the Edit timeline's ruler (the editor's marker colour) */
+.rv-markers{position:absolute;left:0;right:0;top:0;height:20px;z-index:8;pointer-events:none}
+.rv-marker{position:absolute;top:1px;width:10px;height:14px;margin-left:-5px;padding:0;border:0;background:none;cursor:pointer;pointer-events:auto}
+.rv-marker i{position:absolute;inset:0;background:#8b5cf6;clip-path:polygon(0 0,100% 0,100% 55%,50% 100%,0 55%)}
+.rv-marker.on i,.rv-marker:hover i{background:#b7a3ec}
+body.rv-rebuilding #app{opacity:.6;pointer-events:none;transition:opacity .15s}
+
+/* the inspector's way to the full editor: plain text, no border, no background */
+.lab-inspector .mi-fulledit,.lab-inspector .mi-fulledit:hover{border:0!important;background:none!important;padding:0;height:auto;color:#868d8b;font:400 11px system-ui,-apple-system,sans-serif}
+.lab-inspector .mi-fulledit:hover{color:#edf1ee}
+
+/* Edit timeline: neutral layers (no colour per type) — a grey bar with a darker edge; the selected one violet (the
+   selection colour everywhere); a hidden one dimmed. */
+body:not(.original) .glm-app .glm-layer,body:not(.original) .glm-layer.t-text,body:not(.original) .glm-layer.t-shape{--c:#5d6563;background:#1d2021;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);color:#c8ceca}
+body:not(.original) .glm-app .glm-layer:hover{background:#232628;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+body:not(.original) .glm-app .glm-layer.is-on{--c:#a78bfa;background:rgba(119,97,240,.18);box-shadow:inset 0 0 0 1.5px #a78bfa;color:#edf1ee}
+body:not(.original) .glm-app .glm-layer.rv-hidden{opacity:.4}
+/* the channel rows on its left: glyph · name · Hide · Remove */
+body:not(.original) .lab-track-labels{pointer-events:none;width:128px}
+body:not(.original) .lab-track-label{display:flex;align-items:center;gap:6px;height:26px;padding-right:2px;color:#a4aaa6;font-size:10px;cursor:pointer;pointer-events:auto}
+body:not(.original) .lab-track-label:before{content:none}
+.lab-track-label:hover{color:#edf1ee}
+.lab-track-label.is-muted .rv-gl-name,.lab-track-label.is-muted .rv-gl-glyph{opacity:.45}
+.rv-gl-glyph{flex:none;display:grid;place-items:center;width:16px;height:16px;border-radius:4px;background:rgba(255,255,255,.06);color:#8e8ea4}
+.rv-gl-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rv-gl-btn{flex:none;display:grid;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:4px;background:transparent;color:#6f7774;cursor:pointer;pointer-events:auto}
+.rv-gl-btn:hover{color:#edf1ee;background:rgba(255,255,255,.07)}
+.rv-gl-btn.on{color:#ffb020}
+.rv-gl-del:hover{color:#ff8a8f;background:rgba(239,68,68,.1)}
+
+/* One playhead in every mode: the engine's own shape — a thin line with a small shield on the ruler (the engine-2
+   page's, smaller) — in near-white (red is the notes', amber the ranges', violet the Highlight selection's, green "on"). */
+body:not(.original) .glm-head{left:0;width:1px;background:#edf1ee;box-shadow:none}
+body:not(.original) .glm-head:before{left:-4px;top:0;width:9px;height:11px;background:#edf1ee;border-radius:3px 3px 0 0;clip-path:polygon(0 0,100% 0,100% 62%,50% 100%,0 62%)}
+/* the selected layer: a white outline on a lighter grey (DaVinci marks a selection with a strong outline; red is taken) */
+body:not(.original) .glm-app .glm-layer.is-on{--c:#edf1ee;background:#2b2f31;box-shadow:inset 0 0 0 1.5px #edf1ee;color:#fff}
+/* Edit: the preview's transform gizmo (gizmo.js), the Video Editor's look: violet box, white handles, a round rotate
+   handle on a stem, pink snap guides. An SVG in frame pixels beside the frame, with the frame's own transform. */
+.rv-gizmo{position:absolute;left:0;top:0;transform-origin:0 0;overflow:visible;pointer-events:none;z-index:4}
+.rv-gz-hit{fill:rgba(139,92,246,.025);cursor:move;pointer-events:fill}
+.rv-gz-handle{fill:#fff;stroke:#7761f0;stroke-width:2;vector-effect:non-scaling-stroke;pointer-events:all}
+.rv-gz-stem{stroke:#a78bfa;stroke-width:1.5;vector-effect:non-scaling-stroke}
+.rv-gz-rot{fill:#fff;stroke:#7761f0;stroke-width:2;vector-effect:non-scaling-stroke;cursor:grab;pointer-events:all}
+.rv-gz-rot:active{cursor:grabbing}
+.rv-gz-guide{stroke:#ff3bbd;stroke-width:1;vector-effect:non-scaling-stroke}
+body.rv-gz-dragging,body.rv-gz-dragging *{user-select:none!important}
+body:not(.original).rv-mode-edit .glm-pick{cursor:default}
+/* Position (inspector.js): the app's Transform rows — label + unit toggle, then three numbers with an axis chip that
+   drags the value; Mirror H / V below. */
+.mi-heading .mi-dot{margin-left:auto;width:16px;height:16px;padding:0;border:0;background:none;display:grid;place-items:center;cursor:default}
+.mi-heading .mi-dot:before{content:'';width:6px;height:6px;border-radius:50%;background:#33393a}
+.mi-heading .mi-dot.on{cursor:pointer}.mi-heading .mi-dot.on:before{background:#33efab}
+.mi-heading .mi-dot.on:hover:before{box-shadow:0 0 0 3px rgba(51,239,171,.18)}
+.mi-xrow{padding:6px 0 5px;border-bottom:1px solid #1c1f20}
+.mi-xhead{display:flex;align-items:center;justify-content:space-between;min-height:22px;margin-bottom:4px}
+.mi-xgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.mi-ax{display:flex;align-items:center;min-width:0;height:25px;border-radius:4px;background:#1d2021}
+.mi-ax-chip{flex:none;min-width:19px;padding:0 3px;text-align:center;color:#626b67;font-size:9.5px;font-weight:650;cursor:ew-resize;user-select:none}
+.mi-ax:hover .mi-ax-chip{color:#a4aaa6}
+.lab-inspector .mi-ax-in{flex:1;min-width:0;width:100%;height:25px;padding:0 2px 0 0;border:0;border-radius:0;background:transparent;color:#dfe6e3;font-size:11px;text-align:right;font-variant-numeric:tabular-nums;cursor:ew-resize}
+.lab-inspector .mi-ax-in:focus{cursor:text}
+.mi-ax-suf{flex:none;padding:0 6px 0 1px;color:#626b67;font-size:10px}
+.mi-seg{display:flex;gap:1px;padding:1px;border-radius:5px;background:#1a1d1e}
+.lab-inspector .mi-seg-btn{height:18px;min-width:24px;padding:0 5px;border:0;border-radius:4px;background:transparent;color:#868d8b;font-size:10px;font-weight:550;cursor:pointer}
+.lab-inspector .mi-seg-btn.on{background:#2b2f31;color:#edf1ee}
+.mi-mirror{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding-top:8px}
+.lab-inspector .mi-mirror-btn{display:flex;align-items:center;justify-content:center;gap:6px;height:26px;padding:0 8px;border:1px solid #303537;border-radius:5px;background:transparent;color:#a4aaa6;font-size:11px;cursor:pointer}
+.lab-inspector .mi-mirror-btn:hover{background:rgba(255,255,255,.04);color:#edf1ee}
+.lab-inspector .mi-mirror-btn.on{background:#2b2f31;border-color:#4a5352;color:#edf1ee}
+/* a mode this source can't take (Edit on a rendered video): dimmed, says why on hover */
+.rv-sw.rv-off,.rv-sw.rv-off:hover{opacity:.38;background:transparent;color:#a4aaa6;cursor:default}
+/* a phone: the timeline starts 70 px in (lab.css), so the layer gutter keeps to that: the glyph and the name. Hide and
+   Remove stay in the toolbar (Mute · Delete on the selected layer). */
+@media(max-width:650px){body:not(.original) .lab-track-labels{width:58px}body:not(.original) .lab-track-label .rv-gl-btn{display:none}}

@@ -367,13 +367,16 @@ POST /api/moodboards/{board_id}/video-projects/{project_id}/export-light
 POST /api/moodboards/{board_id}/video-projects/import-light
      { "path": "/abs/folder | …/index.html | a one-file page.html | a .glvideo file", "activate?": true }
      → the new project (like POST video-projects) + { copied }
-GET  /api/moodboards/{board_id}/video-projects/{project_id}/glvideo
-     → <name>.glvideo (answers once the whole file is written)
+GET  /api/moodboards/{board_id}/video-projects/{project_id}/glvideo?models=<JSON { "<preset id>": "<the URL the app serves its .glb at>" }>
+     → <name>.glvideo (answers once the whole file is written; `models` as in export-light's modelFiles — without it the
+       3D device presets are left out)
 ```
 
 - A `.glvideo` is the same project folder in one stored zip: `glvideo.json` (`{format: "glvideo", version: 1, title}`),
-  `project.json`, `assets/media/<rel>` and `assets/hdr/`. It is the file to hand a project to another GreenLight Dash:
-  `import-light` with its path opens it there as a new project.
+  `project.json`, `assets/media/<rel>`, `assets/hdr/` and `assets/models/` (the 3D device presets the project uses). It
+  is the file to hand a project to another GreenLight Dash (`import-light` with its path opens it there as a new
+  project) or to a chat: the GreenLight Motion connector's `open_video` page reads it in the user's browser, and
+  `get_video` / `edit_video` change it there.
 
 - `template.fields[]` = `{ key, label, type: text|color|image|number|select|toggle, targets: [{ itemId | clipId | (neither = project), path }] }`
   — e.g. `{ "key": "headline", "label": "Headline", "type": "text", "targets": [{ "itemId": "<item id>", "path": "textContent" }] }`,

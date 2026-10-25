@@ -16,6 +16,7 @@
  *   engine.dispose();
  *
  *   GreenLightMotion.mountPage(el, { project, assets, theme }); // the viewer's page: preview, layers, options, Render (PlayerPage.jsx)
+ *   GreenLightMotion.mountStudio(el, { project, sources, config }); // that page with the review interface (studio/)
  *
  * Also an ES module (motion-engine/dist/greenlight-motion.mjs) exporting `create` and `version`.
  *
@@ -39,6 +40,8 @@ import { traceProject } from './trace';
 import { SOUNDS } from './sfx';
 import { checkTemplate } from './template';
 import { installFetchLayer, createResolver, setActiveResolver, resolveProject, missingAssets, clearMissingAssets, pluginStatus } from './assets';
+// the shared review interface (left rail, inspector, Edit · Notes · Highlight) every host mounts: studio/index.js
+import { mountStudio } from './studio';
 
 const VERSION = '0.0.1-spike';
 const noop = () => {};
@@ -160,6 +163,6 @@ function mountPage(el, { project, assets = null, theme = 'dark' } = {}) {
   return { unmount: () => root.unmount() };
 }
 
-window.GreenLightMotion = { create, mountPage, checkTemplate, checkSoundCues, sounds: SOUNDS, missingAssets, pluginStatus, normalize: toEngineProject, trace: async (project, opts) => traceProject(await toEngineProject(project), opts), version: VERSION };
+window.GreenLightMotion = { create, mountPage, mountStudio, checkTemplate, checkSoundCues, sounds: SOUNDS, missingAssets, pluginStatus, normalize: toEngineProject, trace: async (project, opts) => traceProject(await toEngineProject(project), opts), version: VERSION };
 
-export { create, mountPage, checkTemplate, checkSoundCues, SOUNDS as sounds, missingAssets, pluginStatus, toEngineProject as normalize, traceProject, VERSION as version };
+export { create, mountPage, mountStudio, checkTemplate, checkSoundCues, SOUNDS as sounds, missingAssets, pluginStatus, toEngineProject as normalize, traceProject, VERSION as version };

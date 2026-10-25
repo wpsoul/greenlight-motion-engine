@@ -114,7 +114,7 @@ const indexHtml = (title) => `<!doctype html>
 <script src="greenlight-motion.js"></script>
 <script src="project.js"></script>
 <script src="assets.js"></script>
-<script>GreenLightMotion.mountPage(document.getElementById('app'), { project: window.GL_PROJECT, assets: window.GL_ASSETS });</script>
+<script>GreenLightMotion.mountStudio(document.getElementById('app'), { project: window.GL_PROJECT, assets: window.GL_ASSETS });</script>
 `;
 // JSON inside a <script>: no "</script", no "<!--" (both escapes stay valid JSON and JS, so the app can read a page back)
 const scriptSafe = (s) => s.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\u0021--');

@@ -3,6 +3,8 @@
 // (motion-engine/scripts/prepare.mjs: the CLI's way around them). `host` is 'chat' or 'cli': where the reader finds a
 // reference (a tool or a file) and where pictures come from.
 import { FORMATS, CROSS_TRANSITIONS, SHADERS, CAMERAS, presetCatalog } from './sceneScript.js';
+// bundled as text (motion-engine/scripts/build-script.mjs)
+import DESIGN from '../../../skills/greenlight-dash/references/video-design.md';
 
 export const PREFERRED = {
   text: ['glide-text', 'ember-type', 'marker', 'outline-pass', 'neon-flow', 'glitch', 'swing-pop', 'pendulum', 'fan-deal', 'whip', 'word-swing', 'letter-vortex'],
@@ -62,21 +64,10 @@ export function scriptFormatGuide(host = 'chat') {
 `;
 }
 
-/** "## What makes it look made, not generated": the design rules. */
+/** The design rules — the app skill's references/video-design.md, the ONE text the app's agents, the CLI's skill and the
+ *  chat read — with its headings one level down, to sit inside a guide. */
 export function designGuide() {
-  return `## What makes it look made, not generated
-
-- **One idea per scene**, 3–6 scenes, 2–3 s each; at most ~8 words on screen at once, held ≥ 1 s (people read ~3 words a second).
-- **Hierarchy**: one headline per scene; supporting text much smaller; one accent colour; strong contrast.
-- **Timing**: stagger related elements 0.06–0.12 s; one focal move at a time — supporting elements move less and later; exits faster than entrances.
-- **Text animation** moves words or letters, never whole lines (the presets do this). Keep one family per video; use calm presets (glide-text,
-  classic-fade-up, classic-rise-mask) for long lines, punchy ones (swing-pop, whip, letter-vortex) for 1–3 words. glide-continuous and
-  glide-soft-stop never let the text rest: only when the user asks for drifting text.
-- **Transitions**: vary two or three kinds across the video; the camera stays subtle.
-- **Sound**: auto is a good base; add \`data-1\` / \`selection-data-click\` for UI-like pops, \`cinematic-transition-13\` for a big reveal.
-- **9:16**: bigger text, stacked vertically, everything in the middle 80 %.
-
-`;
+  return `${DESIGN.replace(/^(#+) /gm, '#$1 ').trim()}\n\n`;
 }
 
 /** "## Catalogues": text animations, entrances, exits, transitions, effects, sounds (caps = schema/capabilities.json). */

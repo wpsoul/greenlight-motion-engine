@@ -83,6 +83,14 @@ export function getModelPreset(id) {
   return BY_ID.get(id) || BY_ID.get(RETIRED_IDS[id]) || null;
 }
 
+/** Every preset id (a retired one too) → the URL the app serves its .glb at: a .glvideo download packs the ones its
+ *  project uses (the built file names carry a hash only this side knows). */
+export function presetFileUrls() {
+  const out = Object.fromEntries(MODEL_PRESETS.map((p) => [p.id, p.url]));
+  for (const [old, now] of Object.entries(RETIRED_IDS)) if (BY_ID.get(now)) out[old] = BY_ID.get(now).url;
+  return out;
+}
+
 export const DEFAULT_MODEL_PRESET = 'iphone_pro_max';
 
 // Preset clips store this stable sentinel instead of the bundled file's URL: that URL

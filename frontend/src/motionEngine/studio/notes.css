@@ -1,0 +1,127 @@
+/* Notes lab: editor toolbar + the app's multi-drawing note composer. */
+body.mn-open:not(.original) .lab-inspector,body.mn-open:not(.original) .glm-track{visibility:hidden;pointer-events:none}
+body.original .mn-toolbar,body.original .mn-markers,body.original .mn-range-overlay,body.original .mn-panel,body.original .mn-ink{display:none!important}
+.mn-toolbar{position:absolute;left:12px;right:12px;top:6px;height:32px;display:flex;align-items:center;gap:10px;color:#a4aaa6;font:11px system-ui;z-index:5}
+.mn-toolbar button,.mn-panel button{font:11px system-ui;cursor:pointer}
+.mn-toolbar button:disabled,.mn-panel button:disabled{opacity:.35;cursor:default}
+.mn-note-toggle{height:28px;display:flex;align-items:center;gap:7px;padding:0 10px;border:1px solid #353a3b;border-radius:6px;background:#202326;color:#c8ceca;flex:none}
+.mn-note-toggle[aria-pressed=true]{color:#33efab;border-color:#33efab80;background:#33efab14}
+.mn-tools{display:flex;align-items:center;gap:3px;min-width:0;flex:1;overflow-x:auto;scrollbar-width:none}
+.mn-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;height:28px;min-width:28px;padding:0 6px;border:0;border-radius:5px;background:transparent;color:#929b96}
+.mn-btn:hover{color:#edf1ee;background:#ffffff09}.mn-btn[aria-pressed=true]{color:#33efab;background:#33efab1a}
+.mn-toolbar .mn-accept{color:#33efab;border:1px solid #33efab55;background:#33efab14;margin-left:5px}
+.mn-colors{display:flex;gap:4px;margin:0 9px;padding:0 10px;border-left:1px solid #2b302d;border-right:1px solid #2b302d;flex:none}
+.mn-swatch{width:14px;height:14px;flex:none;border-radius:50%;border:2px solid #151718;background:var(--color);box-shadow:0 0 0 1px #ffffff18;padding:0}
+.mn-swatch[aria-pressed=true]{box-shadow:0 0 0 1px var(--color)}
+.mn-weight{font:10px system-ui;color:#a4aaa6;background:#202326;border:1px solid #303533;border-radius:4px;height:24px;margin-right:8px;max-width:65px}
+.mn-tool-status{font-size:10px;color:#7d8480;white-space:nowrap;margin-left:auto;padding:0 8px}
+.mn-panel{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;background:#151718;color:#edf1ee;font:11px/1.5 system-ui}
+.mn-panel .mi-selected{flex:none}.mn-panel-scroll{min-height:0;flex:1;overflow:auto;scrollbar-width:thin;scrollbar-color:#363a3b transparent}
+.mn-composer{padding:0 11px 14px;border-bottom:1px solid #262b28}
+.mn-section-title{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:38px;font-size:10px;color:#c8ceca}
+.mn-section-title b{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.055em}.mn-section-title small{font-size:10px;color:#7d8480}
+.mn-hint,.mn-empty{margin:0 0 10px;font-size:11px;line-height:1.6;color:#868d8b}
+.mn-note-text{display:block;width:100%;padding:9px 10px;min-height:84px;resize:vertical;border:1px solid #303633;border-radius:7px;background:#111413;color:#dfe6e3;font:11px/1.6 system-ui;outline:none}
+.mn-note-text::placeholder{color:#747e78}.mn-note-text:focus{border-color:#33efab80}
+.mn-actions{display:flex;align-items:center;gap:6px;margin-top:10px}.mn-local{color:#7d8480;font-size:9px;margin-left:auto}
+.mn-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:27px;padding:0 10px;border:1px solid #363d39;border-radius:5px;background:#202622;color:#c8ceca;white-space:nowrap;font-size:11px}
+.mn-button.primary{background:#33efab1f;border-color:#33efab90;color:#33efab}.mn-button:hover{filter:brightness(1.15)}
+.mn-tray{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-bottom:9px}
+.mn-shot{position:relative;border:1px solid #343a37;border-radius:6px;overflow:hidden;background:#111}
+.mn-shot-view{padding:0;border:0;background:transparent;color:#bcc6bf;display:block;width:100%;text-align:left}
+.mn-shot-view img{width:100%;height:69px;object-fit:contain;display:block;background:#090b0a}
+.mn-shot-view>span{font-size:9px;display:block;padding:4px 6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.mn-remove{position:absolute;top:3px;right:3px;width:18px;height:18px;padding:2px;display:grid;place-items:center;border:1px solid #ffffff20;background:#151718d9;border-radius:4px;color:#dfe6e3}
+.mn-remove svg{width:12px;height:12px}
+.mn-list{padding:0 11px 12px}.mn-note{border-top:1px solid #262b28;padding:9px 0 12px}.mn-note-head{display:flex;gap:7px;align-items:center;color:#a4aaa6;font-size:10px}.mn-note-head b{color:#a78bfa;font-size:11px}.mn-note-head>span{flex:1;color:#7d8480}.mn-note-head .mn-btn{min-width:21px;width:21px;height:22px;padding:2px}.mn-note-head svg{width:13px;height:13px}.mn-note-body{white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0 9px;font-size:11px;color:#dfe6e3}.mn-note.resolved .mn-note-body{color:#7d8480}.mn-note.resolved .mn-note-head b{color:#33efab}
+.mn-saved-shots{display:flex;gap:5px;overflow-x:auto;scrollbar-width:thin}.mn-saved-shot{flex:0 0 88px;display:block;min-width:0;padding:0;border:1px solid #2f3532;border-radius:5px;background:#101311;color:#929b96;overflow:hidden}.mn-saved-shot img{width:86px;height:48px;object-fit:contain;display:block}.mn-saved-shot small{display:block;font-size:8px;padding:3px 1px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mn-storage{padding:9px 11px;border-top:1px solid #202325;flex:none;font-size:9px;color:#7d8480}
+.mn-ink{position:absolute;inset:0;z-index:7;width:100%;height:100%;touch-action:none}
+.mn-text-edit{position:absolute;z-index:8;border:0;border-radius:6px;outline:2px solid #fff8;resize:none;padding:.3em .5em;font-family:system-ui;line-height:1.25;font-weight:600}
+.mn-markers{position:absolute;left:0;right:0;top:0;height:20px;z-index:6;pointer-events:none}
+body.mn-open:not(.original) .glm-ruler,body.mn-open:not(.original) .glm-bar{cursor:pointer}   /* a pointer over the timeline, also with the Range tool; edges: ew-resize */
+@media(max-width:1250px){.mn-tool-status{display:none}.mn-colors{margin:0 3px;padding:0 5px;gap:3px}.mn-tools{gap:1px}.mn-btn{min-width:25px;padding:0 4px}}
+@media(max-width:900px){.mn-toolbar{gap:5px}.mn-tools{overflow-x:auto}.mn-colors{gap:6px}.mn-note-toggle{padding:0 7px}}
+@media(max-width:650px){.mn-toolbar{left:6px;right:6px}.mn-panel .mi-selected{padding:0 10px}.mn-composer,.mn-list{padding-left:9px;padding-right:9px}.mn-tray{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.mn-panel .mi-icon-button{display:grid;place-items:center;width:23px;height:23px;padding:0;border:0;border-radius:4px;background:transparent;color:#868d8b}.mn-panel .mi-icon-button:hover{background:#202326;color:#edf1ee}
+
+/* Notes as threads — the app's Agent Notes (SketchOverlay .sko-thread / .sko-msg / .sko-status / .sko-solved):
+   your note, the agent's replies, your comments back; Solved removes the note (Undo for a minute). */
+.mn-note{padding:11px 0 12px}
+.mn-note.unread{box-shadow:inset 2px 0 0 #ffb020;padding-left:9px;margin-left:-11px;padding-right:0}
+.mn-note-head{display:flex;align-items:center;gap:8px}
+.mn-note-head>b{color:#a78bfa;font-size:11px}
+.mn-status{display:inline-flex;align-items:center;gap:5px;flex:1;min-width:0;font-size:10.5px;font-weight:600;color:#8b918e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mn-status i{width:7px;height:7px;flex:none;border-radius:50%;background:#5d6366}
+.mn-status.replied{color:#ffd58a}.mn-status.replied i{background:#ffb020}
+.mn-thread{display:flex;flex-direction:column;gap:9px;margin:9px 0 10px}
+.mn-msg{display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;align-items:start}
+.mn-av{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:8.5px;font-weight:700;background:#2a2e30;color:#cfd5d2}
+.mn-av svg{width:12px;height:12px}
+.mn-av.agent{background:rgba(255,176,32,.16);color:#ffb020}
+.mn-msg-body{min-width:0}
+.mn-msg-head{display:flex;align-items:baseline;gap:6px;font-size:10.5px;color:#6f7774}
+.mn-msg-head b{color:#cfd5d2;font-weight:600}
+.mn-msg-text{margin-top:1px;font-size:11.5px;line-height:1.5;color:#ededf0;white-space:pre-wrap;overflow-wrap:anywhere}
+.mn-msg.agent .mn-msg-text{color:#f3e7cf}
+.mn-msg .mn-saved-shots{margin-top:6px}
+.mn-reply{display:flex;align-items:flex-end;gap:6px}
+.mn-reply-text{flex:1;min-width:0;min-height:30px;max-height:120px;resize:none;padding:6px 9px;box-sizing:border-box;border:1px solid #303633;border-radius:7px;background:#111413;color:#dfe6e3;font:11px/1.5 system-ui,-apple-system,sans-serif;outline:none}
+.mn-reply-text::placeholder{color:#747e78}.mn-reply-text:focus{border-color:#33efab80}
+.mn-panel .mn-send{width:30px;height:30px;min-width:30px;padding:0;border:1px solid #33efab55;background:#33efab14;color:#33efab;border-radius:7px}
+.mn-panel .mn-send:hover{background:#33efab24}
+.mn-note-acts{display:flex;justify-content:flex-start;margin-top:8px}
+.mn-panel .mn-solved{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#a9b0ad;font-size:11px;font-weight:600;white-space:nowrap}
+.mn-panel .mn-solved svg{width:13px;height:13px}
+.mn-panel .mn-solved:hover{color:#fff;border-color:rgba(51,239,171,.5)}
+.mn-undo{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 8px;padding:8px 10px 8px 12px;border-radius:9px;background:#1d2123;border:1px solid #2c3236;color:#e9ecea;font-size:11px}
+.mn-panel .mn-undo-b{border:0;background:transparent;color:#33efab;font-weight:700;font-size:11px;padding:2px 4px}
+@media (pointer:coarse){.mn-reply-text{min-height:36px}.mn-panel .mn-send{width:36px;height:36px}.mn-panel .mn-solved{height:32px}}
+
+/* Notes on the ruler: the engine page's own flags (playerPage.css .glm-flag) — a red numbered circle per drawing or
+   range, an amber pip when the agent replied. A click opens Notes at that note. Not in Highlight mode. */
+.mn-markers{height:20px;z-index:9}   /* above the playhead's head: a flag under the playhead stays readable and clickable */
+.mn-flag{position:absolute;top:1px;z-index:2;transform:translateX(-50%);width:16px;height:16px;padding:0;border:1.5px solid #111;border-radius:50%;background:#ff4d4f;color:#fff;font:700 9.5px/13px system-ui,-apple-system,sans-serif;text-align:center;cursor:pointer;pointer-events:auto;transition:transform .15s}
+.mn-flag:hover{transform:translateX(-50%) scale(1.15)}
+.mn-flag.replied:after{content:'';position:absolute;top:-4px;right:-4px;width:7px;height:7px;border-radius:50%;background:#ffb020;box-shadow:0 0 0 1.5px #111}
+.mn-flag-span{position:absolute;top:19px;height:2px;border-radius:1px;background:#ff4d4f80;pointer-events:none}   /* along the ruler's foot, clear of its numbers */
+body.rv-mode-highlight .mn-markers,body.rv-mode-highlight .mn-range-overlay{display:none}
+.mn-note.flash{animation:mn-flash 1.6s cubic-bezier(.4,0,.2,1)}
+@keyframes mn-flash{0%,35%{background:rgba(255,77,79,.12)}100%{background:transparent}}
+@media (prefers-reduced-motion:reduce){.mn-note.flash{animation:none;background:rgba(255,77,79,.1)}}
+@media (pointer:coarse){.mn-flag{width:20px;height:20px;line-height:17px;font-size:10.5px}}
+
+/* A range (a new one, or a saved one picked to edit): the original look — an amber band over the timeline, amber
+   edges with their tabs on top, its length in amber. The edges drag through wide invisible grips. */
+.mn-range-layer{position:absolute;top:0;bottom:0;left:134px;right:0;pointer-events:none;z-index:50}
+.mn-range-overlay{position:absolute;top:0;bottom:0;z-index:4;background:#f5c04e14;border-left:1px solid #f5c04e;border-right:1px solid #f5c04e;pointer-events:none;color:#f5c04e;text-align:center;font:9px system-ui;padding-top:5px;box-sizing:border-box}
+.mn-range-overlay:before,.mn-range-overlay:after{content:'';position:absolute;top:0;width:4px;height:20px;background:#f5c04e;border-radius:2px}.mn-range-overlay:before{left:-2px}.mn-range-overlay:after{right:-2px}
+.mn-rh{position:absolute;top:0;bottom:0;width:12px;cursor:ew-resize;pointer-events:auto;touch-action:none}
+.mn-rh.a{left:-6px}.mn-rh.b{right:-6px}
+.mn-rlab{font:inherit;color:inherit}
+@media(max-width:650px){.mn-range-layer{left:58px}}
+@media (pointer:coarse){.mn-rh{width:24px}.mn-rh.a{left:-12px}.mn-rh.b{right:-12px}}
+
+/* In · Out — the original amber box; ▶ on its row (Save note adds the range) */
+.mn-range-row{display:flex;align-items:center;gap:12px;border:1px solid #f5c04e40;border-radius:5px;padding:6px 8px;background:#f5c04e08;margin-bottom:9px}
+.mn-range-row label{display:flex;align-items:center;gap:8px;flex:1;min-width:0;color:#a4aaa6;font-size:10px}
+.mn-range-row input{min-width:0;width:100%;height:auto;padding:0;border:0;border-radius:0;background:none;color:#f5c04e;font:11px system-ui;text-align:right}
+.mn-panel .mn-range-play{width:24px;min-width:24px;height:24px;padding:0;border:0;border-radius:5px;background:transparent;color:#dfe6e3}
+.mn-panel .mn-range-play:hover{background:#ffffff0d}
+.mn-panel .mn-range-play[aria-pressed=true]{color:#f5c04e;background:#f5c04e1a}
+
+/* the live picture: the whole frame for a new note, or the drawing as you draw it */
+.mn-live{border-color:#3a4a44}
+.mn-live canvas{width:100%;height:69px;object-fit:contain;display:block;background:#090b0a}
+.mn-live .mn-shot-view>span:before{content:'';display:inline-block;width:5px;height:5px;margin-right:5px;border-radius:50%;background:#33efab;vertical-align:1px}
+.mn-range-edit{margin:0 0 10px}
+.mn-range-edit .mn-hint{margin:0 0 6px}
+.mn-range-edit .mn-range-row{margin-bottom:0}
+.mn-range-edit .mn-button{min-height:28px}
+
+/* the engine page's `.glm-app button, input, textarea { font: inherit }` would resize these: their own sizes */
+.glm-app .mn-reply-text{font:400 11px/1.5 system-ui,-apple-system,sans-serif}
+.glm-app .mn-range-row input{font:400 11px system-ui}
+.glm-app .mn-panel .mn-solved{font:600 11px system-ui,-apple-system,sans-serif}
+.glm-app .mn-panel .mn-undo-b{font:700 11px system-ui,-apple-system,sans-serif}
+.glm-app .mn-flag{font:700 9.5px/13px system-ui,-apple-system,sans-serif}

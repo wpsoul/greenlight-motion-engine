@@ -116,15 +116,36 @@ function sourceUrl(clip) {
 export function videoPlateScale(clip, frameW, frameH) {
   if (!clip || clip.mediaType !== 'video' || clip.htmlSource) return 1;
   if (!(frameW > 0) || !(frameH > 0)) return 1;
-  const url = sourceUrl(clip);
-  let size = getVideoSize(url);
-  // An original the browser cannot open (a camera codec — the reason it has a
-  // proxy) still has the size the import probed. Never the proxy's: it is smaller.
-  if (!size && sizeCache.get(url)?.status === 'failed' && clip.width > 0 && clip.height > 0) {
-    size = { width: clip.width, height: clip.height };
-  }
+  const size = realSize(clip);
   if (!size) return 1;
   return Math.min(1, Math.max(size.width / frameW, size.height / frameH));
+}
+
+/**
+ * The picture a video layer draws at Scale 100 %, in composition px: its own pixel
+ * size when it is smaller than the frame both ways, else the frame-fitted rect. Null
+ * for anything that is not a plain video and while the size is still loading. The
+ * layer toolbar's Fit button reads it (fitScreen.js fitScreenOffer).
+ */
+export function videoPictureSize(clip, frameW, frameH) {
+  if (!clip || clip.mediaType !== 'video' || clip.htmlSource) return null;
+  if (!(frameW > 0) || !(frameH > 0)) return null;
+  const size = realSize(clip);
+  if (!size) return null;
+  const fit = Math.min(1, frameW / size.width, frameH / size.height);
+  return { width: size.width * fit, height: size.height * fit };
+}
+
+function realSize(clip) {
+  const url = sourceUrl(clip);
+  const size = getVideoSize(url);
+  if (size) return size;
+  // An original the browser cannot open (a camera codec — the reason it has a
+  // proxy) still has the size the import probed. Never the proxy's: it is smaller.
+  if (sizeCache.get(url)?.status === 'failed' && clip.width > 0 && clip.height > 0) {
+    return { width: clip.width, height: clip.height };
+  }
+  return null;
 }
 
 /**

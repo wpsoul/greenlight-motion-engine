@@ -1,0 +1,38 @@
+/* The app's colour field (ColorPicker.jsx withAlpha): App.css .cp-* + the Video Editor's right-panel row
+   (videoEditor.css "Colour row, hairline"). The open state and hovers use the lab's grey, not the green accent. */
+.lab-inspector .mi-row > .cp-wrap{flex:0 1 190px}
+.lab-inspector .cp-wrap{position:relative;display:flex;align-items:center;gap:6px;min-width:0}
+.lab-inspector .cp-swatch-btn{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:23px;justify-content:flex-end;padding:0 2px 0 0;background:transparent;border:0;border-bottom:1px solid transparent;border-radius:3px 3px 0 0;cursor:pointer;transition:background .13s ease,border-color .13s ease}
+.lab-inspector .cp-swatch-btn:hover{background:rgba(255,255,255,.03);border-bottom-color:#2e3335}
+.lab-inspector .cp-wrap.cp-open .cp-swatch-btn{border-bottom-color:#4a5352}
+.lab-inspector .cp-swatch-open{display:inline-flex;align-items:center;flex:0 0 auto;padding:0;background:none;border:0;cursor:pointer}
+.lab-inspector .cp-swatch{display:block;flex-shrink:0;width:15px;height:15px;border-radius:50%;border:1px solid rgba(255,255,255,.16);background-image:linear-gradient(45deg,#333 25%,transparent 25%,transparent 75%,#333 75%),linear-gradient(45deg,#333 25%,transparent 25%,transparent 75%,#333 75%);background-size:8px 8px;background-position:0 0,4px 4px}
+.lab-inspector input.cp-swatch-label{flex:1 1 auto;width:100%;min-width:0;display:block;height:auto;padding:0;background:none;border:0;border-radius:0;outline:none;color:#dfe6e3;font:400 11.5px system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;text-align:right;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text}
+.lab-inspector .cp-inline-pipette{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:23px;padding:0;background:none;border:0;border-radius:3px;color:#55605c;cursor:pointer;transition:color .12s ease,background .12s ease}
+.lab-inspector .cp-inline-pipette:hover,.lab-inspector .cp-wrap.picking .cp-inline-pipette{color:#edf1ee;background:rgba(255,255,255,.05)}
+/* the panel: portaled to <body> at fixed coordinates, so no scroll box clips it */
+.cp-portal{font:12px/1.35 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.cp-portal .cp-popover{position:static;background:#1e1e22;border:1px solid #333;border-radius:10px;padding:10px;width:220px;box-shadow:0 12px 40px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:8px}
+.cp-portal .cp-sv{position:relative;width:100%;height:140px;border-radius:6px;cursor:crosshair;overflow:hidden;touch-action:none}
+.cp-portal .cp-sv-white{position:absolute;inset:0;background:linear-gradient(to right,#fff,transparent)}
+.cp-portal .cp-sv-black{position:absolute;inset:0;background:linear-gradient(to bottom,transparent,#000)}
+.cp-portal .cp-sv-cursor{position:absolute;width:12px;height:12px;border:2px solid #fff;border-radius:50%;box-shadow:0 0 2px rgba(0,0,0,.6),inset 0 0 2px rgba(0,0,0,.3);transform:translate(-50%,-50%);pointer-events:none}
+.cp-portal .cp-bar{position:relative;width:100%;height:14px;border-radius:7px;cursor:pointer;touch-action:none}
+.cp-portal .cp-hue-bar{background:linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)}
+.cp-portal .cp-alpha-bar{background-image:linear-gradient(45deg,#333 25%,transparent 25%,transparent 75%,#333 75%),linear-gradient(45deg,#333 25%,transparent 25%,transparent 75%,#333 75%);background-size:8px 8px;background-position:0 0,4px 4px}
+.cp-portal .cp-alpha-gradient{position:absolute;inset:0;border-radius:7px}
+.cp-portal .cp-bar-cursor{position:absolute;top:50%;width:14px;height:14px;border:2px solid #fff;border-radius:50%;box-shadow:0 0 3px rgba(0,0,0,.5);transform:translate(-50%,-50%);pointer-events:none}
+.cp-portal .cp-presets{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;width:100%}
+.cp-portal .cp-preset-swatch{width:100%;aspect-ratio:1/1;border:1px solid rgba(255,255,255,.12);border-radius:4px;padding:0;cursor:pointer;transition:transform .1s,border-color .15s}
+.cp-portal .cp-preset-swatch:hover{transform:scale(1.1);border-color:rgba(255,255,255,.4)}
+.cp-portal .cp-preset-swatch.active{border-color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.4)}
+.cp-portal .cp-tokens{width:100%;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.13)}
+.cp-portal .cp-token-swatch{border-radius:50%}
+.cp-portal .cp-inputs{display:flex;align-items:center;gap:6px}
+.cp-portal .cp-hex-input{flex:1;min-width:0;max-width:140px;background:#111;border:1px solid #333;border-radius:5px;color:#ccc;font:400 11px system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;padding:4px 6px;outline:none;text-transform:uppercase}
+.cp-portal .cp-hex-input:focus{border-color:#666}
+.cp-portal .cp-tool-btn{display:grid;place-items:center;width:24px;height:24px;padding:0;background:none;border:0;border-radius:4px;color:grey;cursor:pointer}
+.cp-portal .cp-tool-btn:hover:not(:disabled){color:#edf1ee;background:rgba(255,255,255,.06)}
+.cp-portal .cp-tool-btn:disabled{opacity:.35;cursor:default}
+.cp-portal .cp-tool-btn.cp-copied{color:#33efab}
+@media(pointer:coarse){.cp-portal .cp-bar{height:20px;border-radius:10px}.cp-portal .cp-bar-cursor{width:20px;height:20px}.cp-portal .cp-sv{height:170px}}
