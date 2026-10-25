@@ -351,19 +351,28 @@ POST   /api/video-presets/import?board_id={board_id}   # multipart `file` = a pr
 
 ### GreenLight Motion pages (Export for agents)
 
-A project can leave the app as a **GreenLight Motion Engine page**: a folder with `index.html` (plays the project in
-Chrome/Edge from a double-click, nothing to install: preview, read-only layer timeline, an options panel, Render MP4),
-`project.json` (the editor `data` above + `name`, `formatVersion: 1` and `template` — the options), and `assets/`
-(`assets/media/<rel>` = the board's `/media/<rel>` files under their original refs, `assets/hdr/`, `assets/models/`).
-In the app: Video Editor ▸ project chip ▸ **Export for agents**. Over the API:
+A project leaves the app through Video Editor ▸ project chip ▸ **Export for agents**, as ONE of:
+- **a `.glvideo` file** (the window's default, `format: "glvideo"`): the project in one file, for a Claude chat (drop it
+  on the GreenLight Motion connector's video page) or another GreenLight Dash (double-click). Layout below.
+- **a GreenLight Motion Engine page** (`format: "folder"`, the API's default): a folder with `index.html` (plays the
+  project in Chrome/Edge from a double-click, nothing to install: the studio — preview, layers, options, Notes,
+  Render MP4), `project.json` (the editor `data` above + `name`, `formatVersion: 1` and `template` — the options), and
+  `assets/` (`assets/media/<rel>` = the board's `/media/<rel>` files under their original refs, `assets/hdr/`,
+  `assets/models/`). For an agent on this computer that works on `project.json`.
+
+Over the API:
 
 ```
 GET  /api/moodboards/{board_id}/video-projects/{project_id}/light-report
      → { name, template | null, leftOut: [{ kind, reason, layers[] }], engine: bool, defaultDest }
 POST /api/moodboards/{board_id}/video-projects/{project_id}/export-light
      { "dest?": "/abs/parent/folder", "title?": "…", "template?": { "title", "fields": [ … ] },
-       "modelFiles?": { "<preset id>": "<the URL the app serves its .glb at>" }, "pack?": false }
-     → { folder, index, packed: { path, bytes } | null, files, bytes, missing, leftOut, fields }
+       "modelFiles?": { "<preset id>": "<the URL the app serves its .glb at>" }, "format?": "folder" | "glvideo",
+       "pack?": false, "smaller?": false, "progressId?": "<8–64 of A-Z a-z 0-9 ->" }
+     → folder:  { folder, index, packed: { path, bytes } | null, files, bytes, missing, leftOut, fields, smaller }
+     → glvideo: { format: "glvideo", glvideo: "<dest>/<title>.glvideo", folder: <dest>, bytes, files, missing, leftOut, fields, smaller }
+GET  /api/video-projects/export-light/progress/{progressId}
+     → { phase: waiting | files | page | done, done, total, file, converting }   (a .glvideo has no `page` phase)
 POST /api/moodboards/{board_id}/video-projects/import-light
      { "path": "/abs/folder | …/index.html | a one-file page.html | a .glvideo file", "activate?": true }
      → the new project (like POST video-projects) + { copied }
@@ -381,8 +390,10 @@ GET  /api/moodboards/{board_id}/video-projects/{project_id}/glvideo?models=<JSON
 - `template.fields[]` = `{ key, label, type: text|color|image|number|select|toggle, targets: [{ itemId | clipId | (neither = project), path }] }`
   — e.g. `{ "key": "headline", "label": "Headline", "type": "text", "targets": [{ "itemId": "<item id>", "path": "textContent" }] }`,
   a shape colour `path: "shapeFillColor"`, the background `{ "path": "background.solidColor" }`. Omit `template` to keep
-  the project's saved one; `pack: true` also writes one self-contained `.html` next to the folder (for a Claude
-  artifact: keep it under 16 MB).
+  the project's saved one; `pack: true` (folder only) also writes one self-contained `.html` next to the folder (for a
+  Claude artifact: keep it under 16 MB). `smaller: true` puts WAV sounds in as MP3 and PNG pictures as WebP (transparency
+  kept) and points the exported project at them — the board keeps its originals; `smaller` in the answer is
+  `{ sounds, pictures, before, after }`. A name already taken gets a number: `<title> 2.glvideo`, `<title> 2/`.
 - The template is kept beside the project (`<board folder>/.motion/<project id>.template.json`), not in its `data`.
 - `import-light` copies every file into the board (`motion-<title>/`), except a `/media/` file this machine already
   has byte for byte; the template comes back too. It is what the page's **Open in GreenLight Dash** button does

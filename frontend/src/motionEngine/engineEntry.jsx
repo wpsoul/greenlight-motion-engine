@@ -43,7 +43,8 @@ import { installFetchLayer, createResolver, setActiveResolver, resolveProject, m
 // the shared review interface (left rail, inspector, Edit · Notes · Highlight) every host mounts: studio/index.js
 import { mountStudio } from './studio';
 
-const VERSION = '0.0.1-spike';
+// the package version, put in at build time (vite.motion-engine.config.js); 'dev' when built some other way
+const VERSION = typeof __GLM_VERSION__ === 'string' ? __GLM_VERSION__ : 'dev';
 const noop = () => {};
 
 installGpuResetWatch();

@@ -5,6 +5,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { createRequire } from 'module'
+import { readFileSync } from 'node:fs'
 
 const require = createRequire(import.meta.url)
 
@@ -198,6 +199,8 @@ export default defineConfig({
   worker: { plugins: () => [workerInputsPlugin()] },
   define: {
     __GL_SELF_HOSTED__: 'false',
+    // GreenLightMotion.version: the package's own version, never a hand-kept constant
+    __GLM_VERSION__: JSON.stringify(JSON.parse(readFileSync(path.resolve(__dirname, '../motion-engine/package.json'), 'utf8')).version),
     // Library mode doesn't replace process.env; React reads NODE_ENV.
     'process.env.NODE_ENV': JSON.stringify('production'),
     'import.meta.env.VITE_API_BASE_URL': JSON.stringify(''),

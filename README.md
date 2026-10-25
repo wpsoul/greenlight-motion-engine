@@ -173,15 +173,15 @@ Any other client takes the same Streamable HTTP URL, with no auth.
 ## The CLI
 
 ```sh
-npx greenlight-motion@0.1.2 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
-npx greenlight-motion@0.1.2 init my-video   # a working starter: index.html, project.json, assets/
-npx greenlight-motion@0.1.2 script my-video # my-video/script.json (a scene script) → project.json, the Video Editor's presets
-npx greenlight-motion@0.1.2 check my-video  # missing files, template mistakes, blank frames, broken plugins
-npx greenlight-motion@0.1.2 stills my-video # frames and a labelled contact sheet, to look at
-npx greenlight-motion@0.1.2 render my-video --fps 60 --motion-blur
-npx greenlight-motion@0.1.2 review my-video --open   # the page with Notes; they land in my-video/review/
-npx greenlight-motion@0.1.2 pack my-video   # everything in ONE html file
-npx greenlight-motion@0.1.2 pack my-video --glvideo  # ONE .glvideo: double-clicked, it opens in GreenLight Dash
+npx greenlight-motion@0.1.3 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
+npx greenlight-motion@0.1.3 init my-video   # a working starter: index.html, project.json, assets/
+npx greenlight-motion@0.1.3 script my-video # my-video/script.json (a scene script) → project.json, the Video Editor's presets
+npx greenlight-motion@0.1.3 check my-video  # missing files, template mistakes, blank frames, broken plugins
+npx greenlight-motion@0.1.3 stills my-video # frames and a labelled contact sheet, to look at
+npx greenlight-motion@0.1.3 render my-video --fps 60 --motion-blur
+npx greenlight-motion@0.1.3 review my-video --open   # the page with Notes; they land in my-video/review/
+npx greenlight-motion@0.1.3 pack my-video   # everything in ONE html file
+npx greenlight-motion@0.1.3 pack my-video --glvideo  # ONE .glvideo: double-clicked, it opens in GreenLight Dash
 ```
 
 Other commands:
@@ -201,7 +201,7 @@ The engine is one classic script, so it runs from a double-clicked file, a CDN o
 
 ```html
 <div id="app"></div>
-<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.1.2/dist/greenlight-motion.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.1.3/dist/greenlight-motion.js"></script>
 <script>
   GreenLightMotion.mountPage(document.getElementById('app'), {
     project: { /* project.json */ },

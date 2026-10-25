@@ -3,7 +3,7 @@
 *{box-sizing:border-box}button,input,textarea,select{font-family:inherit}button{cursor:pointer}button:focus-visible{outline:2px solid #33efab;outline-offset:2px}[hidden]{display:none!important}
 body:not(.original) .glm-app{--glm-bg:#111;--glm-panel:#151718;--glm-line:#25292a;--glm-txt:#edf1ee;--glm-sub:#868d8b;--glm-soft:#202326;--glm-field:#191c1d;--glm-acc:#33efab;--side-w:var(--lab-right);font:12px/1.35 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;grid-template-columns:var(--lab-left) minmax(0,1fr) var(--lab-right);grid-template-rows:52px minmax(180px,1fr) 48px var(--lab-timeline);gap:0 10px;padding:0 10px;background:#111 radial-gradient(circle,rgba(255,255,255,.13) .8px,transparent .9px) 0 0/15px 15px}
 body:not(.original) .glm-top{grid-column:1/-1;grid-row:1;padding:6px 14px 0;border:0;gap:12px;min-height:0}
-body:not(.original) .glm-top h1{font-size:12px;display:flex;align-items:center;gap:9px}body:not(.original) .glm-top h1:before{content:'';width:19px;height:19px;flex:none;background:url('./logo.svg') center/contain no-repeat}
+body:not(.original) .glm-top h1{font-size:12px;line-height:19px}body:not(.original) .glm-top h1:before{content:'';display:inline-block;vertical-align:top;width:19px;height:19px;margin-right:9px;background:url('./logo.svg') center/contain no-repeat}
 body:not(.original) .glm-badge{font-size:11px;border-left:1px solid #303433;padding-left:12px}
 body:not(.original) .glm-mode{border:0;padding:0;font-size:11px;color:var(--glm-sub)}body:not(.original) .glm-mode i{box-shadow:none;width:5px;height:5px}
 body:not(.original) .glm-app .glm-xbtn{height:28px;border:1px solid #33efab;border-radius:6px;background:#33efab;color:#0f1115;font-weight:600;font-size:12px}

@@ -1420,6 +1420,8 @@ export const api = {
   // work on, and such a folder / page back in as a new project.
   getLightExportReport: (mbId, projectId) =>
     request(`/moodboards/${encodeURIComponent(mbId)}/video-projects/${encodeURIComponent(projectId)}/light-report`),
+  // where an export started with body.progressId is (Export for agents shows it while the files are copied / converted)
+  exportLightProgress: (progressId) => request(`/video-projects/export-light/progress/${encodeURIComponent(progressId)}`),
   exportLightProject: (mbId, projectId, body) =>
     request(`/moodboards/${encodeURIComponent(mbId)}/video-projects/${encodeURIComponent(projectId)}/export-light`, {
       method: "POST",

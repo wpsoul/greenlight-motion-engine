@@ -67,6 +67,7 @@ export function install(STUDIO) {
     api()?.pause();
     mode = m;
     document.body.classList.remove('rv-mode-edit', 'rv-mode-notes', 'rv-mode-highlight'); document.body.classList.add('rv-mode-' + m);
+    fitTitle();
     if (m === 'notes') window.LabNotes?.open();
     if (m === 'highlight') { window.LabHighlight?.open(); if (sources.length > 1) window.LabSide?.tab('sources', { expand: false }); }
     if (m === 'edit') { const back = $('.glm-side .glm-icon[aria-label="Back to Options"]'); if (back) back.click(); }
@@ -100,9 +101,30 @@ export function install(STUDIO) {
     chip = el('span', 'rv-chip'); chip.append(el('i', 'rv-dot'), el('b')); reelBadge = el('span', 'rv-reel'); reelBadge.innerHTML = ic.play; reelBadge.append(el('span'));
     $('.glm-view').append(chip, reelBadge);
     new ResizeObserver(placeChip).observe($('.glm-view'));
+    watchTitle(top);
   }
   // the page rebuilt (lab.js rebuild: a layer added, duplicated or deleted): the same parts go back in
-  window.addEventListener('rv:remount', () => { $('.glm-top').append(sw, state, save); $('.glm-view').append(chip, reelBadge); new ResizeObserver(placeChip).observe($('.glm-view')); renderSwitch(); changed(); });
+  window.addEventListener('rv:remount', () => { $('.glm-top').append(sw, state, save); $('.glm-view').append(chip, reelBadge); new ResizeObserver(placeChip).observe($('.glm-view')); watchTitle($('.glm-top')); renderSwitch(); changed(); });
+  function watchTitle(top) {
+    new ResizeObserver(fitTitle).observe(top);
+    const h1 = top.querySelector('h1'); if (h1) new MutationObserver(fitTitle).observe(h1, { childList: true, characterData: true, subtree: true });
+    fitTitle();
+  }
+  // The tabs sit centred over the top bar, out of its row, so the row can't make room for them: the film's name and
+  // its size badge must end before them. A long name is cut with "…" (the whole name on hover); when even 140px of
+  // name can't fit beside the badge, the badge goes. Measured when the bar's size, the mode or the name changes —
+  // never on a timer.
+  function fitTitle() {
+    const top = $('.glm-top'), h1 = top?.querySelector('h1'); if (!h1 || !sw) return;
+    if (h1.title !== h1.textContent) h1.title = h1.textContent;
+    const badge = top.querySelector('.glm-badge');
+    badge?.classList.remove('rv-off-bar');
+    if (getComputedStyle(sw).position !== 'absolute') { h1.style.maxWidth = ''; return; }   // a narrow page: the tabs have their own row
+    const room = sw.getBoundingClientRect().left - h1.getBoundingClientRect().left - 16;
+    let need = badge?.offsetParent ? badge.scrollWidth + 18 : 0;
+    if (need && room - need < 140) { badge.classList.add('rv-off-bar'); need = 0; }
+    h1.style.maxWidth = Math.max(60, Math.floor(room - need)) + 'px';
+  }
   function placeChip() {
     const f = $('.glm-frame'), v = $('.glm-view'); if (!f || !v) return;
     const fr = f.getBoundingClientRect(), vr = v.getBoundingClientRect();

@@ -6,6 +6,7 @@ body .glm-top h1{order:0}body .glm-top .glm-badge{order:1}body .glm-top .glm-mod
 body .glm-top .glm-tbtn:not(.glm-notes-btn){order:7}body .glm-top .glm-xbtn{order:9}
 .rv-state{order:5}.rv-save{order:8}
 body:not(.rv-mode-edit) .glm-top .glm-mode{display:none}
+body .glm-top h1{flex:0 1 auto}body .glm-top .glm-badge{flex:none}.glm-top .rv-off-bar{display:none!important}
 body.rv-mode-edit .rv-state,body.rv-mode-edit .rv-save{display:none}
 body:not(.rv-mode-edit) .rv-state{margin-left:auto}
 
@@ -91,7 +92,7 @@ body .glm-view{position:relative}
 
   /* the app bar: the title and its buttons, then the three tabs on their own row */
   body:not(.original) #app .glm-top { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px 0; min-height: 0; background: #111; }
-  body:not(.original) #app .glm-top h1 { flex: 1 1 auto; min-width: 0; }
+  body:not(.original) #app .glm-top h1 { flex: 1 1 0; min-width: 0; }   /* a long name is cut, the buttons stay beside it */
   body:not(.original) #app .glm-badge, body:not(.original) #app .glm-mode { display: none; }
   body:not(.original) #app .glm-top .glm-tbtn span { display: none; }
   body:not(.rv-mode-edit) .rv-state { margin-left: 0; }
