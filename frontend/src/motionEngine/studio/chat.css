@@ -1,0 +1,389 @@
+/* The studio in a chat's frame (mountStudio(el, { chat }), chat.js) — the chat layout lab's Variant 5 · Mobile
+   (html/INTERFACE/motion-chat-layout-lab, 2026-10-26): up to 900 px wide, a phone's chat and a computer's alike, the
+   app's mobile editor in a box of the chat's height. The app bar with the modes under it, the preview, the play row
+   (the time · ‹ ● › · Loop), the timeline the whole width (the studio's own toolbar on top of it, Properties · Layers
+   first; only its lanes scroll sideways), a panel a sheet sliding over the timeline. Notes and Highlight: their strip
+   only as tall as it needs, their panel docked under it. The timeline's top edge is a handle. Wider (full screen): the
+   studio's whole-window layout.
+   body.cl-c.cl-a.cl-stack = the layout · .cl-asphone = 600–900 px (a computer, an iPad: the names column wider, words
+   in Highlights' buttons) · .cl-tall / .cl-wide = the film's shape · body[data-cl-tab] = the open sheet: side (Layers,
+   Project) | panel (Properties / Notes / Highlights) · .cl-open = a sheet open · .cl-tlset / .cl-dockset = the handle
+   dragged. These rules come before the studio's own (chat.js puts them first): they beat its column
+   (review.css @media max-width 900px, `body:not(.original) #app …`) by a class. */
+
+html:has(body.cl-c) { height: 100%; }
+body.cl-c {
+  --cl-top: 48px; --cl-trans: 40px; --cl-rail: 40px; --cl-gap: 10px;
+  height: var(--cl-box, 780px); min-height: 0; margin: 0; box-sizing: border-box; overflow: hidden;
+  display: grid; gap: 0 var(--cl-gap); padding: 0 var(--cl-gap) var(--cl-gap);
+}
+
+/* the app bar */
+body.cl-c:not(.original) #app .glm-top { grid-area: top; position: relative; display: flex; flex-wrap: nowrap; align-items: center; gap: 10px;
+  padding: 0 2px; min-height: 0; background: transparent; }
+body.cl-c:not(.original) #app .glm-top::after { display: none; }
+body.cl-c:not(.original) #app .glm-top h1 { flex: 0 1 auto; margin-right: auto; }
+body.cl-c .rv-switch { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; order: 0; }
+body.cl-c:not(.rv-mode-edit) .rv-state { margin-left: auto; }
+
+/* the preview fills its row at the film's shape; the play row under it */
+body.cl-c:not(.original) #app .glm-view { grid-area: view; margin: 0 0 0; height: auto; min-height: 0; aspect-ratio: auto; }
+body.cl-c:not(.original) #app .glm-transport { grid-area: trans; margin: 0; padding: 0 2px; min-width: 0; }
+
+/* the rail's panes (Layers, Project) */
+body.cl-c:not(.original) .lab-side { grid-area: rail; position: static; display: flex; flex-direction: column; width: auto; margin: 0; min-height: 0;
+  top: auto; bottom: auto; left: auto; border: 1px solid var(--lab-line); border-radius: 10px 10px 0 0; background: #151718; box-shadow: none; overflow: hidden; }
+body.cl-c:not(.original) .lab-side .lab-rail { width: auto; flex-direction: row; align-items: stretch; gap: 2px; padding: 3px; border: 0; flex: none; }
+body.cl-c:not(.original) .lab-side .lab-rail button { flex: 1; width: auto; min-width: 0; flex-direction: row; justify-content: center; gap: 5px; padding: 3px 4px; font-size: 11px; white-space: nowrap; }
+body.cl-c:not(.original) .lab-side .lab-rail button span { width: 24px; height: 24px; flex: none; }
+body.cl-c:not([data-cl-tab=side]):not(.original) .lab-side .lab-pane { display: none; }   /* beats the column's .lab-side.expanded */
+body.cl-c[data-cl-tab=side]:not(.original) .lab-side { border-radius: 10px; }
+body.cl-c[data-cl-tab=side]:not(.original) .lab-side .lab-pane { display: flex; flex: 1; min-height: 0; border-top: 1px solid #202325; }
+body.cl-c:not(.original) .lab-side .lab-pane-body { overflow: auto; flex: 1; min-height: 0; }
+
+/* the mode's panel (Properties, Notes, Highlights): its list scrolls, its header stays */
+body.cl-c:not(.original) #app .glm-side { grid-area: panel; margin: 0; height: auto; min-height: 0; position: relative; overflow: hidden;
+  border: 1px solid var(--lab-line); border-top: 0; border-radius: 0 0 10px 10px; box-shadow: none; }
+body.cl-c:not([data-cl-tab=panel]):not(.original) #app .glm-side { display: none; }
+body.cl-c .lab-inspector, body.cl-c .mn-panel, body.cl-c .hl-panel { position: absolute; inset: 0; }
+body.cl-c .mi-scroll, body.cl-c .mn-panel-scroll, body.cl-c .hl-list, body.cl-c #app .glm-panel { overflow: auto; flex: 1 1 auto; min-height: 0; }
+
+/* the timeline */
+body.cl-c:not(.original) #app .glm-tlwrap { margin: 0; min-height: 0; height: auto; padding: 43px 12px 0 146px; border: 1px solid var(--lab-line);
+  border-radius: 10px; overflow: hidden; position: relative; }
+body.cl-c:not(.original) #app .glm-rows { max-height: var(--cl-rows, 160px); }
+body.cl-c.rv-mode-highlight:not(.original) #app .glm-tlwrap, body.cl-c.rv-mode-notes:not(.original) #app .glm-tlwrap { padding: 0; }
+body.cl-c.rv-mode-highlight .hl-tl, body.cl-c.rv-mode-notes .hl-tl { position: absolute; inset: 0; overflow: auto; padding-bottom: 8px; }
+
+/* Full screen / back into the chat: an icon in the app bar, before Open in GreenLight Dash */
+.glm-top .cl-expand { order: 6; display: inline-flex; align-items: center; justify-content: center; }
+.glm-top .cl-expand[hidden] { display: none; }
+body:not(.original) .glm-top .glm-tbtn.cl-expand:not([hidden]) { display: inline-flex; }   /* the column hides the app bar's other buttons */
+body:not(.cl-c) .glm-top .cl-expand { margin-left: 0; }
+
+/* the layout: the app bar with the three modes under it, the preview, the play row, the timeline always there (zoomed:
+   --cl-barw, 100 px a second at first, pinch to zoom; it scrolls sideways) */
+body.cl-c.cl-a.cl-stack { height: var(--cl-box, 680px); --cl-gap: 8px; --cl-toolsh: 58px; grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 54%) var(--cl-trans) minmax(0, 1fr) var(--cl-toolsh); grid-template-areas: "top" "view" "trans" "tl" "tools"; }
+body.cl-c.cl-a.cl-stack.cl-wide { grid-template-rows: auto minmax(0, calc((100vw - 2 * var(--cl-gap)) / var(--cl-ar, 1.7778))) var(--cl-trans) minmax(0, 1fr) var(--cl-toolsh); }
+body.cl-c.cl-a.cl-stack:not(.rv-mode-edit) { --cl-toolsh: 0px; }
+/* Notes and Highlight: their list is the strip's last button */
+.cl-listbtn { display: none; }
+body.cl-c.cl-stack .cl-listbtn { display: inline-flex; flex: none; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 56px; min-height: 40px; margin-left: auto;
+  position: sticky; right: 0; z-index: 2; border: 0; border-radius: 8px; color: #c9cfcc; font: 500 10px system-ui, -apple-system, sans-serif; padding: 2px 6px 2px 18px;
+  background: linear-gradient(90deg, rgba(17, 17, 17, 0), #111 16px); }   /* always at the right end, over the tools that scroll under it */
+body.cl-c.cl-stack .cl-listbtn.on { background: #202326; color: #fff; }
+body.cl-c.cl-stack .cl-listbtn.on svg { color: #33efab; }
+body.cl-c.cl-stack .cl-listbtn b { font-weight: 600; color: #9aa19e; }
+/* the list's count: a small badge on its icon */
+body.cl-c.cl-stack .cl-listbtn .cl-n { position: absolute; top: 1px; left: calc(50% + 5px); min-width: 15px; height: 15px; padding: 0 4px; box-sizing: border-box; border-radius: 8px;
+  background: #2a2e30; color: #edf1ee; font: 600 9px/15px system-ui, -apple-system, sans-serif; text-align: center; }
+body.cl-c.cl-stack .cl-listbtn.on .cl-n { background: #33efab; color: #0b0c0c; }
+/* a sheet open: a tall film's preview gives it room (still in view) */
+body.cl-c.cl-a.cl-stack.cl-tall.cl-open { grid-template-rows: auto minmax(0, 34%) var(--cl-trans) minmax(0, 1fr) var(--cl-toolsh); }
+/* the app bar's rows: the title and the buttons, the modes under them — the same place in every mode */
+body.cl-c.cl-stack:not(.original) #app .glm-top { display: grid; grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+  grid-template-rows: 32px 34px; gap: 8px 6px; padding: 8px 4px 12px; }
+body.cl-c.cl-stack:not(.original) #app .glm-top::after { display: none; }
+body.cl-c.cl-stack:not(.original) #app .glm-top h1 { grid-area: 1 / 1; min-width: 0; margin: 0; }
+body.cl-c.cl-stack:not(.original) #app .glm-top :is(.glm-tbtn, .glm-xbtn, .rv-save) { height: 32px; margin: 0; align-self: center; justify-content: center; }
+body.cl-c.cl-stack:not(.original) #app .glm-top .glm-tbtn { width: 32px; padding: 0; grid-area: 1 / 3; }
+body.cl-c.cl-stack:not(.original) #app .glm-top .cl-expand { grid-area: 1 / 4; }
+body.cl-c.cl-stack:not(.original) #app .glm-top .glm-xbtn { grid-area: 1 / 5; }
+body.cl-c.cl-stack:not(.original) #app .glm-top .rv-save { grid-area: 1 / 2; }
+body.cl-c.cl-stack .rv-state { display: none; }
+body.cl-c.cl-stack .rv-switch { grid-area: 2 / 1 / 3 / -1; justify-self: center; position: static; transform: none; margin: 0; }
+/* the timeline: always there, the whole width */
+body.cl-c.cl-stack:not(.original) #app .glm-tlwrap { display: block; grid-area: tl; overflow-x: auto; overflow-y: hidden;
+  padding: 0 8px 0 44px; border: 1px solid var(--lab-line); border-radius: 10px; scrollbar-width: none;
+  position: relative; z-index: 1; }   /* its own layers (sticky labels, the playhead) stay under the sheet */
+body.cl-c.cl-stack:not(.original) #app .glm-tlwrap::before, body.cl-c.cl-stack:not(.original) #app .glm-tlwrap::after { display: none; }
+body.cl-c.cl-stack .rv-edit-toolbar { display: none; }
+body.cl-c.cl-stack:not(.original) #app .glm-bar { width: var(--cl-barw, 100%); }
+/* rows a finger can take (the app's mobile tracks are 36 px): 32 px, the names column in step */
+body.cl-c.cl-stack:not(.original) .glm-row { height: 32px; }
+body.cl-c.cl-stack:not(.original) .glm-app .glm-layer { height: 32px; font-size: 11px; }
+body.cl-c.cl-stack:not(.original) .lab-track-label { height: 35px; flex: none; box-sizing: border-box; padding-bottom: 3px; }
+body.cl-c.cl-stack .lab-track-label.cl-track-hidden { display: none; }
+/* Notes and Highlight's timeline (sources, their filmstrips) zoomed the same way: the lanes scroll sideways under the
+   labels and the tools, which stay at the left */
+body.cl-c.cl-stack.rv-mode-highlight:not(.original) #app .glm-tlwrap, body.cl-c.cl-stack.rv-mode-notes:not(.original) #app .glm-tlwrap { padding: 0; overflow: hidden; }
+body.cl-c.cl-stack .hl-tl { overflow: auto; scrollbar-width: none; }
+body.cl-c.cl-stack .hl-tlbody { width: var(--cl-hlw, auto); flex: none; }
+body.cl-c.cl-stack .hl-tlbar { position: sticky; left: 0; width: var(--cl-hlvw, auto); box-sizing: border-box; z-index: 72; background: #111; }   /* a sticky offset counts from inside the strip's padding: 0 keeps it where it is */
+body.cl-c.cl-stack .hl-lab { position: sticky; left: 0; z-index: 71; }
+/* the strip, lower: the source's lane 40 px (not 72), the ruler and the tools tighter */
+body.cl-c.cl-stack .hl-track.hl-on, body.cl-c.cl-stack .hl-track.hl-on .hl-lab { height: 40px; }
+body.cl-c.cl-stack .hl-track.hl-on .hl-lab-tx { flex-direction: row; gap: 4px; }
+body.cl-c.cl-stack .hl-rrow, body.cl-c.cl-stack .hl-rrow .hl-lab { height: 24px; }
+body.cl-c.cl-stack .hl-tlbar { padding-top: 2px; padding-bottom: 2px; }
+body.cl-c.cl-stack .hl-rrow .hl-lab { color: transparent; }   /* no "TIME · KEYS": the cell stays, so the ruler lines up */
+/* nothing bounces or hands its scroll to the chat: the strips, their rows, the sheets */
+html:has(body.cl-stack), body.cl-c.cl-stack { overscroll-behavior: none; }
+body.cl-c.cl-stack .glm-tlwrap, body.cl-c.cl-stack .glm-rows, body.cl-c.cl-stack .hl-tl, body.cl-c.cl-stack .glm-side,
+body.cl-c.cl-stack .glm-side *, body.cl-c.cl-stack .lab-pane-body { overscroll-behavior: none; }
+body.cl-c.cl-stack .lab-track-labels { top: var(--cl-lt, 26px); left: 4px; width: 36px; z-index: 4; background: #111; }
+body.cl-c.cl-stack .lab-track-label .rv-gl-name, body.cl-c.cl-stack .lab-track-label .rv-gl-btn { display: none; }
+/* the rail gives way to the toolbar's Properties · Layers: the panes and the mode's panel come up as the sheet */
+body.cl-c.cl-stack:not(.original) .lab-side { display: none; }
+body.cl-c.cl-stack[data-cl-tab=side]:not(.original) .lab-side { display: flex; grid-area: tl; z-index: 6; border-radius: 10px; }
+body.cl-c.cl-stack:not(.original) .lab-side .lab-rail { display: none; }
+body.cl-c.cl-stack:not(.original) #app .glm-side { grid-area: tl; z-index: 6; border-top: 1px solid var(--lab-line); border-radius: 10px; }
+.cl-done { display: none; }
+body.cl-c.cl-stack.cl-open .cl-done { grid-area: tl; justify-self: end; align-self: start; z-index: 8; display: inline-flex; align-items: center; gap: 5px; height: 32px;
+  margin: 4px 6px 0 0; padding: 0 12px 0 9px; border: 0; border-radius: 9px; background: #262a2c; color: #edf1ee; font: 600 12px system-ui, -apple-system, sans-serif; }
+body.cl-c.cl-stack.cl-open .cl-done svg { color: #33efab; }
+body.cl-c.cl-stack.cl-open:not(.original) #app .glm-side, body.cl-c.cl-stack.cl-open[data-cl-tab=side]:not(.original) .lab-side {
+  margin-top: 39px; border-top: 0; border-radius: 0 0 12px 12px; }
+
+/* the handle: the timeline's top edge (the editor's splitter) */
+.cl-split { display: none; }
+.cl-split::before { content: ''; width: 36px; height: 4px; border-radius: 2px; background: #3a3f3d; transition: background .15s; }
+.cl-split:hover::before, .cl-split.on::before { background: #8b928f; }
+
+/* Notes and Highlight: the strip only as tall as it needs (--cl-strip, chat.js: its tools, the ruler, a 40 px lane per
+   source) and their panel DOCKED under it — never over it, so the range being marked stays in view. A wide film's
+   panel is always there; a tall film's comes up with the list button (or a drawing, a tap on a flag or a highlight),
+   the preview giving it room; again closes it */
+body.cl-c.cl-a.cl-stack:not(.rv-mode-edit) { grid-template-rows: auto minmax(0, 1fr) var(--cl-trans) var(--cl-strip, 120px) 0px;
+  grid-template-areas: "top" "view" "trans" "tl" "dock"; }
+body.cl-c.cl-a.cl-stack:not(.rv-mode-edit).cl-open { grid-template-rows: auto minmax(0, 30%) var(--cl-trans) var(--cl-strip, 120px) minmax(0, 1fr); }
+body.cl-c.cl-a.cl-stack.cl-wide:not(.rv-mode-edit) { grid-template-rows: auto minmax(0, calc((100vw - 2 * var(--cl-gap)) / var(--cl-ar, 1.7778))) var(--cl-trans) var(--cl-strip, 120px) minmax(0, 1fr); }
+body.cl-c.cl-stack:not(.rv-mode-edit):not(.original) #app .glm-side { grid-area: dock; z-index: auto; margin-top: var(--cl-gap); border-top: 1px solid var(--lab-line); border-radius: 10px; }
+body.cl-c.cl-stack:not(.rv-mode-edit).cl-open .cl-done { display: none; }
+body.cl-c.cl-stack.cl-wide:not(.rv-mode-edit) .cl-listbtn { display: none; }   /* always open: nothing to toggle */
+/* the Highlights panel in its short dock: ONE scroller, the whole panel (the range editor, then the list) */
+body.cl-c.cl-stack .hl-panel { overflow-y: auto; scrollbar-width: none; }
+body.cl-c.cl-stack .hl-panel .hl-list { flex: none; overflow: visible; }
+/* a note's picture before it is made (an empty <img>): nothing, not the browser's broken-picture icon */
+body.cl-c .mn-shot-view img[src=""], body.cl-c .mn-shot-view img:not([src]) { visibility: hidden; }
+/* the studio's toasts over the top of the preview, not over the panel's list */
+body.cl-c.cl-stack #lab-toast { top: 100px; bottom: auto; }
+
+/* fingers: the modes, the play row and the strip's tools a finger's size; Send says what it does */
+body.cl-c.cl-stack .rv-switch { padding: 2px; border-radius: 9px; }
+body.cl-c.cl-stack .rv-sw { position: relative; height: 28px; padding: 0 11px 0 9px; gap: 5px; font-size: 12px; border-radius: 7px; }
+body.cl-c.cl-stack .rv-sw::after { content: ''; position: absolute; inset: -6px 0; }   /* a 40 px target, a 28 px look */
+body.cl-c.cl-stack .rv-sw svg { width: 13px; height: 13px; }
+body.cl-c.cl-stack .rv-count:not(:empty) { min-width: 15px; height: 15px; padding: 0 4px; font-size: 9.5px; line-height: 15px; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport { gap: 0; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport button { min-width: 40px; min-height: 40px; }
+body.cl-c:not(.original) #app .glm-transport .glm-tgroup:first-child { order: 1; }
+body.cl-c:not(.original) #app .glm-transport .glm-tgroup:last-child { order: 2; margin-left: 0; }
+body.cl-c:not(.original) #app .glm-transport .glm-time { order: 3; margin-left: auto; }
+body.cl-c:not(.original) #app .glm-transport .glm-icon[aria-pressed] { min-width: 36px; background: transparent; border-color: transparent; color: #8b928f; }
+body.cl-c:not(.original) #app .glm-transport .glm-icon[aria-pressed=true] { color: #33efab; }
+body.cl-c:not(.original) #app .glm-transport .glm-icon[aria-pressed] span { display: none; }   /* Loop: the icon says it */
+body.cl-c.cl-stack .hl-tsb { height: 34px; min-height: 0; min-width: 37px; padding: 2px; }   /* 34 px, 5 px from the bar's edges */
+body.cl-c.cl-stack .hl-tsb svg { width: 14px; height: 14px; }
+body.cl-c.cl-stack .hl-tsb .hl-tsb-ic { height: 14px; }
+body.cl-c.cl-stack .hl-tltools { gap: 3px; flex: 1; min-width: 0; padding-right: 7px; }   /* the list at the right end */
+body.cl-c.cl-stack .mn-btn { min-width: 36px; min-height: 36px; }
+body.cl-c.cl-stack .mn-tools { gap: 2px; scrollbar-width: none; }
+body.cl-c.cl-stack .rv-save span { display: none; }
+body.cl-c.cl-stack .rv-save::after { content: 'Send'; font: 600 12px system-ui, -apple-system, sans-serif; margin-left: 2px; }
+/* no purple (the studio's own violet dot on a single source; its sheets are whitened by chat.js) */
+[style*="rgb(119, 97, 240)"], [style*="#7761f0"], [style*="#a78bfa"], [style*="rgb(167, 139, 250)"], [style*="#8b5cf6"], [style*="rgb(139, 92, 246)"] { background: #edf1ee !important; }
+
+/* the edit ruler: 20 px (the app's mobile editor: 22), its numbers beside the second ticks, the rows right under it */
+body.cl-c.cl-stack:not(.original) #app .glm-ruler { height: 20px; }
+body.cl-c.cl-stack:not(.original) #app .glm-rows { padding-top: 4px; }
+/* note flags fit the ruler: 14 px, centred in it; a number under a flag steps aside (.cl-under, chat.js) */
+body.cl-c.cl-stack .glm-tlwrap .mn-markers { height: 20px; }
+body.cl-c.cl-stack .glm-tlwrap .mn-flag, body.cl-c.cl-stack .hl-ruler .mn-flag { width: 14px; height: 14px; top: 3px; border-width: 1px; font-size: 8.5px; line-height: 12px; }
+body.cl-c.cl-stack .cl-under { visibility: hidden; }
+/* a flag at the very start: from 0 to the right, not half under the names */
+body.cl-c.cl-stack .mn-flag.cl-edge { transform: none; }
+/* the time under the pointer: a solid label over the flags; no hover on touch */
+body.cl-c #app .glm-ghost { opacity: 1; background: rgba(237, 241, 238, .38); z-index: 10; }
+body.cl-c #app .glm-ghost span { top: 2px; background: #262a2c; color: #edf1ee; box-shadow: 0 0 0 1px #3a3f3d; }
+@media (hover: none) { body.cl-c.cl-stack #app .glm-ghost { display: none; } }
+/* Notes and Highlight's ruler: the seconds at the top, the film's keyframes as short marks at its foot */
+body.cl-c.cl-stack .hl-secm { top: 3px; bottom: 0; height: auto; line-height: 11px; padding-left: 4px; border-left-color: rgb(218 220 224 / 14%); }
+body.cl-c.cl-stack .hl-beat { height: 4px; background: rgb(218 220 224 / 24%); }
+/* no filmstrip (a chat page has no pictures of its sources): the lane is a plain clip, its cuts short marks at its foot */
+body.cl-c.cl-stack.cl-nostrip .hl-film { display: none; }
+body.cl-c.cl-stack.cl-nostrip .hl-srcclip { background: #1b1e1f; box-shadow: inset 0 0 0 1px #2a2e2f; border-radius: 4px; }
+body.cl-c.cl-stack.cl-nostrip .hl-track.hl-on .hl-srcclip { background: #202426; box-shadow: inset 0 0 0 1px #3a3f3d; }
+body.cl-c.cl-stack.cl-nostrip .hl-cut { top: auto; bottom: 0; height: 6px; background: rgb(237 241 238 / 22%); }
+body.cl-c.cl-stack.cl-nostrip .hl-track.hl-on .hl-cut { background: rgb(237 241 238 / 34%); }
+body.cl-c.cl-stack.cl-nostrip .hl-it-th { display: none; }   /* a list item's picture: none to show, no empty box */
+/* Notes' tools: ONE row — the drawing tools, the colours, the stroke, undo, redo, clear, ✓ — packed from the left,
+   scrolling sideways where the strip is narrower; the list stays at the row's right end */
+body.cl-c.cl-stack .mn-tools { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; gap: 2px; }
+body.cl-c.cl-stack .mn-tools::-webkit-scrollbar { display: none; }
+body.cl-c.cl-stack .mn-tools > .mn-btn { flex: none; width: 30px; min-width: 0; height: 30px; min-height: 0; padding: 0; }   /* 30 px, centred in the 44 px bar */
+body.cl-c.cl-stack .mn-tools > .mn-btn.mn-accept { width: 34px; }
+/* "Done reviewing" closes the studio's Notes panel (an empty dock here): tapping the tool in use again ends it */
+body.cl-c.cl-stack .mn-tools > .mn-btn[title^="Done reviewing"] { display: none; }
+/* the strip's toolbar grows with its rows */
+body.cl-c.cl-stack .hl-tlbar { height: auto; min-height: 44px; }
+body.cl-c.cl-stack .mn-tools > .cl-listbtn { min-width: 44px; padding: 2px 3px 2px 14px; }
+body.cl-c.cl-stack .hl-tltools > .cl-listbtn { min-width: 0; padding: 2px 6px; background: transparent; }
+body.cl-c.cl-stack .hl-tltools > .cl-listbtn.on { background: #202326; }
+body.cl-c.cl-stack .mn-tools > .cl-listbtn.on { background: #202326; }
+/* the docked Notes panel: no header (the Notes tab says it; its ✕ closed the studio's panel, an empty dock) and no
+   "Saved in this browser" footer; a shorter writing box */
+body.cl-c.cl-stack:not(.rv-mode-edit) .mn-panel .mi-selected { display: none; }
+body.cl-c.cl-stack:not(.rv-mode-edit) .mn-storage { display: none; }
+body.cl-c.cl-stack .mn-note-text { min-height: 64px; height: 64px; }
+/* a note's picture still being made: a quiet pulse in its box, not an empty frame */
+body.cl-c .mn-shot-view:has(img[src=""]), body.cl-c .mn-shot-view:has(img:not([src])) { position: relative; }
+body.cl-c .mn-shot-view:has(img[src=""])::after, body.cl-c .mn-shot-view:has(img:not([src]))::after { content: ''; position: absolute; inset: 0; background: #202326; animation: cl-pulse 1.1s ease-in-out infinite alternate; }
+@keyframes cl-pulse { from { opacity: .35; } to { opacity: .9; } }
+/* a picture layer's Picture: a button that opens the file picker (the studio showed an empty text box for it) */
+.cl-pic { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid #2c3032; border-radius: 8px; background: #1b1e1f; color: #edf1ee; font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
+.cl-pic:hover { background: #222628; }
+
+/* the preview framed like the editor's player (videoEditor.css .ve-player-frame: 1 px #333) — drawn inside the frame's
+   own border (the GPU canvas covers anything drawn over or around it) */
+body.cl-c:not(.original) #app .glm-frame { border: 1px solid #333; box-sizing: border-box; }
+/* the inspector: its header and section titles lower, a text field as tall as its text */
+body.cl-c .lab-inspector .mi-selected { height: 40px; min-height: 0; }
+body.cl-c .lab-inspector .mi-heading { padding-top: 3px; padding-bottom: 3px; min-height: 0; }
+body.cl-c .lab-inspector textarea.mi-text { field-sizing: content; min-height: 30px; max-height: 98px; resize: none; }
+
+/* Highlights, in every layout: a highlight's tag on the strip, hovered, white with a dark number; the one being edited
+   its tint only, no ring, its note box the plain border */
+body .hl-hc-tag:hover { background: #edf1ee; color: #0f1115; }
+body .hl-it.hl-edit { box-shadow: none; }
+body .hl-panel[data-mode=edit] .hl-note { border-color: #303633; }
+body .hl-panel[data-mode=edit] .hl-note:focus { border-color: #33efab80; }
+
+/* the Stacked version's timeline: the studio's own toolbar on top of it (an icon over its name), Properties · Layers
+   first (chat.js), the names column with the layers' names (600 px and wider their eye and bin too); a sheet slides over
+   the rows under the toolbar, which stays */
+body.cl-c.cl-a.cl-stack { --cl-toolsh: 0px; --cl-names: 104px; --cl-trans: 56px; --cl-up-min: 300px; }   /* the play row 10 px from the picture and the timeline */
+body.cl-c.cl-a.cl-stack.cl-asphone { --cl-names: 168px; }   /* a name, its eye and bin */
+body.cl-c.cl-stack:not(.original) #app .glm-tlwrap { padding: 48px 8px 0 var(--cl-names); }
+/* the toolbar the strip's whole width, a hairline under it */
+body.cl-c.cl-stack .rv-edit-toolbar { display: flex; position: absolute; top: 0; left: 0; right: auto; width: var(--cl-tlvw, 100%); height: 47px; box-sizing: border-box;
+  padding: 4px 6px; gap: 4px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; z-index: 5; border-bottom: 1px solid #202325; }
+body.cl-c.cl-stack .rv-edit-toolbar::-webkit-scrollbar { display: none; }
+body.cl-c.cl-stack .rv-edit-toolbar .rv-act { flex: none; }
+body.cl-c.cl-stack .lab-track-labels { width: calc(var(--cl-names) - 4px); display: flex; flex-direction: column;
+  padding-right: 4px; box-sizing: border-box; border-right: 1px solid #202325; box-shadow: -4px 0 #111; }
+.cl-track-head { display: none; }
+body.cl-c.cl-stack.rv-mode-edit .cl-track-head { display: flex; align-items: center; position: absolute; top: 48px; left: 0;   /* on the ruler's row (the toolbar is 47 px + its hairline) */
+  height: 20px; width: var(--cl-names); padding: 0 12px; box-sizing: border-box; z-index: 4; background: #111;
+  border-right: 1px solid #202325; color: #8f9793; font-size: 10px; }
+body.cl-c.cl-stack .lab-track-label .rv-gl-name { display: block; }
+body.cl-c.cl-stack.cl-asphone .lab-track-label .rv-gl-btn { display: grid; }
+/* the sheet: the timeline card's lower part, flush inside its edges, from the toolbar's hairline down; Done at the right
+   end of its head row; its head and rows on the 12 px gutter */
+body.cl-c.cl-stack.rv-mode-edit.cl-open:not(.original) #app .glm-side, body.cl-c.cl-stack.rv-mode-edit.cl-open[data-cl-tab=side]:not(.original) .lab-side {
+  margin: 48px 1px 1px; border: 0; border-radius: 0 0 9px 9px; background: #151718; box-shadow: none; }
+body.cl-c.cl-stack.rv-mode-edit.cl-open .cl-done { margin: 54px 8px 0 0; width: 76px; height: 32px; justify-content: center; padding: 0; border-radius: 8px; background: #22272a; font: 600 12px system-ui, -apple-system, sans-serif; }
+body.cl-c.cl-stack.rv-mode-edit.cl-open .cl-done:hover { background: #2a2f32; }
+body.cl-c.cl-stack.rv-mode-edit.cl-open .lab-inspector .mi-selected, body.cl-c.cl-stack.rv-mode-edit.cl-open .lab-pane-head,
+body.cl-c.cl-stack.rv-mode-edit.cl-open .glm-deliver .glm-dhead { padding-right: 96px; }   /* room for Done (Render's pane comes up in the sheet too) */
+body.cl-c.cl-stack .lab-pane-head { height: 44px; padding-left: 12px; box-sizing: border-box; }
+/* the inspector on the 12 px gutter */
+body.cl-c.cl-stack .lab-inspector .mi-selected { height: 44px; min-height: 0; padding-left: 12px; gap: 10px; box-sizing: border-box; }
+body.cl-c.cl-stack .mi-selected-icon { width: 18px; height: 18px; }
+body.cl-c.cl-stack .lab-inspector .mi-heading { min-height: 36px; padding: 0 12px; gap: 10px; }
+body.cl-c.cl-stack .lab-inspector .mi-heading > span { width: 18px; height: 18px; }
+body.cl-c.cl-stack .lab-inspector .mi-body { padding: 0 12px 12px; }
+body.cl-c.cl-stack .lab-inspector .mi-footer { display: flex; align-items: center; height: 44px; padding: 0 12px; box-sizing: border-box; }
+
+/* the play row: the time at the left, ‹ ● › in the middle, Loop at the right end */
+body.cl-c.cl-stack:not(.original) #app .glm-transport { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport > * { grid-row: 1; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-time { grid-column: 1; justify-self: start; margin-left: 4px; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-tgroup:first-child { grid-column: 2; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-tgroup:last-child { grid-column: 3; justify-self: end; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-now { display: none; }
+/* the duration readable without running into Previous on a narrow phone */
+@media (max-width: 400px) {
+  body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-time { flex-direction: column; align-items: flex-start; gap: 0; line-height: 13px; }
+  body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-time > span { font-size: 10px; }
+}
+
+/* the timeline's top edge is a handle: drag it up for a higher timeline, down for a bigger picture (kept per shape,
+   chat.js); Notes and Highlight: it sizes their docked panel */
+body.cl-c.cl-stack .cl-split { grid-area: tl; align-self: start; justify-self: center; display: grid; place-items: center; width: 96px; height: 16px; margin-top: -8px;
+  z-index: 9; cursor: row-resize; touch-action: none; }
+body.cl-c.cl-stack .cl-split::before { width: 36px; height: 4px; }
+body.cl-c.cl-a.cl-stack.rv-mode-edit.cl-tlset:not(.original) { grid-template-rows: auto minmax(0, 1fr) var(--cl-trans) var(--cl-tl) var(--cl-toolsh); }
+body.cl-c.cl-a.cl-stack:not(.rv-mode-edit).cl-open.cl-dockset:not(.original) { grid-template-rows: auto minmax(0, 1fr) var(--cl-trans) var(--cl-strip, 120px) var(--cl-dock); }
+
+/* Notes: the strip's clip square; ✓ (the drawing into the note) at the right end of the tools' row; a note's pictures
+   as wide as the picture (96 px at least), the label never widening a tile */
+body.cl-c.cl-stack.cl-nostrip .hl-srcclip { border-radius: 0; }
+body.cl-c.cl-stack .mn-tools > .mn-accept { margin-left: auto; }
+body.cl-c.cl-stack .mn-tray { display: flex; flex-wrap: wrap; gap: 6px; }
+body.cl-c.cl-stack .mn-shot { flex: none; width: auto; min-width: 96px; max-width: 100%; }
+body.cl-c.cl-stack .mn-shot-view :is(img, canvas) { display: block; width: auto; max-width: 100%; height: 69px; margin: 0 auto; }
+body.cl-c.cl-stack .mn-shot-view > span { width: 0; min-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; }
+body.cl-c.cl-stack .mn-saved-shot { flex: none; width: auto; min-width: 72px; }
+body.cl-c.cl-stack .mn-saved-shot img { width: auto; max-width: 100%; height: 48px; margin: 0 auto; }
+body.cl-c.cl-stack .mn-saved-shot small { width: 0; min-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; padding: 3px 4px; }
+/* the timeline's names on their rows' centre line: as tall as a row, the rows' 3 px gap under it */
+body.cl-c.cl-stack:not(.original) .lab-track-label { height: 32px; margin-bottom: 3px; }
+/* Notes and Highlight's lane: the clip the lane's whole height, level with its label cell */
+body.cl-c.cl-stack.cl-nostrip .hl-srcclip { top: 0; bottom: 0; }
+
+/* the Edit timeline's lanes scroll on their own (chat.js lanes()): the timeline itself doesn't, so its toolbar, its
+   names column and their head stay put */
+body.cl-c.cl-stack:not(.original) #app .glm-tlwrap { overflow: hidden; }
+body.cl-c.cl-stack .cl-lanes { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior: none; }
+body.cl-c.cl-stack .cl-lanes::-webkit-scrollbar { display: none; }
+/* Notes and Highlight's strip: a grid one timeline wide — its toolbar's box spans the whole scroll, so the toolbar stays
+   put to its end */
+body.cl-c.cl-stack:is(.rv-mode-notes, .rv-mode-highlight) .hl-tl { display: grid; grid-template-columns: var(--cl-hlw, 100%); grid-auto-rows: max-content; align-content: start; }
+/* the strip's list button as tall as its tools */
+body.cl-c.cl-stack .cl-listbtn { min-height: 34px; }
+
+/* Highlights: the range's buttons on ONE row — ▶ and ✕ as 32 px icons, then the main one (Add highlight, or Done) the
+   rest of the row; 600 px and wider their words, the main one at its natural width at the right end */
+body.cl-c.cl-a.cl-stack .hl-acts { flex-wrap: nowrap; gap: 6px; padding-top: 12px; }
+body.cl-c.cl-a.cl-stack .hl-acts .hl-grow { display: none; }
+body.cl-c.cl-a.cl-stack .hl-acts :is(.hl-cta, .hl-prim) { height: 32px; border-radius: 8px; }
+body.cl-c.cl-a.cl-stack .hl-acts .hl-cta:is([data-a=playr], [data-a=clear]) { flex: none; width: 32px; padding: 0; gap: 0; font-size: 0; }
+body.cl-c.cl-a.cl-stack .hl-acts .hl-cta[data-a=playr] .hl-cta-l { display: none; }
+body.cl-c.cl-a.cl-stack .hl-acts .hl-cta[data-a=clear]::before { content: ''; width: 14px; height: 14px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 6 12 12M18 6 6 18'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 6 12 12M18 6 6 18'/%3E%3C/svg%3E") center / contain no-repeat; }
+body.cl-c.cl-a.cl-stack .hl-acts .hl-prim { flex: 1 1 0; min-width: 0; justify-content: center; }
+body.cl-c.cl-a.cl-stack .hl-acts .hl-cta[data-a=cancel] { flex: none; }
+
+/* the play controls as in the app's web mobile editor (videoEditorMobile.js): 34 px icons in the editor's grey, Play a
+   36 px white disc with a dark icon, Loop with them */
+body.cl-c.cl-stack:not(.original) #app .glm-transport { justify-content: flex-start; gap: 2px; padding: 0 8px; align-items: center; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-tgroup { gap: 2px; align-items: center; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-icon { width: 34px; min-width: 34px; height: 34px; min-height: 0; padding: 0; border-radius: 9px; justify-content: center; color: #9a9aa4; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-icon:hover { background: #2b2e32; color: #ededf0; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-icon svg { width: 15px; height: 15px; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-icon[aria-pressed=true] { color: #33efab; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-play { width: 36px; min-width: 36px; height: 36px; min-height: 0; margin: 0 2px; padding: 0; border-radius: 50%; justify-content: center; background: #e9e9ec; color: #0a0b0c; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-play:hover { background: #fff; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-play svg { width: 13px; height: 13px; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-time { order: 3; margin-left: 4px; padding: 0 6px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-time b { font-size: 11.5px; font-weight: 600; color: #ededf0; }
+
+/* 600–900 px (a computer's chat, an iPad): a wide film's preview at most half the box (36 % in Notes · Highlight, where
+   the docked panel needs the room) */
+body.cl-c.cl-a.cl-stack.cl-wide.cl-asphone { grid-template-rows: auto minmax(0, min(calc((100vw - 2 * var(--cl-gap)) / var(--cl-ar, 1.7778)), 50%)) var(--cl-trans) minmax(0, 1fr) var(--cl-toolsh); }
+body.cl-c.cl-a.cl-stack.cl-wide.cl-asphone:not(.rv-mode-edit) { grid-template-rows: auto minmax(0, min(calc((100vw - 2 * var(--cl-gap)) / var(--cl-ar, 1.7778)), 36%)) var(--cl-trans) var(--cl-strip, 120px) minmax(0, 1fr); }
+body.cl-c.cl-a.cl-stack:not(.original) #app .glm-transport { padding: 0 2px; }
+body.cl-c.cl-a.cl-stack:not(.original) #app .glm-transport .glm-icon[aria-pressed] span { display: none; }
+body.cl-c.cl-stack.cl-asphone .hl-acts .hl-cta:is([data-a=playr], [data-a=clear]) { width: auto; padding: 0 12px 0 10px; gap: 6px; font-size: 11.5px; }
+body.cl-c.cl-stack.cl-asphone .hl-acts .hl-cta[data-a=playr] .hl-cta-l { display: inline; }
+body.cl-c.cl-stack.cl-asphone .hl-acts .hl-prim { flex: none; margin-left: auto; padding: 0 12px; }
+/* editing a highlight: Cancel and Done together at the right end */
+body.cl-c.cl-stack.cl-asphone .hl-panel[data-mode=edit] .hl-acts .hl-cta[data-a=cancel] { margin-left: auto; }
+body.cl-c.cl-stack.cl-asphone .hl-panel[data-mode=edit] .hl-acts .hl-prim { margin-left: 0; }
+
+/* several sources (a review card's versions): Notes and Highlight's strip shows the one on screen — Sources beside the
+   list on its toolbar (chat.js), its sheet docked under the strip like the panel */
+body.cl-c.cl-stack .cl-srcbtn { margin-left: auto; right: var(--cl-listw, 0px); }
+body.cl-c.cl-stack .cl-srcbtn + .cl-listbtn { margin-left: 0; }
+body.cl-c.cl-stack.cl-wide:not(.rv-mode-edit) .cl-listbtn.cl-srcbtn { display: inline-flex; }
+body.cl-c.cl-stack:not(.rv-mode-edit)[data-cl-tab=side]:not(.original) .lab-side { grid-area: dock; margin-top: var(--cl-gap); border-top: 1px solid var(--lab-line); border-radius: 10px; }
+/* the Sources sheet: a version a row — its poster beside its name, its key at the end (the studio wraps them for its
+   narrow rail, under 1150 px) */
+body.cl-c.cl-stack .rv-src { flex-wrap: nowrap; gap: 10px; padding: 7px 8px 7px 6px; }
+body.cl-c.cl-stack .rv-src-po { max-width: 64px; }
+body.cl-c.cl-stack .rv-src-tx { flex-basis: auto; }
+body.cl-c.cl-stack .rv-src-tx small { display: block; }
+body.cl-c.cl-stack .rv-src .rv-kbd { display: inline-flex; }

@@ -228,7 +228,8 @@ export function install(STUDIO) {
     if(timeline&&!timeline.querySelector('.lab-track-labels')){
       const labels=document.createElement('div');labels.className='lab-track-labels';
       timeline.append(labels);gutterSig='';
-      $('.glm-rows').addEventListener('scroll',e=>labels.style.transform=`translateY(-${e.target.scrollTop}px)`);
+      // the names follow the rows; cut off what moved up past the rows' top, or they would slide over the toolbar and the ruler
+      $('.glm-rows').addEventListener('scroll',e=>{const y=e.target.scrollTop;labels.style.transform=`translateY(-${y}px)`;labels.style.clipPath=y?`inset(${y}px 0 0 0)`:'';});
     }
     renderGutter(layers);
     if(!editBar||!editBar.isConnected||editBar.dataset.sel!==String(api().selected())+'|'+selMarker){renderActs();editBar.dataset.sel=String(api().selected())+'|'+selMarker;}

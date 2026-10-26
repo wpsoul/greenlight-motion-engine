@@ -147,7 +147,7 @@ background: none;
 }
 
 .ve-media-sidebar .media-item.selected {
-  border-color: #7761f0;
+  border-color: #edf1ee;
 }
 
 .ve-media-sidebar .media-item-board-label {
@@ -689,6 +689,9 @@ background: none;
 
 .ve-render-menu-item.active .ve-render-menu-title { color: var(--accent); }
 
+/* before "Export for agents" — it saves the project, it does not render it */
+.ve-render-menu-sep { height: 1px; margin: 4px 6px; background: var(--border-toolbar); }
+
 /* Time-range inputs (seconds) shown under the "Time range" menu item */
 .ve-render-range {
   display: flex; align-items: center; gap: 6px;
@@ -715,7 +718,7 @@ background: none;
   position: relative;
   width: 120px;
   height: 28px;
-  background: #1a1a2e;
+  background: rgb(36, 36, 36);
   border-radius: 6px;
   border: 1px solid #333;
   overflow: hidden;
@@ -1208,12 +1211,12 @@ background: none;
 .ve-force-emitter-overlay .hnd { pointer-events: all; cursor: grab; }
 .ve-force-emitter-overlay .hnd:active { cursor: grabbing; }
 .ve-force-emitter-overlay .ve-fe-handle { fill: rgba(20, 22, 24, 0.85); stroke: #62e2a6; }
-.ve-force-emitter-overlay .ve-fe-vortex .ve-fe-handle { stroke: #c79bff; }
+.ve-force-emitter-overlay .ve-fe-vortex .ve-fe-handle { stroke: #edf1ee; }
 .ve-force-emitter-overlay .ve-fe-radius { fill: rgba(98, 226, 166, 0.05); stroke: rgba(98, 226, 166, 0.55); }
-.ve-force-emitter-overlay .ve-fe-vortex .ve-fe-radius { fill: rgba(199, 155, 255, 0.05); stroke: rgba(199, 155, 255, 0.55); }
+.ve-force-emitter-overlay .ve-fe-vortex .ve-fe-radius { fill: rgba(237, 241, 238, 0.05); stroke: rgba(237, 241, 238, 0.55); }
 .ve-force-emitter-overlay .ve-fe-motion { fill: none; stroke: rgba(255, 255, 255, 0.35); }
 .ve-force-emitter-overlay .ve-fe-arrow { stroke: #62e2a6; stroke-linecap: round; stroke-linejoin: round; }
-.ve-force-emitter-overlay .ve-fe-spin { stroke: #c79bff; stroke-linecap: round; }
+.ve-force-emitter-overlay .ve-fe-spin { stroke: #edf1ee; stroke-linecap: round; }
 .ve-force-emitter-overlay .ve-fe-smoke .ve-fe-handle { stroke: #9fd8ff; }
 .ve-force-emitter-overlay .ve-fe-smoke .ve-fe-radius { fill: rgba(159, 216, 255, 0.07); stroke: rgba(159, 216, 255, 0.55); }
 .ve-force-emitter-overlay .ve-fe-puff { stroke: #9fd8ff; stroke-linecap: round; }
@@ -1557,7 +1560,7 @@ background: none;
   cursor: pointer;
 }
 .ve-mask-smooth-btn:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.09); }
-.ve-mask-smooth-btn.on { color: #c4b5fd; border-color: rgb(167 139 250 / 45%); background: rgb(167 139 250 / 16%); }
+.ve-mask-smooth-btn.on { color: #edf1ee; border-color: rgba(237, 241, 238, 0.45); background: rgba(237, 241, 238, 0.16); }
 .ve-mask-smooth-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Layer Mask canvas editor — same overlay contract as the point editors above.
@@ -1721,12 +1724,12 @@ background: none;
 .ve-mask-overlay.is-correction .ve-path-group-rot { fill: #f0bd78; stroke: #5f4022; }
 .ve-mask-overlay.is-correction .ve-path-group-rot-stem { stroke: rgba(240, 189, 120, 0.55); }
 
-.ve-object-path-curve { stroke: #a78bfa; pointer-events: none; }
+.ve-object-path-curve { stroke: #edf1ee; pointer-events: none; }
 .ve-object-motion-path-overlay .ve-path-anchor,
 .ve-object-motion-path-overlay .ve-path-tangent,
 .ve-object-motion-path-overlay .ve-object-path-axis,
 .ve-object-motion-path-overlay .ve-object-path-axis-tip { pointer-events: all; }
-.ve-object-motion-path-overlay .ve-path-anchor { stroke: #a78bfa; }
+.ve-object-motion-path-overlay .ve-path-anchor { stroke: #edf1ee; }
 .ve-object-path-axis { stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; }
 .ve-object-path-axis.x { stroke: #ff6b78; }
 .ve-object-path-axis.y { stroke: #36d399; }
@@ -1809,11 +1812,11 @@ background: none;
 .ve-mp-preset-card.selected .ve-mp-preset-name { color: #ededf0; }
 
 .ve-preview-frame-hit { fill: transparent; pointer-events: fill; }
-.ve-preview-selection-hit { fill: rgba(139, 92, 246, 0.025); cursor: move; pointer-events: fill; }
-.ve-preview-selection-box { fill: none; stroke: #a78bfa; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
-.ve-preview-transform-handle { fill: #fff; stroke: #7761f0; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: nwse-resize; pointer-events: all; }
-.ve-preview-rotation-stem { stroke: #a78bfa; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
-.ve-preview-rotation-handle { fill: #fff; stroke: #7761f0; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; pointer-events: all; }
+.ve-preview-selection-hit { fill: rgba(237, 241, 238, 0.025); cursor: move; pointer-events: fill; }
+.ve-preview-selection-box { fill: none; stroke: #edf1ee; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.ve-preview-transform-handle { fill: #fff; stroke: #edf1ee; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: nwse-resize; pointer-events: all; }
+.ve-preview-rotation-stem { stroke: #edf1ee; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.ve-preview-rotation-handle { fill: #fff; stroke: #edf1ee; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; pointer-events: all; }
 .ve-preview-snap-guide { stroke: #ff3bbd; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 
 /* Inline text editing (double-click a text layer in the preview). The
@@ -1833,14 +1836,14 @@ background: none;
   background: transparent;
   resize: none;
   overflow: hidden;
-  outline: 1px dashed rgba(167, 139, 250, 0.6);
+  outline: 1px dashed rgba(237, 241, 238, 0.6);
   outline-offset: 6px;
   pointer-events: auto;
   user-select: text;
   -webkit-user-select: text;
   overflow-wrap: break-word;
 }
-.ve-inline-text-edit::selection { background: rgba(139, 92, 246, 0.35); }
+.ve-inline-text-edit::selection { background: rgba(237, 241, 238, 0.35); }
 .ve-inline-text-edit::placeholder { color: inherit; opacity: 0.4; }
 
 /* Shape path Edit mode. Every stroke here is non-scaling, so its width is already
@@ -1853,19 +1856,19 @@ background: none;
 /* Every member of the selection reads as chosen; the primary — the one the side
    panel's coordinate fields address, and the only one that shows tangents — is a
    shade stronger. `.primary` follows `.selected` so it wins on the same anchor. */
-.ve-path-anchor.selected { fill: #a78bfa; stroke: #fff; }
-.ve-path-anchor.primary { fill: #8b5cf6; stroke: #fff; }
+.ve-path-anchor.selected { fill: #edf1ee; stroke: #fff; }
+.ve-path-anchor.primary { fill: #edf1ee; stroke: #fff; }
 .ve-path-tangent { fill: #22d3ee; stroke: #0b1220; stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: grab; pointer-events: all; }
 
 /* Multi-anchor selection: the rubber band that picks it, and the box that moves,
    scales and rotates it. Purple, like the layer gizmo, so the two read as the
    same tool applied at a different scale — the amber above stays the path itself. */
-.ve-path-marquee { fill: rgba(124, 58, 237, 0.18); stroke: #8b5cf6; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
-.ve-path-group-hit { fill: rgba(139, 92, 246, 0.04); cursor: move; pointer-events: fill; }
-.ve-path-group-box { fill: none; stroke: #8b5cf6; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; pointer-events: none; }
-.ve-path-group-handle { fill: #fff; stroke: #7761f0; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: all; }
-.ve-path-group-rot-stem { stroke: #a78bfa; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
-.ve-path-group-rot { fill: #fff; stroke: #7761f0; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; pointer-events: all; }
+.ve-path-marquee { fill: rgba(237, 241, 238, 0.18); stroke: #edf1ee; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.ve-path-group-hit { fill: rgba(237, 241, 238, 0.04); cursor: move; pointer-events: fill; }
+.ve-path-group-box { fill: none; stroke: #edf1ee; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.ve-path-group-handle { fill: #fff; stroke: #edf1ee; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: all; }
+.ve-path-group-rot-stem { stroke: #edf1ee; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.ve-path-group-rot { fill: #fff; stroke: #edf1ee; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; pointer-events: all; }
 
 /* Point pick — armed by a PointField, served by PointPickOverlay. It sits above
    the transform gizmo on purpose: while a pick is armed the click belongs to the
@@ -1983,8 +1986,8 @@ background: none;
 .ve-dof-focus-area {
   position: absolute;
   border-radius: 999px;
-  border: 1px dashed rgba(199, 173, 255, 0.55);
-  background: radial-gradient(closest-side, rgba(124, 58, 237, 0.16), rgba(124, 58, 237, 0) 70%);
+  border: 1px dashed rgba(237, 241, 238, 0.55);
+  background: radial-gradient(closest-side, rgba(237, 241, 238, 0.16), rgba(237, 241, 238, 0) 70%);
   transform: translate(-50%, -50%);
   pointer-events: none;
   z-index: 4;
@@ -1995,10 +1998,10 @@ background: none;
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  border: 2px solid rgba(199, 173, 255, 0.95);
-  background: rgba(124, 58, 237, 0.2);
+  border: 2px solid rgba(237, 241, 238, 0.95);
+  background: rgba(237, 241, 238, 0.2);
   transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+  box-shadow: 0 0 0 2px rgba(237, 241, 238, 0.25);
   pointer-events: auto;
   cursor: crosshair;
   z-index: 5;
@@ -2351,7 +2354,7 @@ background: none;
   cursor: pointer;
 }
 
-.ve-cam-path-check input { accent-color: #8b5cf6; cursor: pointer; }
+.ve-cam-path-check input { accent-color: #edf1ee; cursor: pointer; }
 .ve-cam-path-check:has(input:disabled) { opacity: 0.4; cursor: default; }
 
 /* The selected point's block closes the section, so it carries its own bottom
@@ -2488,8 +2491,8 @@ background: none;
   min-height: 32px;
   margin-top: 9px;
   border-radius: 7px;
-  background: rgba(139, 92, 246, 0.09);
-  color: #c5b5f7;
+  background: rgba(237, 241, 238, 0.09);
+  color: #edf1ee;
   font-size: 11px;
 }
 
@@ -3067,9 +3070,9 @@ body.gl-tablet .ve-tl-ripple-btn {
 }
 
 .ve-channel-label-active {
-  background: #1a1a2e;
-  color: #a78bfa;
-  border-left: 2px solid #8b5cf6;
+  background: rgb(36, 36, 36);
+  color: #edf1ee;
+  border-left: 2px solid #edf1ee;
   padding-left: 6px;
 }
 
@@ -3104,9 +3107,9 @@ body.gl-tablet .ve-tl-ripple-btn {
   right: 5px;
   height: 2px;
   z-index: 3;
-  background: #8b5cf6;
+  background: #edf1ee;
   border-radius: 2px;
-  box-shadow: 0 0 6px rgba(139, 92, 246, 0.8);
+  box-shadow: 0 0 6px rgba(237, 241, 238, 0.8);
 }
 
 .ve-channel-label-drop-before::before { top: -1px; }
@@ -3140,12 +3143,14 @@ body.gl-tablet .ve-tl-ripple-btn {
   color: #333;
 }
 
+/* a track's snapping turned off: on, but calm — above the plain icons (#555), below the active track's name (#edf1ee);
+   it was the brightest thing in the column on every unsnapped track */
 .ve-channel-btn-active {
-  color: #a78bfa;
+  color: #8b928f;
 }
 .ve-channel-btn-active:hover {
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.15);
+  color: #c9cfcc;
+  background: rgba(237, 241, 238, 0.15);
 }
 
 .ve-channel-btn-delete {
@@ -3171,7 +3176,7 @@ body.gl-tablet .ve-tl-ripple-btn {
   position: relative;
 }
 
-/* Full-height playhead overlay: a violet line spanning the ruler + every track
+/* Full-height playhead overlay: a white line spanning the ruler + every track
    with a downward arrow at the top. Sits above both the ruler and the scroll. */
 .ve-playhead-overlay {
   position: absolute;
@@ -3190,15 +3195,14 @@ body.gl-tablet .ve-tl-ripple-btn {
   bottom: 0;
   left: 0;
   width: 1px;
-  background: #7761f0;
-  box-shadow: 0 0 8px rgba(124, 58, 237, 0.5);
+  background: #edf1ee;
 }
 .ve-playhead-overlay-head {
   position: absolute;
   top: 15px;
   left: -4px;
-  width: 8px;
-  height: 6px;
+  width: 9px;
+  height: 11px;
   display: flex;
   justify-content: center;
   pointer-events: auto;
@@ -3265,7 +3269,7 @@ body.gl-tablet .ve-tl-ripple-btn {
   background: #141416;
   cursor: pointer;
 }
-.ve-range-strip button.is-hot { box-shadow: inset 0 0 0 1.5px #7761f0; }
+.ve-range-strip button.is-hot { box-shadow: inset 0 0 0 1.5px #edf1ee; }
 .ve-range-strip button.is-loading {
   cursor: default;
   background: linear-gradient(90deg, #1a1a1e 0%, #34343c 45%, #1a1a1e 100%);
@@ -3926,7 +3930,7 @@ body.gl-tablet .ve-tl-ripple-btn {
 }
 
 .ve-track-row-active {
-  background: #12121e;
+  background: rgb(24, 24, 24);
 }
 
 .ve-track-row-hidden {
@@ -4004,17 +4008,18 @@ body.gl-tablet .ve-tl-ripple-btn {
 }
 
 .ve-playhead-triangle {
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 6px solid #7761f0;
+  /* a small white head, square at the top, pointed at the line (GreenLight Motion's .glm-head) */
+  width: 9px;
+  height: 11px;
+  border-radius: 3px 3px 0 0;
+  background: #edf1ee;
+  clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%);
 }
 
 .ve-playhead-line {
   width: 1px;
   height: 100%;
-  background: #7761f0;
+  background: #edf1ee;
 }
 
 /* Custom model file row: name + Choose, with no preview thumbnail — a .glb has no
@@ -4070,8 +4075,8 @@ body.gl-tablet .ve-tl-ripple-btn {
   justify-content: center;
   opacity: 0.75;
   overflow: hidden;
-  color: #c4b5fd;
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.22), rgba(139, 92, 246, 0.06));
+  color: #edf1ee;
+  background: linear-gradient(135deg, rgba(237, 241, 238, 0.22), rgba(237, 241, 238, 0.06));
 }
 
 /* The Scene Rig clip: lamp glyph + name, on the camera row's warm palette (the rig
@@ -4386,13 +4391,13 @@ body.gl-tablet .ve-tl-ripple-btn {
 }
 
 .ve-clip-selected {
-  box-shadow: 0 0 0 2px #6050b8 !important;
+  box-shadow: 0 0 0 2px #edf1ee !important;
   z-index: 30 !important;
 }
 
 /* Group multi-selection (Shift+click / Shift+marquee on unsnapped channels) */
 .ve-clip-grouped {
-  box-shadow: 0 0 0 2px #7761f0 !important;
+  box-shadow: 0 0 0 2px #edf1ee !important;
   z-index: 29 !important;
 }
 
@@ -4406,7 +4411,7 @@ body.gl-tablet .ve-tl-ripple-btn {
      Chromium can end the drag without dispatching `drop` (most often when the
      middle clip in a three-layer chain is the source). */
   pointer-events: none;
-  box-shadow: 0 0 0 2px #a78bfa, 0 7px 18px rgba(0, 0, 0, 0.42) !important;
+  box-shadow: 0 0 0 2px #edf1ee, 0 7px 18px rgba(0, 0, 0, 0.42) !important;
 }
 
 /* During a ripple move the layers after the dragged clip ride along live. Like
@@ -4421,8 +4426,8 @@ body.gl-tablet .ve-tl-ripple-btn {
 /* Shift+drag marquee rectangle over the tracks */
 .ve-timeline-marquee {
   position: absolute;
-  border: 1px solid #8b5cf6;
-  background: rgba(124, 58, 237, 0.18);
+  border: 1px solid #edf1ee;
+  background: rgba(237, 241, 238, 0.18);
   border-radius: 2px;
   pointer-events: none;
   z-index: 60;
@@ -4510,8 +4515,7 @@ body.gl-tablet .ve-tl-ripple-btn {
 
 .ve-clip-name {
   font-size: 10.5px;
-  font-weight: 600;
-  color: #e5e5e5;
+  color: #e5e5e5d9;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4573,8 +4577,8 @@ body.gl-tablet .ve-tl-ripple-btn {
   right: 0;
   height: 1px;
   transform: translateY(-50%);
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.8), rgba(124, 58, 237, 0.85));
-  box-shadow: 0 0 6px rgba(139, 92, 246, 0.4);
+  background: rgba(237, 241, 238, 0.32);
+  box-shadow: none;
 }
 
 .ve-clip-kf-marker {
@@ -4583,16 +4587,16 @@ body.gl-tablet .ve-tl-ripple-btn {
   width: 6px;
   height: 6px;
   border-radius: 1px;
-  background: #c4b5fd;
-  box-shadow: 0 0 0 1px rgba(76, 29, 149, 0.45);
+  background: #74ceae;   /* a keyframe on a clip: teal (the owner's pick) */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
   transform: translate(-50%, -50%) rotate(45deg);
   pointer-events: auto; /* overlay is pointer-events:none; markers stay grabbable */
   cursor: grab;
 }
 
 .ve-clip-kf-marker:hover {
-  background: #ede9fe;
-  box-shadow: 0 0 0 1px #8b5cf6, 0 0 6px rgba(139, 92, 246, 0.6);
+  background: #edf1ee;
+  box-shadow: 0 0 0 1px #edf1ee, 0 0 6px rgba(237, 241, 238, 0.6);
 }
 
 /* Recording insights: chapter tick marks along the bottom edge of a clip */
@@ -4632,7 +4636,7 @@ body.gl-tablet .ve-tl-ripple-btn {
   padding: 0 4px;
   border: 0;
   background: none;
-  color: #c4b5fd;
+  color: #edf1ee;
   font-size: 9px;
   line-height: 1.3;
   letter-spacing: 0.02em;
@@ -4642,8 +4646,8 @@ body.gl-tablet .ve-tl-ripple-btn {
 }
 
 .ve-clip-kf-prop-pill:hover {
-  color: #ede9fe;
-  background: rgba(139, 92, 246, 0.22);
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.22);
 }
 
 /* Same diamond as the keys on the rail, so the pill names what those markers are. */
@@ -4668,14 +4672,14 @@ body.gl-tablet .ve-tl-ripple-btn {
 }
 
 .ve-clip-kf-prop-menu-active {
-  color: #c4b5fd;
+  color: #edf1ee;
 }
 
 .ve-clip-kf-marker-active {
   background: #fff;
   width: 8px;
   height: 8px;
-  box-shadow: 0 0 0 1.5px #8b5cf6, 0 0 8px rgba(139, 92, 246, 0.8);
+  box-shadow: 0 0 0 1.5px #edf1ee, 0 0 8px rgba(237, 241, 238, 0.8);
 }
 
 .ve-clip-duration {
@@ -4689,13 +4693,13 @@ body.gl-tablet .ve-tl-ripple-btn {
 
 .ve-clip-speed {
   font-size: 9px;
-  color: #a78bfa;
+  color: #edf1ee;
   font-weight: 700;
   font-family: monospace;
-  background: rgba(139, 92, 246, 0.2);
+  background: rgba(237, 241, 238, 0.2);
   padding: 0 4px;
   border-radius: 2px;
-  border: 1px solid rgba(139, 92, 246, 0.4);
+  border: 1px solid rgba(237, 241, 238, 0.4);
 }
 
 .ve-clip-proxy-badge {
@@ -4754,9 +4758,9 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  border: 1px solid rgba(139, 92, 246, 0.6);
+  border: 1px solid rgba(237, 241, 238, 0.6);
   background: rgba(20, 20, 26, 0.85);
-  color: #c4b5fd;
+  color: #edf1ee;
   cursor: pointer;
   z-index: 25;
   padding: 0;
@@ -4765,9 +4769,9 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-clip-regenerate-btn:hover {
-  background: rgba(139, 92, 246, 0.35);
-  border-color: rgba(167, 139, 250, 0.9);
-  color: #f3ecff;
+  background: rgba(237, 241, 238, 0.35);
+  border-color: rgba(237, 241, 238, 0.9);
+  color: #edf1ee;
 }
 
 /* Clip Resize Handles */
@@ -4819,7 +4823,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-timeline-clip.ve-clip-selected .ve-clip-handle-bar {
-  background: #a78bfa;
+  background: #edf1ee;
 }
 
 .ve-clip-handle:hover .ve-clip-handle-bar {
@@ -4827,7 +4831,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-timeline-clip.ve-clip-selected .ve-clip-handle:hover .ve-clip-handle-bar {
-  background: #c4b5fd;
+  background: #edf1ee;
 }
 
 /* Transition Marker — anchored to the CLIP band (top 2px), so the overlap
@@ -4882,10 +4886,10 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   position: absolute;
   top: 0;
   height: 32px;
-  background: rgba(139, 92, 246, 0.08);
+  background: rgba(237, 241, 238, 0.08);
   pointer-events: none;
-  border-left: 1px dashed rgba(139, 92, 246, 0.3);
-  border-right: 1px dashed rgba(139, 92, 246, 0.3);
+  border-left: 1px dashed rgba(237, 241, 238, 0.3);
+  border-right: 1px dashed rgba(237, 241, 238, 0.3);
 }
 
 .ve-track-row-camera .ve-transition-overlap { height: 24px; }
@@ -4923,7 +4927,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   width: 14px;
   height: 14px;
   border: 2px solid rgba(255, 255, 255, 0.2);
-  border-top-color: #a78bfa;
+  border-top-color: #edf1ee;
   border-radius: 50%;
   animation: ve-clip-placeholder-spin 0.7s linear infinite;
 }
@@ -4971,8 +4975,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   align-items: center;
   justify-content: center;
   padding: 8px;
-  background: radial-gradient(circle at 30% 20%, rgba(167, 139, 250, 0.3), rgba(30, 30, 30, 0.95));
-  color: #f5f3ff;
+  background: radial-gradient(circle at 30% 20%, rgba(237, 241, 238, 0.3), rgba(30, 30, 30, 0.95));
+  color: #edf1ee;
   font-size: 12px;
   font-weight: 700;
   text-align: center;
@@ -5037,7 +5041,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 .ve-right-splitter:hover::after,
 .ve-right-splitter.is-resizing::after {
-  background: rgba(167, 139, 250, 0.7);
+  background: rgba(237, 241, 238, 0.7);
 }
 
 .ve-right-col .editor-right-properties > .ve-editor-panel {
@@ -5191,7 +5195,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-link-btn:hover {
-  color: #c4b5fd;
+  color: #edf1ee;
 }
 
 .ve-divider {
@@ -5277,7 +5281,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-speed-grid-ref {
-  border-top-color: #8b5cf6 !important;
+  border-top-color: #edf1ee !important;
   border-top-style: solid !important;
 }
 
@@ -5506,13 +5510,13 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-preset-input:focus {
-  border-color: #8b5cf6;
+  border-color: #edf1ee;
 }
 
 .ve-preset-save-btn {
   font-size: 12px;
-  background: #7761f0;
-  color: #fff;
+  background: #edf1ee;
+  color: #0b0c0c;
   border: none;
   border-radius: 4px;
   padding: 4px 8px;
@@ -5520,7 +5524,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-preset-save-btn:hover {
-  background: #6d28d9;
+  background: #ffffff;
 }
 
 .ve-preset-cancel-btn {
@@ -5585,8 +5589,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   display: grid;
   place-items: center;
   border-radius: 5px;
-  background: rgba(139, 92, 246, 0.18);
-  color: #cbbaff;
+  background: rgba(237, 241, 238, 0.18);
+  color: #edf1ee;
 }
 .ve-trans-item-copy {
   flex: 1;
@@ -5737,7 +5741,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-select:focus {
-  border-color: #8b5cf6;
+  border-color: #edf1ee;
 }
 
 /* Sliders */
@@ -5831,7 +5835,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-text-input:focus {
-  border-color: #8b5cf6;
+  border-color: #edf1ee;
 }
 
 .ve-textarea-input {
@@ -6047,7 +6051,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 .ve-ph-item-token {
   min-width: 0;
   overflow: hidden;
-  color: #c4b5fd;
+  color: #edf1ee;
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6196,11 +6200,11 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 .ve-context-item:disabled .ve-context-icon { color: #555; }
 
 .ve-context-item-active {
-  color: #a78bfa;
+  color: #edf1ee;
 }
 
 .ve-context-item-active:hover {
-  color: #c4b5fd;
+  color: #edf1ee;
 }
 
 .ve-context-item-danger {
@@ -6216,7 +6220,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 
 .ve-context-icon {
   font-size: 11px;
-  color: #a78bfa;
+  color: #edf1ee;
   width: 14px;
   text-align: center;
   flex-shrink: 0;
@@ -6256,7 +6260,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 
 .ve-context-check {
   margin-left: auto;
-  color: #a78bfa;
+  color: #edf1ee;
   font-size: 12px;
 }
 
@@ -6397,16 +6401,18 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 .ve-paste-row:hover .ve-chk { border-color: #6d6d6d; }
 .ve-chk.on,
 .ve-chk.mixed {
-  background: #7761f0;
-  border-color: #a78bfa;
+  background: #edf1ee;
+  border-color: #edf1ee;
 }
+
+.ve-chk.on svg { stroke: #0b0c0c; }   /* the grey box's tick: dark (Timeline.jsx draws it white) */
 
 .ve-chk.mixed::after {
   content: '';
   width: 7px;
   height: 1.5px;
   border-radius: 1px;
-  background: #fff;
+  background: #0b0c0c;
 }
 
 .ve-paste-foot {
@@ -6423,15 +6429,15 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   padding: 7px 10px;
   font-size: 11.5px;
   font-weight: 600;
-  color: #fff;
-  background: #7761f0;
-  border: 1px solid #a78bfa;
+  color: #0b0c0c;
+  background: #edf1ee;
+  border: 1px solid #edf1ee;
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.12s;
 }
 
-.ve-paste-btn:hover { background: #8b5cf6; }
+.ve-paste-btn:hover { background: #ffffff; }
 .ve-paste-btn:disabled {
   background: #2a2a2a;
   border-color: #3a3a3a;
@@ -6457,7 +6463,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   color: #fff;
 }
 
-.ve-context-item-open .ve-context-arrow { color: #a78bfa; }
+.ve-context-item-open .ve-context-arrow { color: #edf1ee; }
 
 /* Layer transition indicators on timeline clips */
 .ve-clip-layer-transitions {
@@ -6471,11 +6477,11 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 
 .ve-clip-layer-badge {
   font-size: 8px;
-  color: #a78bfa;
-  background: rgba(139, 92, 246, 0.2);
+  color: #c9cfcc;
+  background: rgba(237, 241, 238, 0.1);
   padding: 0 4px;
   border-radius: 2px;
-  border: 1px solid rgba(139, 92, 246, 0.3);
+  border: 1px solid rgba(237, 241, 238, 0.2);
   font-weight: 600;
   letter-spacing: 0.3px;
   white-space: nowrap;
@@ -6492,14 +6498,14 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 
 .ve-clip-trans-zone-in {
   left: 0;
-  background: linear-gradient(to right, rgba(139, 92, 246, 0.25), transparent);
-  border-right: 1px dashed rgba(139, 92, 246, 0.4);
+  background: linear-gradient(to right, rgba(237, 241, 238, 0.25), transparent);
+  border-right: 1px dashed rgba(237, 241, 238, 0.4);
 }
 
 .ve-clip-trans-zone-out {
   right: 0;
-  background: linear-gradient(to left, rgba(139, 92, 246, 0.25), transparent);
-  border-left: 1px dashed rgba(139, 92, 246, 0.4);
+  background: linear-gradient(to left, rgba(237, 241, 238, 0.25), transparent);
+  border-left: 1px dashed rgba(237, 241, 238, 0.4);
 }
 
 /* Transitions section + dropdown in EditorPanel */
@@ -6575,8 +6581,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-trans-toggle-on {
-  background: #7761f0;
-  border-color: #a78bfa;
+  background: #edf1ee;
+  border-color: #edf1ee;
 }
 
 .ve-trans-toggle-on::after {
@@ -6587,7 +6593,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   align-items: center;
   justify-content: center;
   font-size: 10px;
-  color: #fff;
+  color: #0b0c0c;
   line-height: 1;
 }
 
@@ -7042,9 +7048,9 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-mirror-btn.active {
-  border-color: #8b5cf6;
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.12);
+  border-color: #edf1ee;
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.12);
 }
 
 .ve-kf-builder-btn {
@@ -7066,17 +7072,17 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-builder-btn:hover {
-  border-color: #8b5cf6;
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.06);
+  border-color: #edf1ee;
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.06);
 }
 
 .ve-kf-builder-btn-active {
   border-style: solid;
-  border-color: #8b5cf6;
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.1);
-  box-shadow: 0 0 12px rgba(139, 92, 246, 0.15);
+  border-color: #edf1ee;
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.1);
+  box-shadow: 0 0 12px rgba(237, 241, 238, 0.15);
 }
 
 .ve-kf-badge {
@@ -7087,8 +7093,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: #8b5cf6;
-  color: #fff;
+  background: #edf1ee;
+  color: #0b0c0c;
   font-size: 9px;
   font-weight: 700;
   margin-left: auto;
@@ -7109,7 +7115,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   transform: translate(-50%, -50%) rotate(45deg);
   width: 6px;
   height: 6px;
-  background: #8b5cf6;
+  background: #edf1ee;
   border-radius: 1px;
 }
 
@@ -7183,16 +7189,16 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 .ve-kf-panel-empty-diamond {
   width: 8px;
   height: 8px;
-  background: #8b5cf6;
+  background: #edf1ee;
   transform: rotate(45deg);
   border-radius: 1px;
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+  box-shadow: 0 0 8px rgba(237, 241, 238, 0.4);
 }
 
 .ve-kf-panel-empty-track {
   width: 64px;
   height: 2px;
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.6), rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0.6));
+  background: linear-gradient(90deg, rgba(237, 241, 238, 0.6), rgba(237, 241, 238, 0.2), rgba(237, 241, 238, 0.6));
   border-radius: 1px;
 }
 
@@ -7363,7 +7369,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-color-mode-swatch-gradient {
-  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+  background: linear-gradient(135deg, #edf1ee 0%, #ec4899 100%);
 }
 
 /* Property picker row above the mini-timeline */
@@ -7592,13 +7598,13 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 .ve-kf-fx-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .ve-kf-fx-btn.ve-kf-fx-on {
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.14);
-  box-shadow: 0 0 6px rgba(139, 92, 246, 0.25);
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.14);
+  box-shadow: 0 0 6px rgba(237, 241, 238, 0.25);
 }
-.ve-kf-fx-btn.ve-kf-fx-on:hover { background: rgba(139, 92, 246, 0.22); }
+.ve-kf-fx-btn.ve-kf-fx-on:hover { background: rgba(237, 241, 238, 0.22); }
 .ve-kf-fx-btn.ve-kf-fx-open { background: rgba(255, 255, 255, 0.09); color: #ddd; }
-.ve-kf-fx-btn.ve-kf-fx-open.ve-kf-fx-on { color: #c4b5fd; background: rgba(139, 92, 246, 0.2); }
+.ve-kf-fx-btn.ve-kf-fx-open.ve-kf-fx-on { color: #edf1ee; background: rgba(237, 241, 238, 0.2); }
 
 /* A broken expression — unparseable, half-typed, a layer that isn't there, or a
    result that isn't a number. Red BEATS the violet active state (declared after
@@ -7876,8 +7882,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-add-btn:hover {
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.1);
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.1);
 }
 
 .ve-kf-timeline-bar {
@@ -7912,7 +7918,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-track-row-active .ve-kf-track-row-label {
-  color: #c4b5fd;
+  color: #edf1ee;
 }
 
 /* "+ Add" only shows on the hovered row. visibility, not display, so the header
@@ -8021,7 +8027,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #7761f0;
+  background: #edf1ee;
 }
 
 .ve-kf-zoom-ov-window {
@@ -8029,8 +8035,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   top: 0;
   bottom: 0;
   border-radius: 3px;
-  background: rgba(139, 92, 246, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.45);
+  background: rgba(237, 241, 238, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(237, 241, 238, 0.45);
   cursor: grab;
 }
 
@@ -8063,14 +8069,14 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   border: 0;
   margin-right:5px;
   background: transparent;
-  color: #c4b5fd;
+  color: #edf1ee;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
 
 .ve-kf-zoom-restore-btn:hover {
   color: #fff;
-  background: rgba(139, 92, 246, 0.18);
+  background: rgba(237, 241, 238, 0.18);
 }
 
 /* Magnetic snap guide — same treatment as the timeline's .ve-snap-guide */
@@ -8106,19 +8112,18 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-scrub-strip.is-scrubbing {
-  background: rgba(124, 58, 237, 0.16);
+  background: rgba(237, 241, 238, 0.16);
   cursor: grabbing;
 }
 
-/* Where the timeline playhead sits inside this clip — same violet line + glow +
-   triangular head as the timeline's own playhead (.ve-playhead-overlay-line). */
+/* Where the timeline playhead sits inside this clip — the same white line as the
+   timeline's own playhead (.ve-playhead-overlay-line), with a small head. */
 .ve-kf-playhead {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #7761f0;
-  box-shadow: 0 0 8px rgba(124, 58, 237, 0.5);
+  background: #edf1ee;
   /* Below the diamonds (10/15/20) but above the track line and ticks, so a key the
      playhead is parked on stays readable instead of being cut in half by the line. */
   z-index: 5;
@@ -8138,14 +8143,14 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   height: 0;
   border-left: 3px solid transparent;
   border-right: 3px solid transparent;
-  border-top: 5px solid #7761f0;
+  border-top: 5px solid #edf1ee;
 }
 
 /* Shift+drag marquee over the rows — mirrors .ve-timeline-marquee */
 .ve-kf-marquee {
   position: absolute;
-  border: 1px solid #8b5cf6;
-  background: rgba(124, 58, 237, 0.18);
+  border: 1px solid #edf1ee;
+  background: rgba(237, 241, 238, 0.18);
   border-radius: 2px;
   pointer-events: none;
   z-index: 60;
@@ -8165,14 +8170,14 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   position: absolute;
   inset: 0;
   z-index: 8;
-  border: 1px solid rgba(139, 92, 246, 0.75);
-  background: rgba(139, 92, 246, 0.14);
+  border: 1px solid rgba(237, 241, 238, 0.75);
+  background: rgba(237, 241, 238, 0.14);
   border-radius: 3px;
 }
 
 .ve-kf-selbox-scaling .ve-kf-selbox-body {
-  background: rgba(139, 92, 246, 0.2);
-  border-color: rgba(196, 181, 253, 0.9);
+  background: rgba(237, 241, 238, 0.2);
+  border-color: rgba(237, 241, 238, 0.9);
 }
 
 /* Wider than it looks: an 11px hit area around a 3px grip, so the edge stays easy
@@ -8197,8 +8202,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   height: 60%;
   min-height: 14px;
   border-radius: 2px;
-  background: #c4b5fd;
-  box-shadow: 0 0 6px rgba(139, 92, 246, 0.55);
+  background: #edf1ee;
+  box-shadow: 0 0 6px rgba(237, 241, 238, 0.55);
   pointer-events: none;
 }
 
@@ -8230,7 +8235,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-selbox-readout span {
-  color: #c4b5fd;
+  color: #edf1ee;
   font-weight: 500;
 }
 
@@ -8281,7 +8286,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 
 .ve-kf-preview-progress {
   font-size: 12px;
-  color: #a78bfa;
+  color: #edf1ee;
   font-family: monospace;
 }
 
@@ -8301,7 +8306,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   width: 72px;
   height: 72px;
   border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(139, 92, 246, 0.35);
+  box-shadow: 0 10px 30px rgba(237, 241, 238, 0.35);
   will-change: transform, filter, opacity, background-color;
 }
 
@@ -8444,14 +8449,14 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-marker-diamond:hover {
-  background: #7761f0;
-  border-color: #a78bfa;
+  background: #edf1ee;
+  border-color: #edf1ee;
 }
 
 .ve-kf-marker-diamond-active {
-  background: #8b5cf6;
-  border-color: #c4b5fd;
-  box-shadow: 0 0 6px rgba(139, 92, 246, 0.35);
+  background: #edf1ee;
+  border-color: #edf1ee;
+  box-shadow: 0 0 6px rgba(237, 241, 238, 0.35);
   transform: rotate(var(--kf-rot)) scale(1.12);
 }
 
@@ -8459,9 +8464,9 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 .ve-kf-marker-selected { z-index: 15; }
 
 .ve-kf-marker-diamond-selected {
-  background: rgba(139, 92, 246, 0.45);
-  border-color: #8b5cf6;
-  box-shadow: 0 0 5px rgba(139, 92, 246, 0.25);
+  background: rgba(237, 241, 238, 0.45);
+  border-color: #edf1ee;
+  box-shadow: 0 0 5px rgba(237, 241, 238, 0.25);
   transform: rotate(var(--kf-rot)) scale(1.08);
 }
 
@@ -8471,7 +8476,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 
 .ve-kf-marker-diamond-viewed {
   background: #4a4458;
-  border-color: rgba(139, 92, 246, 0.55);
+  border-color: rgba(237, 241, 238, 0.55);
   transform: rotate(var(--kf-rot)) scale(1.04);
 }
 
@@ -8479,8 +8484,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   margin-left: 6px;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(139, 92, 246, 0.16);
-  color: #c4b5fd;
+  background: rgba(237, 241, 238, 0.16);
+  color: #edf1ee;
   font-size: 9px;
   letter-spacing: 0.4px;
 }
@@ -8495,7 +8500,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-marker-label-active {
-  color: #a78bfa;
+  color: #edf1ee;
   font-weight: 700;
 }
 
@@ -8626,7 +8631,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-easing-select:focus {
-  border-color: #8b5cf6;
+  border-color: #edf1ee;
 }
 
 .ve-kf-add-prop-btn {
@@ -8910,8 +8915,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-preset-popover-item:hover {
-  border-color: #8b5cf6;
-  background: linear-gradient(180deg, #1a1626, #13111b);
+  border-color: #edf1ee;
+  background: linear-gradient(180deg, rgb(30, 30, 30), rgb(22, 22, 22));
 }
 
 .ve-kf-preset-name {
@@ -8943,7 +8948,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   width: 22px;
   height: 22px;
   border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.35);
+  box-shadow: 0 4px 14px rgba(237, 241, 238, 0.35);
   will-change: transform, filter, opacity, background-color;
 }
 
@@ -10477,7 +10482,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-prop-input:focus {
-  border-color: #8b5cf6;
+  border-color: #edf1ee;
 }
 
 .ve-kf-prop-color-input {
@@ -10514,8 +10519,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 .ve-kf-prop-slider::-webkit-slider-runnable-track {
   height: 3px;
   border-radius: 9999px;
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.55), rgba(139, 92, 246, 0.22));
-  border: 1px solid rgba(139, 92, 246, 0.25);
+  background: linear-gradient(90deg, rgba(237, 241, 238, 0.55), rgba(237, 241, 238, 0.22));
+  border: 1px solid rgba(237, 241, 238, 0.25);
 }
 
 .ve-kf-prop-slider::-webkit-slider-thumb {
@@ -10524,36 +10529,36 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ede9fe;
-  border: 1px solid rgba(139, 92, 246, 0.9);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.18);
+  background: #edf1ee;
+  border: 1px solid rgba(237, 241, 238, 0.9);
+  box-shadow: 0 0 0 2px rgba(237, 241, 238, 0.18);
   margin-top: -4px;
 }
 
 .ve-kf-prop-slider::-moz-range-track {
   height: 3px;
   border-radius: 9999px;
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.55), rgba(139, 92, 246, 0.22));
-  border: 1px solid rgba(139, 92, 246, 0.25);
+  background: linear-gradient(90deg, rgba(237, 241, 238, 0.55), rgba(237, 241, 238, 0.22));
+  border: 1px solid rgba(237, 241, 238, 0.25);
 }
 
 .ve-kf-prop-slider::-moz-range-thumb {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ede9fe;
-  border: 1px solid rgba(139, 92, 246, 0.9);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.18);
+  background: #edf1ee;
+  border: 1px solid rgba(237, 241, 238, 0.9);
+  box-shadow: 0 0 0 2px rgba(237, 241, 238, 0.18);
 }
 
 .ve-kf-prop-slider:hover::-webkit-slider-runnable-track,
 .ve-kf-prop-slider:focus-visible::-webkit-slider-runnable-track {
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.7), rgba(139, 92, 246, 0.28));
+  background: linear-gradient(90deg, rgba(237, 241, 238, 0.7), rgba(237, 241, 238, 0.28));
 }
 
 .ve-kf-prop-slider:hover::-moz-range-track,
 .ve-kf-prop-slider:focus-visible::-moz-range-track {
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.7), rgba(139, 92, 246, 0.28));
+  background: linear-gradient(90deg, rgba(237, 241, 238, 0.7), rgba(237, 241, 238, 0.28));
 }
 
 .ve-kf-prop-number-input {
@@ -10569,7 +10574,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-kf-prop-number-input:focus {
-  border-color: #8b5cf6;
+  border-color: #edf1ee;
 }
 
 .ve-kf-prop-reset {
@@ -10589,7 +10594,7 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 
 .ve-kf-prop-value {
   margin-left: auto;
-  color: #c4b5fd;
+  color: #edf1ee;
 }
 
 .ve-kf-prop-remove {
@@ -10739,8 +10744,8 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
 }
 
 .ve-tp-item-selected {
-  border-color: #8b5cf6;
-  background: rgba(139, 92, 246, 0.1);
+  border-color: #edf1ee;
+  background: rgba(237, 241, 238, 0.1);
 }
 
 .ve-tp-canvas {
@@ -11635,22 +11640,22 @@ button:focus-visible {
    "Add Property" CTA (.ve-kf-add-prop-btn) so every panel action reads as one
    family rather than a lone green accent. */
 .ve-voice-action.primary {
-  background: rgba(139, 92, 246, 0.2);
-  border: 1px solid rgba(139, 92, 246, 0.55);
-  color: #e9ddff;
+  background: rgba(237, 241, 238, 0.2);
+  border: 1px solid rgba(237, 241, 238, 0.55);
+  color: #edf1ee;
   font-weight: 500;
   transition: all 0.15s;
 }
 .ve-voice-action.primary:hover:not(:disabled) {
-  background: rgba(139, 92, 246, 0.32);
-  border-color: rgba(167, 139, 250, 0.9);
-  color: #f3ecff;
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.14);
+  background: rgba(237, 241, 238, 0.32);
+  border-color: rgba(237, 241, 238, 0.9);
+  color: #edf1ee;
+  box-shadow: 0 0 0 3px rgba(237, 241, 238, 0.14);
 }
 .ve-voice-action.primary:disabled {
-  background: rgba(139, 92, 246, 0.08);
-  border-color: rgba(139, 92, 246, 0.24);
-  color: #8b80ad;
+  background: rgba(237, 241, 238, 0.08);
+  border-color: rgba(237, 241, 238, 0.24);
+  color: #edf1ee;
 }
 
 .ve-voice-dot {
@@ -11748,9 +11753,9 @@ button:focus-visible {
      translucent band tints the selected clips instead of hiding behind them. */
   z-index: 45;
   pointer-events: none;
-  background: rgba(124, 58, 237, 0.22);
-  border-left: 1px solid rgba(124, 58, 237, 0.6);
-  border-right: 1px solid rgba(124, 58, 237, 0.6);
+  background: rgba(237, 241, 238, 0.22);
+  border-left: 1px solid rgba(237, 241, 238, 0.6);
+  border-right: 1px solid rgba(237, 241, 238, 0.6);
 }
 
 .ve-transcribe-toggle {
@@ -11763,18 +11768,18 @@ button:focus-visible {
   padding: 9px 12px;
   border: 1px solid #3a3a52;
   border-radius: 8px;
-  background: #1a1a2a;
+  background: rgb(34, 34, 34);
   color: #cbd5e1;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 140ms ease, border-color 140ms ease;
 }
-.ve-transcribe-toggle:hover { background: #22223a; }
+.ve-transcribe-toggle:hover { background: rgb(46, 46, 46); }
 .ve-transcribe-toggle.active {
-  background: #2b1f52;
-  border-color: #7761f0;
-  color: #ede9fe;
+  background: rgb(57, 57, 57);
+  border-color: #edf1ee;
+  color: #edf1ee;
 }
 
 .ve-transcribe-panel .ve-editor-panel-body {
@@ -11821,7 +11826,7 @@ button:focus-visible {
 .ve-transcribe-toolbar-range {
   font-size: 12px;
   font-weight: 600;
-  color: #c4b5fd;
+  color: #edf1ee;
   font-variant-numeric: tabular-nums;
 }
 
@@ -12031,9 +12036,9 @@ button:focus-visible {
   transition: background 120ms ease, color 120ms ease;
 }
 .ve-take-action-btn svg { flex: 0 0 auto; }
-.ve-take-action-btn:hover { background: #22223a; color: #d1d5db; }
+.ve-take-action-btn:hover { background: rgb(46, 46, 46); color: #d1d5db; }
 .ve-take-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.ve-take-action-btn.active { background: #2a2342; border-color: #7761f0; color: #c4b5fd; }
+.ve-take-action-btn.active { background: rgb(51, 51, 51); border-color: #edf1ee; color: #edf1ee; }
 
 
 .ve-word {
@@ -12048,10 +12053,10 @@ button:focus-visible {
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
-.ve-word:hover { background: rgba(124, 58, 237, 0.25); }
+.ve-word:hover { background: rgba(237, 241, 238, 0.25); }
 
 .ve-word-selected {
-  background: rgba(124, 58, 237, 0.5);
+  background: rgba(237, 241, 238, 0.5);
   color: #fff;
 }
 /* A run of selected words reads as one band: only the ends of the run stay rounded. */
@@ -12084,7 +12089,7 @@ button:focus-visible {
 }
 .ve-word-pause.ve-word-selected {
   color: #fff;
-  border-color: rgba(124, 58, 237, 0.7);
+  border-color: rgba(237, 241, 238, 0.7);
 }
 
 /* Verbatim-mode toggle + options (min pause) at the top of the TRANSCRIPT section. */
@@ -12101,7 +12106,7 @@ button:focus-visible {
   line-height: 15px;
   color: rgba(255, 255, 255, 0.62);
 }
-.ve-clean-btn.active .ve-clean-count { background: rgba(139, 92, 246, 0.28); color: #e9ddff; }
+.ve-clean-btn.active .ve-clean-count { background: rgba(237, 241, 238, 0.28); color: #edf1ee; }
 
 .ve-clean-popover {
   z-index: 1200;
@@ -12136,7 +12141,7 @@ button:focus-visible {
   color: #d6d8df;
   cursor: pointer;
 }
-.ve-clean-opt input { margin-top: 2px; cursor: pointer; accent-color: #8b5cf6; }
+.ve-clean-opt input { margin-top: 2px; cursor: pointer; accent-color: #edf1ee; }
 /* The "what it does" line under a radio label — plain text, not a second control. */
 .ve-clean-opt i {
   display: block;
@@ -12162,12 +12167,12 @@ button:focus-visible {
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
-  background: rgba(139, 92, 246, 0.2);
-  border: 1px solid rgba(139, 92, 246, 0.55);
-  color: #e9ddff;
+  background: rgba(237, 241, 238, 0.2);
+  border: 1px solid rgba(237, 241, 238, 0.55);
+  color: #edf1ee;
   transition: all 0.15s;
 }
-.ve-clean-run:hover:not(:disabled) { background: rgba(139, 92, 246, 0.32); }
+.ve-clean-run:hover:not(:disabled) { background: rgba(237, 241, 238, 0.32); }
 .ve-clean-run:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .ve-clean-pop-hint {
@@ -12403,8 +12408,8 @@ button:focus-visible {
   margin-top: 10px;
   padding: 8px;
   border-radius: 8px;
-  background: rgba(139, 92, 246, 0.07);
-  border: 1px solid rgba(139, 92, 246, 0.25);
+  background: rgba(237, 241, 238, 0.07);
+  border: 1px solid rgba(237, 241, 238, 0.25);
 }
 .ve-vp-result-cap {
   display: flex;
@@ -12415,7 +12420,7 @@ button:focus-visible {
   font-weight: 650;
   letter-spacing: 0.055em;
   text-transform: uppercase;
-  color: #c4b5fd;
+  color: #edf1ee;
 }
 .ve-vp-result-audio {
   width: 100%;
@@ -12513,9 +12518,9 @@ button:focus-visible {
   border-color: #47474f;
 }
 .ve-vp-toggle.active {
-  background: rgba(139, 92, 246, 0.16);
-  border-color: rgba(139, 92, 246, 0.5);
-  color: #e9ddff;
+  background: rgba(237, 241, 238, 0.16);
+  border-color: rgba(237, 241, 238, 0.5);
+  color: #edf1ee;
 }
 .ve-vp-toggle:disabled {
   opacity: 0.5;
@@ -12562,17 +12567,17 @@ button:focus-visible {
   height: 30px;
   border-radius: 7px;
   border: 1px solid #3a3a52;
-  background: #1a1a2a;
+  background: rgb(34, 34, 34);
   color: #cbd5e1;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-.ve-toolbar-icon-btn:hover { background: #22223a; color: #fff; }
+.ve-toolbar-icon-btn:hover { background: rgb(46, 46, 46); color: #fff; }
 .ve-toolbar-icon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .ve-toolbar-icon-btn.active {
-  background: #2b1f52;
-  border-color: #7761f0;
-  color: #ede9fe;
+  background: rgb(57, 57, 57);
+  border-color: #edf1ee;
+  color: #edf1ee;
 }
 
 /* Grammar notice header (title + close) */
@@ -12604,9 +12609,9 @@ button:focus-visible {
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
 }
-.ve-retranscribe-btn:hover { background: #22223a; color: #c4b5fd; }
+.ve-retranscribe-btn:hover { background: rgb(46, 46, 46); color: #edf1ee; }
 .ve-retranscribe-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.ve-retranscribe-btn.active { background: #2a2342; border-color: #7761f0; color: #c4b5fd; }
+.ve-retranscribe-btn.active { background: rgb(51, 51, 51); border-color: #edf1ee; color: #edf1ee; }
 
 /* Per-take header actions (Grammar + Re-transcribe) sit side by side */
 .ve-take-head-actions { display: inline-flex; gap: 6px; align-items: center; }
@@ -12629,16 +12634,16 @@ button:focus-visible {
   width: 100%;
   margin-top: 6px;
   padding: 9px 12px;
-  border: 1px dashed #7761f0;
+  border: 1px dashed #edf1ee;
   border-radius: 8px;
-  background: rgba(124, 58, 237, 0.12);
-  color: #c4b5fd;
+  background: rgba(237, 241, 238, 0.12);
+  color: #edf1ee;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 120ms ease;
 }
-.ve-transcribe-cta:hover { background: rgba(124, 58, 237, 0.22); }
+.ve-transcribe-cta:hover { background: rgba(237, 241, 238, 0.22); }
 .ve-transcribe-cta:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* Keep the searchable model picker inside the narrow right-side panels (#1/#7):
@@ -12706,7 +12711,7 @@ button:focus-visible {
 .ve-take-toolbar-range {
   font-size: 10px;
   font-weight: 600;
-  color: #c4b5fd;
+  color: #edf1ee;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -12727,12 +12732,12 @@ button:focus-visible {
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-.ve-take-icon-btn:hover { background: #2a2a3f; color: #fff; }
+.ve-take-icon-btn:hover { background: rgb(53, 53, 53); color: #fff; }
 .ve-take-icon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .ve-take-icon-btn.active {
-  background: #2b1f52;
-  border-color: #7761f0;
-  color: #ddd6fe;
+  background: rgb(57, 57, 57);
+  border-color: #edf1ee;
+  color: #edf1ee;
 }
 
 /* Icon + label inside the small preset action buttons */
@@ -14997,16 +15002,16 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   padding: 4px 10px;
   font-size: 12px;
   font-weight: 600;
-  color: #a78bfa;
-  background: rgba(167, 139, 250, 0.12);
-  border: 1px solid rgba(167, 139, 250, 0.35);
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.12);
+  border: 1px solid rgba(237, 241, 238, 0.35);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.12s;
 }
 
 .ve-seq-back-btn:hover {
-  background: rgba(167, 139, 250, 0.22);
+  background: rgba(237, 241, 238, 0.22);
 }
 
 .ve-seq-crumb {
@@ -15019,7 +15024,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 }
 
 .ve-seq-crumb-current {
-  color: #e9d5ff;
+  color: #edf1ee;
   font-weight: 700;
   cursor: default;
 }
@@ -15033,8 +15038,8 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   align-items: center;
   justify-content: center;
   padding: 8px;
-  background: linear-gradient(135deg, rgba(30, 30, 30, 0.95), rgba(50, 45, 70, 0.9));
-  color: #f5f3ff;
+  background: linear-gradient(135deg, rgba(30, 30, 30, 0.95), rgba(58, 58, 58, 0.9));
+  color: #edf1ee;
   overflow: hidden;
 }
 
@@ -15107,15 +15112,14 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   padding: 8px;
   background: repeating-linear-gradient(
       45deg,
-      rgba(167, 139, 250, 0.12),
-      rgba(167, 139, 250, 0.12) 10px,
-      rgba(139, 92, 246, 0.22) 10px,
-      rgba(139, 92, 246, 0.22) 20px
+      rgba(237, 241, 238, 0.12),
+      rgba(237, 241, 238, 0.12) 10px,
+      rgba(237, 241, 238, 0.22) 10px,
+      rgba(237, 241, 238, 0.22) 20px
     ),
-    rgba(30, 27, 45, 0.95);
-  color: #e9d5ff;
+    rgba(36, 36, 36, 0.95);
+  color: #edf1ee;
   font-size: 12px;
-  font-weight: 700;
   overflow: hidden;
 }
 
@@ -15186,7 +15190,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 }
 
 .ve-timeline-clip.ve-clip-sequence {
-  border-color: rgba(167, 139, 250, 0.55);
+  border-color: rgba(237, 241, 238, 0.55);
 }
 
 /* HTML clip (htmlClips.js): one still of the page, left, and the code glyph —
@@ -15223,7 +15227,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 /* After Effects clip (aeClips.js): the project's violet (the canvas card's
    --app-a / --app-b) with the Ae chip; once rendered, the render's still. */
 .ve-timeline-clip.ve-clip-ae {
-  border-color: rgba(215, 182, 255, 0.5);
+  border-color: rgba(237, 241, 238, 0.5);
 }
 .ve-clip-ae-thumb {
   position: relative;
@@ -15233,7 +15237,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   align-items: center;
   justify-content: flex-end;
   padding: 0 48px 0 0;
-  background: linear-gradient(135deg, rgba(215, 182, 255, 0.16), rgba(45, 34, 66, 0.6)), #17151d;
+  background: linear-gradient(135deg, rgba(237, 241, 238, 0.16), rgba(50, 50, 50, 0.6)), #17151d;
   overflow: hidden;
 }
 .ve-clip-ae-thumb img {
@@ -15250,9 +15254,9 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   width: 17px;
   height: 14px;
   border-radius: 3px;
-  background: #2d2242;
-  box-shadow: inset 0 0 0 1px rgba(215, 182, 255, 0.5);
-  color: #d7b6ff;
+  background: rgb(50, 50, 50);
+  box-shadow: inset 0 0 0 1px rgba(237, 241, 238, 0.5);
+  color: #edf1ee;
   font-size: 7.5px;
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -15264,9 +15268,9 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   border-color: rgba(248, 113, 113, 0.5);
 }
 .ve-clip-prerender-badge--ae {
-  color: #c9b7e6;
-  background: rgba(215, 182, 255, 0.1);
-  border-color: rgba(215, 182, 255, 0.35);
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.1);
+  border-color: rgba(237, 241, 238, 0.35);
 }
 
 /* ========== Vertical splitter (resizable timeline height) ========== */
@@ -15300,7 +15304,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 
 .ve-splitter:hover::after,
 .ve-splitter.is-resizing::after {
-  background: rgba(167, 139, 250, 0.7);
+  background: rgba(237, 241, 238, 0.7);
 }
 
 /* Vertical twin of .ve-splitter on the left sidebar's right edge. It sits
@@ -15333,7 +15337,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 
 .ve-sidebar-splitter:hover::after,
 .ve-sidebar-splitter.is-resizing::after {
-  background: rgba(167, 139, 250, 0.7);
+  background: rgba(237, 241, 238, 0.7);
 }
 
 /* ========== Group actions panel (mixed multi-selection) ========== */
@@ -15377,13 +15381,13 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 }
 
 .ve-group-actions button.ve-group-primary {
-  color: #e9d5ff;
-  background: rgba(139, 92, 246, 0.16);
-  border-color: rgba(167, 139, 250, 0.4);
+  color: #edf1ee;
+  background: rgba(237, 241, 238, 0.16);
+  border-color: rgba(237, 241, 238, 0.4);
 }
 
 .ve-group-actions button.ve-group-primary:hover {
-  background: rgba(139, 92, 246, 0.26);
+  background: rgba(237, 241, 238, 0.26);
 }
 
 .ve-group-actions button.ve-group-danger {
@@ -15960,7 +15964,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 }
 
 .media-panel-tab.active {
-  color: #e9d5ff;
+  color: #edf1ee;
 }
 
 /* ========== Presets panel ========== */
@@ -15998,18 +16002,18 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 }
 
 .ve-preset-card:hover {
-  border-color: rgba(167, 139, 250, 0.55);
-  background: rgba(139, 92, 246, 0.1);
+  border-color: rgba(237, 241, 238, 0.55);
+  background: rgba(237, 241, 238, 0.1);
 }
 
 .ve-preset-card.is-open,
 .ve-preset-card.is-open:hover {
-  border-color: rgba(167, 139, 250, 0.8);
-  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(237, 241, 238, 0.8);
+  background: rgba(237, 241, 238, 0.12);
 }
 
 .ve-preset-card:focus-visible {
-  outline: 2px solid rgba(167, 139, 250, 0.7);
+  outline: 2px solid rgba(237, 241, 238, 0.7);
   outline-offset: 1px;
 }
 
@@ -16115,7 +16119,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   align-items: center;
   justify-content: center;
   background: #141414;
-  color: #a78bfa;
+  color: #edf1ee;
 }
 
 .ve-preset-card-thumb img {
@@ -16176,7 +16180,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   display: none;
   align-items: center;
   justify-content: center;
-  color: #c4b5fd;
+  color: #edf1ee;
   background: rgba(0, 0, 0, 0.6);
   border: none;
   border-radius: 5px;
@@ -16624,7 +16628,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 .ve-aifill-take-meta { display: flex; flex-direction: column; min-width: 0; }
 .ve-aifill-take-n { display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: 11.5px; color: var(--text-primary); }
 .ve-aifill-take-dur { display: inline-flex; padding: 0 5px; border-radius: 4px; background: #24242a; font-size: 10px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.ve-aifill-take-new { width: 6px; height: 6px; border-radius: 50%; background: #a78bfa; box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15); }
+.ve-aifill-take-new { width: 6px; height: 6px; border-radius: 50%; background: #edf1ee; box-shadow: 0 0 0 3px rgba(237, 241, 238, 0.15); }
 .ve-aifill-take-model { color: #6f6f78; font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ve-aifill-take-state { font-size: 10.5px; color: #a4a4ad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ve-aifill-take-state.is-error { color: #fca5a5; }
@@ -16755,8 +16759,8 @@ color: var(--accent, #33efab);
   flex: 0 0 auto;
   padding: 2px 6px;
   border-radius: 4px;
-  background: #7761f0;
-  color: #fff;
+  background: #edf1ee;
+  color: #0b0c0c;
   font-size: 8px;
   font-weight: 750;
   letter-spacing: 0.05em;
@@ -16893,7 +16897,7 @@ color: var(--accent, #33efab);
 }
 .ve-nav-layer:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-primary); }
 /* selection is violet — same language as a selected clip on the timeline */
-.ve-nav-layer.selected { background: rgba(139, 92, 246, 0.14); color: #cdbcf6; }
+.ve-nav-layer.selected { background: rgba(237, 241, 238, 0.14); color: #edf1ee; }
 .ve-nav-glyph {
   width: 18px;
   height: 18px;
@@ -16904,7 +16908,7 @@ color: var(--accent, #33efab);
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-muted);
 }
-.ve-nav-layer.selected .ve-nav-glyph { background: rgba(139, 92, 246, 0.2); color: #b7a3ec; }
+.ve-nav-layer.selected .ve-nav-glyph { background: rgba(237, 241, 238, 0.2); color: #edf1ee; }
 .ve-nav-name {
   flex: 1;
   min-width: 0;
@@ -18155,7 +18159,7 @@ color: var(--accent, #33efab);
   width: 72%;
   height: 7px;
   border-radius: 2px;
-  background: #6d5bb0;
+  background: #edf1ee;
   opacity: 0.4;
 }
 
@@ -18164,7 +18168,7 @@ color: var(--accent, #33efab);
   top: 44%;
   width: 34%;
   height: 15px;
-  background: #7c5fd8;
+  background: #edf1ee;
   opacity: 0.62;
 }
 
@@ -18173,7 +18177,7 @@ color: var(--accent, #33efab);
   top: 38%;
   width: 32%;
   height: 26px;
-  background: linear-gradient(160deg, #a78bfa, #7761f0);
+  background: linear-gradient(160deg, #edf1ee, #edf1ee);
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
   opacity: 0.97;
 }
@@ -18190,7 +18194,7 @@ color: var(--accent, #33efab);
   position: absolute;
   width: 8px;
   height: 8px;
-  border: 1px solid rgba(196, 181, 253, 0.9);
+  border: 1px solid rgba(237, 241, 238, 0.9);
   border-radius: 50%;
   box-shadow: 0 0 0 1px rgba(15, 15, 20, 0.72);
   transform: translate(-50%, -50%);
@@ -18201,7 +18205,7 @@ color: var(--accent, #33efab);
 .ve-cam-preset-focus::after {
   content: '';
   position: absolute;
-  background: rgba(196, 181, 253, 0.8);
+  background: rgba(237, 241, 238, 0.8);
 }
 
 .ve-cam-preset-focus::before {
@@ -18609,7 +18613,7 @@ color: var(--accent, #33efab);
 }
 
 .ve-kfg-playhead {
-  stroke: #7761f0;
+  stroke: #edf1ee;
   stroke-width: 1;
   shape-rendering: crispEdges;
 }
@@ -20840,8 +20844,8 @@ color: var(--accent, #33efab);
   justify-content: center;
   font-size: 8px;
   font-weight: 800;
-  color: #a78bfa;
-  text-shadow: 0 0 6px rgba(139, 92, 246, 0.5);
+  color: #edf1ee;
+  text-shadow: 0 0 6px rgba(237, 241, 238, 0.5);
 }
 
 .aish-dests { display: flex; flex-direction: column; gap: 6px; }
@@ -22840,8 +22844,8 @@ color: var(--accent, #33efab);
   background: var(--m-txt3);
   transition: transform 0.18s, background 0.18s;
 }
-.ve-aitx-switch.on { background: rgba(139, 92, 246, 0.35); border-color: rgba(139, 92, 246, 0.65); }
-.ve-aitx-switch.on .ve-aitx-switch-thumb { transform: translateX(14px); background: #e9ddff; }
+.ve-aitx-switch.on { background: rgba(237, 241, 238, 0.35); border-color: rgba(237, 241, 238, 0.65); }
+.ve-aitx-switch.on .ve-aitx-switch-thumb { transform: translateX(14px); background: #edf1ee; }
 
 /* Pause marker in the results script — matches the panel's "…" pause token. */
 .ve-aitx-script-pause {
@@ -25282,7 +25286,7 @@ color: var(--accent, #33efab);
   border-radius: 7px; padding: 6px 2px; cursor: pointer;
 }
 .ve-smooth-tabs button:hover { background: #232427; color: #dfe6e3; }
-.ve-smooth-tabs button.is-on { background: #2b2c30; border-color: rgb(167 139 250 / 45%); color: #c4b5fd; }
+.ve-smooth-tabs button.is-on { background: #2b2c30; border-color: rgba(237, 241, 238, 0.45); color: #edf1ee; }
 .ve-smooth-tabs button.is-off { opacity: 0.35; cursor: not-allowed; }
 .ve-smooth-blurb { color: #8b8b96; font-size: 10.5px; line-height: 1.45; margin-bottom: 10px; }
 
@@ -25290,7 +25294,7 @@ color: var(--accent, #33efab);
 .ve-smooth-row label { color: #a0a0aa; }
 .ve-smooth-row-solo { margin-top: 8px; }
 .ve-smooth-val { font-size: 11px; color: #dfe6e3; font-variant-numeric: tabular-nums; }
-.ve-smooth-range { width: 100%; accent-color: #a78bfa; margin: 2px 0 8px; }
+.ve-smooth-range { width: 100%; accent-color: #edf1ee; margin: 2px 0 8px; }
 .ve-smooth-num {
   font: inherit; font-size: 11px; width: 62px; text-align: right;
   background: #202124; color: #dfe6e3;
@@ -25298,7 +25302,7 @@ color: var(--accent, #33efab);
 }
 .ve-smooth-num:disabled { opacity: 0.4; }
 .ve-smooth-check { display: inline-flex; align-items: center; gap: 6px; color: #a0a0aa; cursor: pointer; }
-.ve-smooth-check input { accent-color: #a78bfa; }
+.ve-smooth-check input { accent-color: #edf1ee; }
 .ve-smooth-chips { display: flex; gap: 4px; margin-bottom: 8px; }
 .ve-smooth-chips button {
   font: inherit; font-size: 10.5px; font-weight: 600; flex: 1;
@@ -25307,7 +25311,7 @@ color: var(--accent, #33efab);
   border-radius: 999px; padding: 3px 0; cursor: pointer;
 }
 .ve-smooth-chips button:hover { color: #dfe6e3; }
-.ve-smooth-chips button.is-on { background: #2b2c30; border-color: rgb(167 139 250 / 45%); color: #c4b5fd; }
+.ve-smooth-chips button.is-on { background: #2b2c30; border-color: rgba(237, 241, 238, 0.45); color: #edf1ee; }
 
 .ve-smooth-stats {
   display: flex; gap: 10px; margin-top: 10px; padding-top: 9px;
@@ -25324,7 +25328,7 @@ color: var(--accent, #33efab);
 
 .ve-smooth-note {
   margin-top: 10px; padding-left: 8px;
-  border-left: 2px solid rgb(167 139 250 / 45%);
+  border-left: 2px solid rgba(237, 241, 238, 0.45);
   color: #8b8b96; font-size: 10.5px; line-height: 1.45;
 }
 
@@ -25336,8 +25340,8 @@ color: var(--accent, #33efab);
   border-radius: 7px; padding: 7px 0; cursor: pointer;
 }
 .ve-smooth-btn:hover { color: #dfe6e3; background: #232427; }
-.ve-smooth-btn.is-primary { background: rgb(167 139 250 / 16%); border-color: rgb(167 139 250 / 45%); color: #c4b5fd; }
-.ve-smooth-btn.is-primary:hover { background: rgb(167 139 250 / 26%); color: #ddd0ff; }
+.ve-smooth-btn.is-primary { background: rgba(237, 241, 238, 0.16); border-color: rgba(237, 241, 238, 0.45); color: #edf1ee; }
+.ve-smooth-btn.is-primary:hover { background: rgba(237, 241, 238, 0.26); color: #edf1ee; }
 .ve-smooth-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ══════════════════════════════════════════════════════════════════════════
