@@ -15,6 +15,11 @@ and check every version against them.
 
 - One headline per scene; supporting text much smaller. Hierarchy comes from size and weight, not colour alone.
 - One accent colour and strong contrast.
+- **No text shadows unless the user asks for one.** A shadow under type reads as a stock default and softens the
+  letter edges. When text has to read over footage or a busy picture, get the contrast from the design instead: a
+  calmer or darker part of the frame, a caption bar (`textBgEnabled`), or a shape behind the text. So no
+  `textShadowX` / `textShadowY` / `textShadowBlur` / `textShadowSpread` on a text layer, no `shadow` property in a
+  Text Animator and no `longShadow` effect on text. A shadow already in the user's project stays.
 - Keep text inside the middle 80 % of the frame (in a project: |panX| and |panY| ≤ 40): players and feeds crop the
   edges.
 
