@@ -58,25 +58,27 @@ matte, masks, particles, 3D) goes on from `project.json`: SKILL.md, "Beyond the 
   a CSS gradient; `width` (px, wraps), `align`, `uppercase`, `letterSpacing`, `lineHeight`. A headline gets `glide-text` unless you set `textAnimation`.
   The text box is CENTRED on `at`: without `width` it is as wide as its words but stays inside the frame (off-centre text wraps
   sooner); for a left-aligned column give `width` and `"align": "left"` and put `at` at the column's centre.
-- **rect · pill · circle**: `w`, `h`, `color` (or a CSS gradient), `radius`, `border` {width, color}, `shadow`: true. They enter with `pop-overshoot` unless you set `enter`.
+- **rect · pill · circle**: `w`, `h`, `color` (or a CSS gradient), `radius`, `border` {width, color}, `shadow`: true. They enter with `pop-overshoot` unless you set `enter` (`"none"`: no entrance, it is simply there).
 - **line**: from `at` to `to`, `width`, drawn on (`draw`: false to skip).
 - **ring**: a circle drawn as a stroke from the top, clockwise (a timer, a status or focus ring): `w` (diameter), `width` (stroke),
   `color`, `sweep` (degrees, 360 = full), drawn on (`draw`: false to skip), `drain`: true empties it again by the element's
-  end (a countdown), `ghost` (0–100: a faint full track under it).
+  end (a countdown) or `[start, end]` (s into the element) empties it then, `ghost` (0–100: a faint full track under it).
 - **image · video**: `src` (a file in the folder's assets/ as `asset:<name>`, or an https link) or, for an image, `svg` (SVG markup you write); `w` or `h`
   (px; the other follows the file's shape) or `fit` cover | contain
   (default: a video covers the frame, a picture sits at 70 % of contain), `rotate` (deg). A video also takes
   `startAt` (s into the file) and `volume` (0–100, default muted). No entrance unless you set `enter`.
 - **Keyframes on any element** — your own motion: `"keyframes": { "x": [[0, -400], [0.8, 0, "Smooth Glide"]], "scale": [[0, 0.9], [2, 1.05]] }`
   — tracks x, y (px offsets from `at`), scale, rotate (deg), opacity (0–1); each key [seconds into the element, value, easing of the
-  segment after it — Smooth Glide, AE Smooth, Expo Out, Back Out, Elastic, Linear …]. They replace an entrance's keys on the same track.
+  segment after it — Smooth Glide, AE Smooth, Expo Out, Back Out, Elastic, Linear …]. They replace an entrance's keys on the same track;
+  one key holds that value for the whole element.
 - **Every element**: `start` / `end` (s within its scene; default: staggered 0.12 s, to the scene's end), `enter` / `exit` (keyframe presets, `direction` up | down | left | right
   for directional ones), `effects`: [{ "id", "params"? }], `sound` (played at its start), `id`, `label` (its name in the page's options), `opacity` (0–1),
   `z` (px of depth, + toward the viewer, default 0: a real camera's dolly, orbit and depth of field separate layers by it), `locked`: true
   (the scene's camera doesn't move it: a logo, a caption). Keyframes also take a `z` track.
 - **Scene**: `duration` (s), `transition` into it (default Cross Fade, 0.6 s; `transitionDuration`), `transitionOptions` (the
   transition's own settings, e.g. Circular Wipe's `point` { x, y } (% of the frame from its top-left: 50, 50 is the centre) and `feather`; every option: `npx greenlight-motion schema transitions`.
-  A transition's vivid colours, such as Circular Wipe's beam, take the accent unless you set them), `camera` (below; default push-in),
+  A transition's vivid colours, such as Circular Wipe's beam, take the accent unless you set them; over a light backdrop Circular
+  Wipe's glowing beam is off, since it flares there, unless you set `beam`), `camera` (below; default push-in),
   `background` (overrides style), `sounds`: [{ "sfx", "at" }]. Script-level `sound`: auto (default: a whoosh on each transition and
   on the first headline, from the GreenLight sound library, which the CLI downloads into assets/sounds/ when it builds) | none (nothing from the library: when
   nothing may be downloaded, use `music` with a file you made).

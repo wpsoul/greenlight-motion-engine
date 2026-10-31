@@ -344,12 +344,20 @@ async function check() {
       else if (p.ok == null) problems.push({ code: 'plugin', ref, detail: 'it did not load', fix: "check the package's exports against the custom-effects / advanced-transitions starter and that its file name is its id" });
     }
     for (const e of errors) problems.push({ code: 'page-error', detail: e, fix: 'a value in project.json the engine cannot use; compare with the references in the skill' });
-    return { ok: problems.length === 0, duration, problems };
+    // notes: worth a look, not wrong by themselves — text the engine wraps onto more lines than it was written with
+    const notes = [];
+    for (const w of await page.evaluate((proj) => window.GreenLightMotion.textWraps?.(proj) || [], project)) {
+      notes.push({ code: 'text-wraps', ref: w.id, rows: w.rows, written: w.written,
+        detail: `"${w.text}" (${w.fontPx} px) wraps onto ${w.rows} lines in its ${w.widthPx} px box, written as ${w.written}`,
+        fix: `if the break is wanted, write it into the text (\\n); if not, widen the box (textWidthPx, or the script's width) or lower the size` });
+    }
+    return { ok: problems.length === 0, duration, problems, notes };
   });
   if (flags.json) console.log(JSON.stringify(result, null, 2));
   else {
     console.log(result.ok ? `ok — ${result.duration.toFixed(2)} s, nothing to fix` : `${result.problems.length} problem(s):`);
     for (const p of result.problems) console.log(`- ${p.code}: ${p.ref || p.detail || (p.times || []).join(', ')}\n  → ${p.fix}`);
+    for (const n of result.notes || []) console.log(`note — ${n.code} ${n.ref}: ${n.detail}\n  → ${n.fix}`);
   }
   process.exitCode = result.ok ? 0 : 1;
 }

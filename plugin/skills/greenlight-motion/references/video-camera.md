@@ -276,7 +276,7 @@ Parameter ranges (`CAMERA_RIG_PARAM_META` / `CAMERA_RIG_DEFAULTS`, `cameraRig.js
 | Key | UI label | Range | Default |
 | --- | --- | --- | --- |
 | `radius` | Radius | `100`–`20000` px | `1800` |
-| `height` | Height | `−8000`–`8000` px | `400` |
+| `height` | Height | `−8000`–`8000` px | `400` (positive films from below the subject — a low hero angle; negative from above) |
 | `startAngle` | **Start** | `−360`–`360`° | `−40` |
 | `sweep` | Sweep | `−720`–`720`° | `90` |
 | `rise` | Rise | `−8000`–`8000` px | `0` |
@@ -292,6 +292,8 @@ Parameter ranges (`CAMERA_RIG_PARAM_META` / `CAMERA_RIG_DEFAULTS`, `cameraRig.js
 **Twelve built-in rigs** (`CAMERA_RIG_PRESETS`, `cameraRig.js`) — each is a **complete** `cameraRig`, applied wholesale (a partial one leaves the previous shot's radius behind): `heroOrbit`, `slowReveal`, `turntable` (orbit), `craneDown`, `riseReveal` (crane), `pushIn` (pushIn), `pullBack` (dolly), `truckLeft` (truck), `productSpiral` (spiral), `handheldDrift` (handheld), `droneFollow`, `chaseCam` (follow). Read the exact numbers from that file rather than guessing them. Follow presets carry **no `targets`** — which layers to ride is project wiring, and the panel preserves the current list when any preset is applied; emitting a preset over an existing rig should do the same.
 
 **Mode precedence — a rig or a live path BEATS the pose keyframes.** `getCameraPose` reads the tracks first, then `applyCameraRig` (mode `"rig"`) or `applyCameraPath` (mode `"path"` with a live path) overwrites `camX`, `camY`, `camDolly` — plus `camTiltX`/`camTiltY`/`camRoll` whenever an aim is computed. So on a rigged camera, `camX`/`camY`/`camDolly`/tilt/roll keyframes are stored, drawn in the timeline, and **render as nothing**. `camZoom`, the whole DOF family, `camPathT` and `camFollowTarget` are untouched by both and compose freely. Emitting a pose move therefore means emitting `"cameraMoveMode": "free"` (or omitting the field) with it — the editor enforces the same rule by flipping the mode to `"free"` when a motion preset that animates those props is applied, keeping `cameraRig` and `cameraPath` on the item so switching back restores the move.
+
+**`radius` sets the framing.** The project camera films the frame at its own size from the perspective distance `(height / 2) / tan(14°)` (`perspectiveDistance`, `CAMERA_FOV` 28°): about **2166 px for a 1080-tall frame** and **3850 px for a 1920-tall one (9:16)**. A rig closer than that crops in, farther pulls back — so the default `1800` already crops a 16:9 frame a little and a vertical 9:16 one hard; set `radius` near the frame's distance unless the push is the point.
 
 **Rig parameters are NOT keyframable** — keying `radius` would rebuild the whole move every frame. **`camPathT` (Path Progress) is the track that carries the move**, and a rig with no `camPathT` keys sits frozen at its start pose. Always emit `camPathT` 0 → 100 alongside a `cameraRig`:
 

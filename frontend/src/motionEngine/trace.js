@@ -20,8 +20,9 @@ const round = (v) => (typeof v === 'number' ? Math.round(v * 1e4) / 1e4 : v);
  * inside its sequence's span is skipped. visit({ item, clip, at: { startTime, endTime }, parent, depth })
  */
 export function walkLayers(project, visit) {
-  const byClip = new Map((project.clips || []).map((c) => [c.id, c]));
-  const walk = (channels, offset, lo, hi, depth, parent) => {
+  // a sequence keeps its own layers' clips in its own `clips` (falling back to the level above for any it lacks)
+  const clipsOf = (list, outer) => { const m = new Map(outer || []); for (const c of list || []) m.set(c.id, c); return m; };
+  const walk = (channels, offset, lo, hi, depth, parent, byClip) => {
     for (const ch of channels || []) {
       const list = ch?.items || [];
       if (!list.length) continue;
@@ -34,12 +35,13 @@ export function walkLayers(project, visit) {
         const clip = byClip.get(item.clipId);
         visit({ item, clip, at, parent, depth });
         if (clip?.sequence && depth < 4) {
-          walk(clip.sequence.channels, at.startTime - (Number(item.trimStart) || 0), Math.max(lo, at.startTime), Math.min(hi, at.endTime), depth + 1, item.id);
+          walk(clip.sequence.channels, at.startTime - (Number(item.trimStart) || 0), Math.max(lo, at.startTime), Math.min(hi, at.endTime), depth + 1, item.id,
+            clipsOf(clip.sequence.clips, byClip));
         }
       });
     }
   };
-  walk(project.channels, 0, -Infinity, Infinity, 0, null);
+  walk(project.channels, 0, -Infinity, Infinity, 0, null, clipsOf(project.clips));
 }
 
 /**

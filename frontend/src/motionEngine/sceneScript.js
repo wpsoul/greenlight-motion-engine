@@ -83,6 +83,14 @@ const contrast = (a, b) => {
 // footage, but on type it shows the words backwards): a script's scenes leave that edge empty. Advanced Zoom keeps its
 // mirror: a zooming scene left empty shows its own shrunken frame as a rectangle.
 const EDGE_FILLED = new Set(['Advanced Movement']);
+// a backdrop's mean luminance from its colour or its gradient's colours; a shader or a picture is unknown (null)
+const backdropLuma = (bg) => {
+  if (!bg) return null;
+  const hexes = bg.type === 'gradient' ? (String(bg.gradientCss || '').match(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b/gi) || [])
+    : bg.type === 'solid' ? [bg.solidColor] : [];
+  const ls = hexes.map(luminance).filter((v) => v != null);
+  return ls.length ? ls.reduce((a, b) => a + b, 0) / ls.length : null;
+};
 // every Google Fonts family (the editor's own catalogue): a font the page can load by name while online
 const GOOGLE_FAMILIES = new Set(GOOGLE_FONT_CATALOG.split('\n').map((l) => l.split('|')[0].trim().toLowerCase()).filter(Boolean));
 const KF_IN = new Map(kfpVariants(KEYFRAME_PRESETS, 'in').map((p) => [p.id, p]));
@@ -281,7 +289,7 @@ export function compileScript(script, caps, files = new Map()) {
         const track = CAM_TRACKS[name];
         if (!track) { problems.push(`${cw}: keyframes "${name}" — one of ${Object.keys(CAM_TRACKS).join(', ')}`); continue; }
         if (CAM_DRIVEN[mode]?.includes(name)) { problems.push(`${cw}: keyframes.${name} — ${mode === 'rig' ? 'a rig' : 'zooms'} drive${mode === 'rig' ? 's' : ''} ${CAM_DRIVEN[mode].join(', ')} themselves; key ${Object.keys(CAM_TRACKS).filter((t) => !CAM_DRIVEN[mode].includes(t)).join(', ')}`); continue; }
-        if (!Array.isArray(keys) || keys.length < 2) { problems.push(`${cw}: keyframes.${name} needs two or more [seconds, value] keys`); continue; }
+        if (!Array.isArray(keys) || keys.length < 1) { problems.push(`${cw}: keyframes.${name} needs one or more [seconds, value] keys (one key holds that value)`); continue; }
         const list = [];
         for (const k of keys) {
           const [t, v, easing = 'AE Smooth'] = Array.isArray(k) ? k : [k?.t, k?.value, k?.easing];
@@ -293,6 +301,7 @@ export function compileScript(script, caps, files = new Map()) {
           list.push({ position: r3(clamp((Number(t) / len) * 100, 0, 100)), value: String(r3(value)), easing });
         }
         if (list.length === keys.length) {
+          if (list.length === 1) list.splice(0, 1, { ...list[0], position: 0, easing: 'Linear' }, { ...list[0], position: 100, easing: 'Linear' });
           if (pk[track] && track !== 'camPathT') warnings.push(`${cw}: keyframes.${name} replace the ${track} keys of move "${c.move}"`);
           pk[track] = list.sort((a, b) => a.position - b.position);
           if (name === 'focusZ') item.camDofEnabled = 1;
@@ -481,7 +490,14 @@ export function compileScript(script, caps, files = new Map()) {
         const kf = {};
         const drawn = el?.draw !== false ? r3(Math.min(100, (0.9 / (end - start)) * 100)) : 0;
         if (drawn) kf.lineTrimEnd = [{ position: 0, value: '0', easing: 'AE Out' }, { position: drawn, value: String(full), easing: 'Linear' }];
-        if (el?.drain) kf.lineTrimStart = [{ position: drawn, value: '0', easing: 'Linear' }, { position: 100, value: String(full), easing: 'Linear' }];
+        if (el?.drain) {
+          // `drain`: true empties it from the draw-on to the element's end; [start, end] (s into the element) empties it then
+          const len = Math.max(1e-3, end - start);
+          const [d0, d1] = Array.isArray(el.drain) && el.drain.length === 2 && el.drain.every((v) => Number.isFinite(Number(v)))
+            ? el.drain.map((v) => clamp((Number(v) / len) * 100, 0, 100)) : [drawn, 100];
+          if (d1 <= d0) problems.push(`${ew}: drain is [start, end] seconds into the element, end after start`);
+          else kf.lineTrimStart = [{ position: r3(d0), value: '0', easing: 'Linear' }, { position: r3(d1), value: String(full), easing: 'Linear' }];
+        }
         if (Object.keys(kf).length) item.propertyKeyframes = kf;
         if (!el?.color || el.color === 'accent') accentTargets.push({ itemId: id, path: 'shapeFillColor' });
       } else if (type === 'line') {
@@ -524,7 +540,7 @@ export function compileScript(script, caps, files = new Map()) {
         for (const [name, keys] of Object.entries(el.keyframes)) {
           const track = KF_TRACKS[name];
           if (!track) { problems.push(`${ew}: keyframes "${name}" — one of ${Object.keys(KF_TRACKS).join(', ')}`); continue; }
-          if (!Array.isArray(keys) || keys.length < 2) { problems.push(`${ew}: keyframes.${name} needs two or more [seconds, value] keys`); continue; }
+          if (!Array.isArray(keys) || keys.length < 1) { problems.push(`${ew}: keyframes.${name} needs one or more [seconds, value] keys (one key holds that value)`); continue; }
           const list = [];
           for (const k of keys) {
             const [t, v, easing = 'AE Smooth'] = Array.isArray(k) ? k : [k?.t, k?.value, k?.easing];
@@ -533,6 +549,8 @@ export function compileScript(script, caps, files = new Map()) {
             list.push({ position: r3(clamp((Number(t) / len) * 100, 0, 100)), value: String(name === 'opacity' ? clamp(Number(v), 0, 1) : Number(v)), easing });
           }
           if (list.length === keys.length) {
+            // one key = that value for the whole element (a hold), e.g. a shape that sits still instead of its entrance
+            if (list.length === 1) list.splice(0, 1, { ...list[0], position: 0, easing: 'Linear' }, { ...list[0], position: 100, easing: 'Linear' });
             if (item.propertyKeyframes?.[track]) warnings.push(`${ew}: keyframes.${name} replace the ${track} keys of its entrance / exit`);
             item.propertyKeyframes = { ...(item.propertyKeyframes || {}), [track]: list.sort((a, b) => a.position - b.position) };
           }
@@ -573,6 +591,9 @@ export function compileScript(script, caps, files = new Map()) {
             if (own.includes(k)) own.splice(own.indexOf(k), 1);
           }
         }
+        // Circular Wipe's beam glows additively: over a light backdrop it flares into a white blob across the picture, so a
+        // light scene gets the clean wipe (the script can still ask for the beam with transitionOptions.beam)
+        if (tr === 'Circular Wipe' && opts.beam === undefined && (backdropLuma(sceneBg || projectBg) ?? 0) > 0.4) opts.beam = false;
         for (const k of own) accentTargets.push({ itemId: sceneId, path: `transitionOptions.${k}` });
         if (Object.keys(opts).length) sceneItem.transitionOptions = opts;
         sceneItem.transitionDuration = r3(clamp(num(sc?.transitionDuration, 0.6), 0.2, Math.min(prev, D) / 2));

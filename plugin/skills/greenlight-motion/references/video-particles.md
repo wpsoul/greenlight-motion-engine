@@ -59,7 +59,7 @@ Rules:
       "items": [
         { "id": "prtitem1", "clipId": "prt1", "trimStart": 0, "trimEnd": 6, "freeStart": 0,
           "particleSystem": {
-            "schemaVersion": 2,
+            "schemaVersion": 4,
             "preset": "snow",
             "seed": 55521,
             "solver": { "cacheHz": 30, "maxParticles": 2000, "preRoll": 7, "space": "local",
@@ -110,7 +110,7 @@ Rules:
 
 | Field | Range | Meaning |
 | --- | --- | --- |
-| `emit` | `continuous` \| `static` | `static` fills the system to the cap once and never emits again (rate and bursts ignored) — the right mode for a shatter/dissolve or anything Particle Activation releases. |
+| `emit` | `continuous` \| `static` | `static` fills the system to the cap once and never emits again (rate and bursts ignored) — the right mode for a shatter/dissolve or anything Particle Activation releases. It fires at clip time `max(0, start)`, AFTER the pre-roll, so nothing it emits has a history at frame 0: for a trail that already exists at frame 0 (a comet), use `continuous` with `maxParticles` as the cap, which emits during the pre-roll. |
 | `shape` | `point` \| `box` \| `sphere` \| `cone` \| `ring` \| `path` \| `block` \| `layer` \| `rows` | `layer` fires from a picture's opaque pixels — see below. With `render.colorMode: "source"` and a VIDEO source, `render.colorSourceTime` decides when each colour is read: `"live"` (default) re-reads the frame playing now, so the cloud is the moving picture; `"birth"` keeps the colour each particle was emitted with and lets the video move on without it. Either way the emission SITES stay from the one snapshot they were picked in, so nothing re-simulates and neither value is in the sim hash. v3: `ring` is an annulus in the comp plane (`ring: {radius, thickness}` px), `path` births evenly along a spline (`path.anchors` in the emitter's unit space, −0.5..0.5), `block` is a filled slab — the "layer of particles" source (pair it with `emit: "static"`). `rows` is a grid of **ready-made lines** — see [Lines](#lines-rendermode-lines--trails-and-ready-made-lines). |
 | `dirMode` | `cone` \| `outward` \| `tangent` | v3, `ring`/`path` only: launch along `direction`+`spread`, away from the ring / normal to the path, or along it. |
 | `distribution` | `{mode, jitter, order, sites, rings, clusters, tightness, bias, thickness, sequence, relaxIters}` | **How spawn sites are SPREAD inside the emitter's shape** — orthogonal to the geometry, so `box`, `sphere`, `cone`, `ring`, `path` and `block` all get every mode (`layer` and `point` do not use it; see below). Omit the block (or `mode: "random"`) for the emitter's original three independent draws; that is the default and is byte-identical to a system authored without it. See the table below. |
@@ -202,7 +202,7 @@ Physics that must hold when authoring by hand: with a `text` container, keep `fl
 
 ```json
 "particleSystem": {
-  "schemaVersion": 3, "preset": "smoke", "seed": 184729,
+  "schemaVersion": 4, "preset": "smoke", "seed": 184729,
   "solver": { "maxParticles": 4000, "preRoll": 0, "bounds": { "size": { "x": 1920, "y": 1080, "z": 480 }, "behavior": "kill" } },
   "emitters": [{ "shape": "sphere", "position": { "x": 0, "y": -400, "z": 0 }, "size": { "x": 52, "y": 52, "z": 52 },
     "rate": 900, "lifetime": { "value": 4, "random": 1.4 }, "speed": { "value": 180, "random": 45 },
@@ -221,7 +221,7 @@ To bend that plume with a fan, add `"forceEmitters": [{ "id": "b1", "kind": "jet
 
 ```json
 "particleSystem": {
-  "schemaVersion": 3, "preset": "shockwave", "seed": 51377,
+  "schemaVersion": 4, "preset": "shockwave", "seed": 51377,
   "solver": { "maxParticles": 9000, "preRoll": 0, "bounds": { "size": { "x": 1920, "y": 1080, "z": 300 }, "behavior": "kill" } },
   "emitters": [{ "emit": "continuous", "shape": "ring", "position": { "x": 0, "y": 0, "z": 0 }, "ring": { "radius": 38, "thickness": 12 }, "dirMode": "outward",
     "size": { "x": 77, "y": 77, "z": 24 }, "rate": 0,
@@ -253,7 +253,7 @@ The other fluid presets differ from these only in numbers: *Cigarette* is Rising
 
 #### Emitting from a layer (`shape: "layer"`) — dissolve a picture into its own pixels
 
-Particles are born on the artwork's opaque pixels and can keep the colour of the pixel they came from. The artwork is a **bounded snapshot on the emitter**, never a live reference — the source layer can be trimmed, hidden or deleted without breaking the system. `fromItemId` is only a hint so the editor's **Update artwork from layer** can find it again.
+Particles are born on the artwork's opaque pixels and can keep the colour of the pixel they came from. **How the sites are picked:** the picture is scaled down to at most 512 px on its long side (smoothed, so fine detail softens), every pixel with alpha above 8 is a site, and births pick evenly among the sites: alpha does not weight them, so density is the NUMBER of opaque pixels in an area — draw a dense region with more pixels, not brighter ones. Give the picture as a file or link (`asset:`, `/media/…`, https): a `url` is cut at 2,048 characters, so a data URL does not fit. The artwork is a **bounded snapshot on the emitter**, never a live reference — the source layer can be trimmed, hidden or deleted without breaking the system. `fromItemId` is only a hint so the editor's **Update artwork from layer** can find it again.
 
 ```json
 { "shape": "layer", "emit": "continuous", "rate": 0,

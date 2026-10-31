@@ -37,6 +37,7 @@ import { PlayerPage } from './PlayerPage';
 import { toEngineProject } from './normalize';
 import { checkSoundCues } from './soundCues';
 import { traceProject, matteGaps } from './trace';
+import { textWraps } from './textWraps';
 import { SOUNDS } from './sfx';
 import { checkTemplate } from './template';
 import { installFetchLayer, createResolver, setActiveResolver, resolveProject, missingAssets, clearMissingAssets, pluginStatus } from './assets';
@@ -164,6 +165,6 @@ function mountPage(el, { project, assets = null, theme = 'dark' } = {}) {
   return { unmount: () => root.unmount() };
 }
 
-window.GreenLightMotion = { create, mountPage, mountStudio, checkTemplate, checkSoundCues, sounds: SOUNDS, missingAssets, pluginStatus, normalize: toEngineProject, trace: async (project, opts) => traceProject(await toEngineProject(project), opts), matteGaps: async (project) => matteGaps(await toEngineProject(project)), version: VERSION };
+window.GreenLightMotion = { create, mountPage, mountStudio, checkTemplate, checkSoundCues, sounds: SOUNDS, missingAssets, pluginStatus, normalize: toEngineProject, trace: async (project, opts) => traceProject(await toEngineProject(project), opts), matteGaps: async (project) => matteGaps(await toEngineProject(project)), textWraps: async (project) => textWraps(await toEngineProject(project)), version: VERSION };
 
-export { create, mountPage, mountStudio, checkTemplate, checkSoundCues, SOUNDS as sounds, missingAssets, pluginStatus, toEngineProject as normalize, traceProject, matteGaps, VERSION as version };
+export { create, mountPage, mountStudio, checkTemplate, checkSoundCues, SOUNDS as sounds, missingAssets, pluginStatus, toEngineProject as normalize, traceProject, matteGaps, textWraps, VERSION as version };
