@@ -18,6 +18,19 @@ const refOf = (host, topic) => (host === 'chat' ? `get_motion_reference "${topic
 export function scriptFormatGuide(host = 'chat') {
   return `## The scene script
 
+**Before the script, a direction.** Presets make a video move; they don't give it an idea. Decide in a few lines first,
+and keep them next to the script:
+- **The idea**: ONE picture from the subject's own world (its object, place or action: a coffee shop's steam and cup rim,
+  a budgeting app's receipt printing line by line, a running app's track the scenes run along), carried through every scene.
+- **The palette**: background, text, one accent, plus only the colours that carry meaning (good / bad, before / after).
+  Light or dark on purpose.
+- **The type**: a big headline against a small support line; aligned left or centred on purpose, not by default.
+- **Each scene**: what it SHOWS besides its words, built from shapes, lines, \`svg\` you write, keyframes and the camera.
+The same line centred on a gradient in every scene reads as a template. Judge the stills against the direction, not
+only for mistakes.${host === 'cli' ? `
+What a script can't say (a custom GLSL shader on a shape or the background, words dipping under a surface with a track
+matte, masks, particles, 3D) goes on from \`project.json\`: SKILL.md, "Beyond the script".` : ''}
+
 \`\`\`json
 {
   "title": "Bean There — opening day",
@@ -62,6 +75,9 @@ export function scriptFormatGuide(host = 'chat') {
   (the scene's camera doesn't move it: a logo, a caption). Keyframes also take a \`z\` track.
 - **Scene**: \`duration\` (s), \`transition\` into it (default Cross Fade, 0.6 s; \`transitionDuration\`), \`camera\` (below; default push-in),
   \`background\` (overrides style), \`sounds\`: [{ "sfx", "at" }]. Script-level \`sound\`: auto (default: a whoosh on each transition and on the first headline) | none.
+  **A transition overlaps the scenes on both sides**, so the video lasts the scenes' durations added up MINUS every
+  transition: five 3 s scenes with the default 0.6 s transitions run 15 − 4 × 0.6 = 12.6 s. To hit a length, add the
+  transitions back to the scenes (${host === 'chat' ? 'build_video' : '`script`'} prints the total).
 - **camera** — a quick move of the whole scene: ${CAMERAS.join(' | ')}. Or a REAL camera that films the scene's elements in 3D (the
   Video Editor's own camera layer; the scene's backdrop stays put, so its edge never shows). One of:
   - \`{ "move": id }\` — a camera move from the catalogue (or just \`"camera": "cm-quiet-push"\`), spread over the scene;

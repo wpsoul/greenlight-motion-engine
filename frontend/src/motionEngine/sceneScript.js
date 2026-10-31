@@ -58,6 +58,29 @@ const FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
 const TEXT = new Map([...TEXT_PRESETS, ...CLASSIC_PRESETS].map((p) => [p.id, p]));
 // text animation ids the catalogue renamed: scripts written with the old id still build
 const TEXT_RENAMED = { 'glide-soft': 'glide-continuous' };
+// A text preset's own colours. The VIVID ones (its colour band, glow, outline, gradient, the box behind a word) are the
+// preset's palette and take the video's accent; the NEUTRAL ones (white-hot letters, dark ink on a box, a white card)
+// are its light and shade and stay, so a word on a box keeps reading.
+const rgbOf = (c) => {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(c || '').trim());
+  if (!m) return null;
+  const h = m[1].length === 3 ? m[1].split('').map((x) => x + x).join('') : m[1];
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+};
+const vivid = (c) => { const v = rgbOf(c); return !!v && Math.max(...v) - Math.min(...v) >= 40; };
+const luminance = (c) => {
+  const v = rgbOf(c);
+  if (!v) return null;
+  const [r, g, b] = v.map((x) => (x / 255 <= 0.03928 ? x / 255 / 12.92 : ((x / 255 + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a, b) => {
+  const la = luminance(a), lb = luminance(b);
+  return la == null || lb == null ? 21 : (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+};
+// the transitions that fill the frame edge a travelling scene leaves behind with a MIRRORED copy of it (right for
+// footage, but on type it shows the words backwards): a script's scenes leave that edge empty
+const EDGE_FILLED = new Set(['Advanced Zoom', 'Advanced Movement']);
 const KF_IN = new Map(kfpVariants(KEYFRAME_PRESETS, 'in').map((p) => [p.id, p]));
 const KF_OUT = new Map(kfpVariants(KEYFRAME_PRESETS, 'out').map((p) => [p.id, p]));
 const ROLES = { headline: [0.11, 800], subhead: [0.05, 500], body: [0.036, 400], label: [0.028, 600] };
@@ -391,11 +414,30 @@ export function compileScript(script, caps, files = new Map()) {
           else {
             const patch = presetPatch(item, p, { clipSec: end - start, fontPx: size, mode: 'replace' });
             item.textAnimators = el?.textExit ? patch.textAnimators : patch.textAnimators.filter((a) => !(a.range?.drive === 'time' && a.range?.animate === 'out'));
-            // a preset's colour band (a fill the letters pass through, e.g. Glide Text's blue) takes the video's accent and
-            // follows the Accent option, so the animation stays in the video's palette
+            // the preset's vivid colours (Glide Text's blue band, Focus Type's gradient, a glow, the box behind a word)
+            // take the video's accent and follow the Accent option, so the animation stays in the video's palette
+            const boxed = [];
             item.textAnimators.forEach((a, ai) => (a.effects || []).forEach((fx, fi) => {
-              if (fx.type === 'fill' && typeof fx.color === 'string') { fx.color = colors.accent; accentTargets.push({ itemId: id, path: `textAnimators.${ai}.effects.${fi}.color` }); }
+              const at = `textAnimators.${ai}.effects.${fi}`;
+              if (Array.isArray(fx.colors)) {
+                fx.colors.forEach((c, ci) => { if (vivid(c)) { fx.colors[ci] = colors.accent; accentTargets.push({ itemId: id, path: `${at}.colors.${ci}` }); } });
+              } else if (typeof fx.color === 'string' && vivid(fx.color)) {
+                fx.color = colors.accent;
+                accentTargets.push({ itemId: id, path: `${at}.color` });
+                if (fx.type === 'box' && !boxed.includes(a)) boxed.push(a);
+              }
             }));
+            // a word on the accent box still reads: the ink it shows there (the preset's fills, else the layer's colour)
+            // keeps 4.5:1 against the accent, near-black or white, whichever reads better
+            if (boxed.length) {
+              const ink = contrast('#0b0d0c', colors.accent) >= contrast('#ffffff', colors.accent) ? '#0b0d0c' : '#ffffff';
+              const fills = item.textAnimators.flatMap((a) => (a.effects || []).filter((fx) => fx.type === 'fill'));
+              if (fills.length) fills.forEach((fx) => { if (contrast(fx.color, colors.accent) < 4.5) fx.color = ink; });
+              else if (contrast(color, colors.accent) < 4.5) {
+                let pidN = Math.max(0, ...item.textAnimators.flatMap((a) => (a.effects || []).map((fx) => Number(String(fx.pid).replace(/^\D+/, '')) || 0)));
+                for (const a of boxed) a.effects = [...(a.effects || []), { pid: `p${++pidN}`, type: 'fill', color: ink }];
+              }
+            }
             item.propertyKeyframes = { ...(item.propertyKeyframes || {}), ...patch.propertyKeyframes };
             if (patch.textAnimatorPivotX != null) { item.textAnimatorPivotX = patch.textAnimatorPivotX; item.textAnimatorPivotY = patch.textAnimatorPivotY; }
           }
@@ -482,6 +524,7 @@ export function compileScript(script, caps, files = new Map()) {
       else if (tr !== 'None') {
         const prev = num(scenes[si - 1]?.duration, 3);
         sceneItem.transition = tr;
+        if (EDGE_FILLED.has(tr)) sceneItem.transitionOptions = { edgeMode: 'none' };
         sceneItem.transitionDuration = r3(clamp(num(sc?.transitionDuration, 0.6), 0.2, Math.min(prev, D) / 2));
         total -= sceneItem.transitionDuration;
         if ((S.sound ?? 'auto') === 'auto') project.sounds.push({ sfx: soundOk('soft-swoosh', where) ? 'soft-swoosh' : 'standard-swoosh', on: project.channels[0].items.at(-1).id, at: 'end' });
