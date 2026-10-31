@@ -377,14 +377,45 @@ export function install(STUDIO, opts = {}) {
     const ink = document.querySelector('.mn-ink');
     B.classList.toggle('cl-drawing', m === 'notes' && (!!document.querySelector('.mn-tools [data-note-tool][aria-pressed=true]') || !!(ink && !ink.hidden && ink.offsetParent)));
     listButton(); stripHeight(); flagsClear();
-    const st = pg.state ? pg.state() : null, hlOn = m !== 'edit';
-    const tl = document.querySelector(hlOn ? '.hl-tl' : '.cl-lanes, .glm-tlwrap'), bar = document.querySelector(hlOn ? '.hl-ruler' : '.glm-bar');
-    if (st && st.playing && tl && bar && pg.duration > 0) {
-      const x = (st.playhead || 0) / pg.duration * bar.offsetWidth + (bar.getBoundingClientRect().left - tl.getBoundingClientRect().left + tl.scrollLeft), v = tl.clientWidth;
-      const gutter = hlOn ? (tl.querySelector('.hl-lab') || {}).offsetWidth || 58 : parseFloat(getComputedStyle(tl).paddingLeft) || 0;
-      if (x < tl.scrollLeft + gutter + 12 || x > tl.scrollLeft + v - 24) tl.scrollLeft = Math.max(0, x - Math.max(gutter + 24, v * 0.3));
-    }
   }
+  // the element that scrolls the clips sideways: `.cl-lanes` (inside `.glm-tlwrap`, which does not scroll — a selector
+  // list in querySelector returns the first in PAGE order, i.e. the wrapper), or Notes / Highlight's `.hl-tl`
+  const lanesOf = (edit) => (edit ? document.querySelector('.cl-lanes') || document.querySelector('.glm-tlwrap') : document.querySelector('.hl-tl'));
+  // ── the timeline follows the playhead while it plays, as GreenLight Dash's does (videoEditor/Timeline.jsx): every
+  // frame the view keeps the playhead in sight with lead room at the right edge; it gives way while you scroll it
+  // yourself and glides back a moment after you stop.
+  const LEAD = 48, IDLE = 1200, GLIDE = 320;
+  const own = new WeakMap();
+  let userAt = -1e9, glide = null;
+  document.addEventListener('scroll', (e) => {
+    const el = e.target;
+    if (el instanceof Element && el.matches('.cl-lanes, .hl-tl') && Math.abs(el.scrollLeft - (own.get(el) ?? -1)) > 1) { userAt = performance.now(); glide = null; }
+  }, true);
+  function follow(now) {
+    requestAnimationFrame(follow);
+    if (!stack()) return;
+    const pg = api(), st = pg && pg.ready && pg.state ? pg.state() : null;
+    if (!st || !(pg.duration > 0)) return;
+    const edit = mode() === 'edit', sc = lanesOf(edit), bar = document.querySelector(edit ? '.glm-bar' : '.hl-ruler');
+    if (!sc || !bar || sc.scrollWidth <= sc.clientWidth + 1) return;
+    const put = (x) => { sc.scrollLeft = Math.max(0, x); own.set(sc, sc.scrollLeft); };
+    if (glide) {
+      const k = Math.min(1, (now - glide.t0) / GLIDE), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      put(glide.from + (glide.to - glide.from) * e); if (k >= 1) glide = null; return;
+    }
+    if (!st.playing || now - userAt < IDLE) return;
+    // what covers the lanes' left edge (the names column / Highlight's labels) is not part of the view
+    const sr = sc.getBoundingClientRect(), cover = document.querySelector(edit ? '.lab-track-labels' : '.hl-lab');
+    const cr = cover && cover.offsetParent ? cover.getBoundingClientRect() : null;
+    const gutter = cr && cr.left < sr.left + 8 ? Math.max(0, cr.right - sr.left) : 0;
+    const x = bar.getBoundingClientRect().left - sr.left + sc.scrollLeft + (st.playhead || 0) / pg.duration * bar.offsetWidth;
+    const left = sc.scrollLeft + gutter, right = sc.scrollLeft + sc.clientWidth;
+    const to = x > right - LEAD ? x - sc.clientWidth + LEAD : x < left ? x - gutter - LEAD : null;
+    if (to == null) return;
+    if (now - userAt < IDLE + 400 && Math.abs(to - sc.scrollLeft) > sc.clientWidth / 3) glide = { from: sc.scrollLeft, to: Math.max(0, to), t0: now };
+    else put(to);
+  }
+  requestAnimationFrame(follow);
   let ready = false;
   function setup() {
     if (ready) return; ready = true;
@@ -442,7 +473,7 @@ export function install(STUDIO, opts = {}) {
   // zoom with the time under the finger (or the pointer) kept where it is
   function setPPS(next, anchorX) {
     next = Math.max(20, Math.min(240, next)); if (Math.abs(next - PPS) < 0.5) return;
-    const edit = mode() === 'edit', sc = document.querySelector(edit ? '.cl-lanes, .glm-tlwrap' : '.hl-tl'), bar = document.querySelector(edit ? '.glm-bar' : '.hl-ruler');
+    const edit = mode() === 'edit', sc = lanesOf(edit), bar = document.querySelector(edit ? '.glm-bar' : '.hl-ruler');
     let f = null;
     if (sc && bar && anchorX != null) { const r = bar.getBoundingClientRect(); f = (anchorX - r.left) / Math.max(1, r.width); }
     PPS = next; store.set('glm-chat-pps', String(Math.round(PPS)));
