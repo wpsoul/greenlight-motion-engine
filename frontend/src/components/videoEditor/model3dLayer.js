@@ -27,6 +27,7 @@ import {
 import { PCSS_INSTALLED, pcssRadiusFor, lightSpread, autoShadowBias } from './rigSoftShadows';
 import { fitDirectionalShadow } from './rigShadowFit';
 import { createRigContactShadows } from './rigContactShadows';
+import { lowestPointY } from './model3dFloor';
 // The Mockup builder's screen fit maths, shared rather than reimplemented so a screen
 // looks identical in both features.
 import { createCanvasSurface, drawMediaToCanvas } from '../mockupGenerator/screenTexture';
@@ -3039,12 +3040,14 @@ function poseModel(entry, item, config, prs, rig, W, H, time, frameToken) {
   // preset assets have wildly different pivots, which is why a fixed offset made
   // some devices float. `prs.py` remains a lift above the set, and "Free" in the
   // inspector restores unconstrained placement.
+  // The lowest point is measured on the geometry, not the union of mesh boxes: a
+  // rotating part's box corners dip below it and made the model hop (model3dFloor.js).
   if (rig && config.placeOnRigFloor !== false && CYC_FLOOR_SHAPES.has(rig.cyclorama?.shape)) {
     entry.outer.updateMatrixWorld(true);
-    _box.setFromObject(entry.root);
-    if (Number.isFinite(_box.min.y)) {
+    const lowY = lowestPointY(entry.root);
+    if (Number.isFinite(lowY)) {
       const floorY = -H * 0.42 + (rig.cyclorama?.y || 0);
-      entry.outer.position.y += floorY + (prs?.py || 0) - _box.min.y;
+      entry.outer.position.y += floorY + (prs?.py || 0) - lowY;
     }
   }
   entry.pose = { fit, sx, sy, sz };

@@ -26,7 +26,10 @@ export const PASS_POOL_GRACE = 120;
 export const PASS_POOL_IDLE_MS = 4000;
 const PERSISTENT_BAKE_RE = /^(rig|af|scn):(?!norm:)/;
 
-export function ensurePassTarget(engine, key, w, h, nearest) {
+// `hdr` = a half-float target (pass.hdr): values above 1 and the faint tail of a
+// linear-light glow survive between passes, where 8 bits would clip and band. The
+// caller's key must carry the flag, so an 8-bit and a float target never share a slot.
+export function ensurePassTarget(engine, key, w, h, nearest, hdr = false) {
   const renderer = engine.renderer;
   if (!renderer) return null;
   const width = Math.max(1, Math.round(w));
@@ -39,7 +42,7 @@ export function ensurePassTarget(engine, key, w, h, nearest) {
       minFilter: filter,
       magFilter: filter,
       format: THREE.RGBAFormat,
-      type: THREE.UnsignedByteType,
+      type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
       depthBuffer: false,
       stencilBuffer: false,
     });

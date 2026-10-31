@@ -3,8 +3,9 @@
 // (textAnimators.js) and the app's own track evaluator, so a tile moves the way the
 // layer will. Mirrors the lab's draw (html/finished/text-animators-lab/index.html): per-unit
 // transform around each animator's unit (a glyph with depth is warped into
-// perspective), tracking reflow, folded paint, shadow-only glow and shadow,
-// highlight boxes, masks, carets. Voice presets speak the tile text with a made-up
+// perspective), tracking reflow, folded paint, shadow-only shadow, the glow as the
+// Player's Deep Glow in 2D (a glow-source canvas summed through octave blurs, added
+// over the text), highlight boxes, masks, carets. Voice presets speak the tile text with a made-up
 // voice (presets fakeVoice: `voiceWins`). Preview only — the layer itself is drawn by
 // the Player.
 
@@ -79,6 +80,10 @@ export function previewLayout(ctx, { text, family, weight, w, h, maxSize = Infin
 // by every tile.
 let warpCanvases = null;
 const warpScratch = () => warpCanvases || (warpCanvases = { a: document.createElement('canvas'), b: document.createElement('canvas') });
+let glowCanvas = null;
+// The Player's text glow (engine/textDeepGlow.js): radius = 5 × Size, one plate per size.
+const GLOW_RADIUS_PER_SIZE = 5;
+const GLOW_PLATE_MAX = 4;
 
 const paintStyle = (ctx, css, box) => {
   if (typeof css === 'string' && css.startsWith('linear-gradient')) return buildCanvasGradient(ctx, css, box) || '#ffffff';
@@ -160,9 +165,23 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
   // glyphs: one glyph with its light, stroke and paint on `c`, M = its full matrix
   const OFF = 2000;
   const by = (L.asc - L.desc) / 2;
+  // Set while units paint a glow-source plate (the glow pass below): that plate's Size.
+  let plateSize = null;
   const paintGlyph = (c, M, u, i, st) => {
     c.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
     const g = glyphFor(st, u.ch);
+    if (plateSize !== null) {
+      let a = 0;
+      let col = null;
+      for (const gl of st.glows || []) if (Math.abs(gl.size - plateSize) < 0.26) { a += gl.alpha; col = col || gl.c; }
+      if (a > 0.003 && col) {
+        c.globalAlpha = st.alpha * clamp(a / GLOW_PLATE_MAX, 0, 1);
+        c.fillStyle = rgbCss(col);
+        c.fillText(g, 0, by);
+        c.globalAlpha = 1;
+      }
+      return;
+    }
     const unitBlur = st.blur > 0.05 ? +(st.blur * dpr).toFixed(2) : 0;
     c.filter = unitBlur ? `blur(${unitBlur}px)` : 'none';
     // The unit's Blur goes into the shadow's own (σ = B/2 and r add in quadrature), never
@@ -177,12 +196,6 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
       c.restore();
     };
     if (st.shadow && st.shadow.alpha > 0.003) shadowOnly(rgbCss(st.shadow.c, clamp(st.shadow.alpha, 0, 1)), st.shadow.blur * dpr, st.shadow.x * dpr, st.shadow.y * dpr);
-    if (st.glows) {
-      for (const gl of st.glows) {
-        const passes = clamp(Math.ceil(gl.alpha), 1, 3);
-        for (let p = 0; p < passes; p += 1) shadowOnly(rgbCss(gl.c, clamp(gl.alpha / passes, 0, 1)), gl.size * dpr * (p % 2 ? 0.45 : 1), 0, 0);
-      }
-    }
     const stroke = st.stroke && st.stroke.w > 0.05 ? st.stroke : null;
     if (stroke) { c.lineJoin = 'round'; c.miterLimit = 2; c.strokeStyle = rgbCss(stroke.c); }
     if (stroke && !st.outlineK) { c.globalAlpha = st.alpha; c.lineWidth = stroke.w * 2; c.strokeText(g, 0, by); }
@@ -204,18 +217,17 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
     c.globalAlpha = 1;
   };
   // One unit: its transform around each animator's unit (depth = warped).
-  const drawUnit = (i, u, st) => {
+  const drawUnit = (i, u, st, target = ctx) => {
     const mb = st.mask ? maskOf(i, st.mask) : null;
     const tf = st.xf ? unitTransform(mb ? maskedXf(st, mb.y1 - mb.y0) : st.xf, (lv) => boxOf(i, lv), pivot) : null;
     const local = [1, 0, 0, 1, X[i], u.cy];
     if (tf && tf.projective) {
       // Depth: paint the glyph flat, then warp it into perspective.
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      target.setTransform(dpr, 0, 0, dpr, 0, 0);
       const room = band * 0.25 + (st.stroke ? st.stroke.w : 0);
       const box = { x0: X[i] - u.w / 2 - room, y0: u.cy - band / 2 - room, x1: X[i] + u.w / 2 + room, y1: u.cy + band / 2 + room };
-      const reach = 3 * st.blur + (st.shadow ? Math.abs(st.shadow.x) + Math.abs(st.shadow.y) + 1.5 * st.shadow.blur : 0)
-        + (st.glows ? 1.5 * Math.max(...st.glows.map((gl) => gl.size)) : 0);
-      const w = warpBegin(ctx, tf.H, box, warpScratch(), reach * dpr);
+      const reach = 3 * st.blur + (st.shadow ? Math.abs(st.shadow.x) + Math.abs(st.shadow.y) + 1.5 * st.shadow.blur : 0);
+      const w = warpBegin(target, tf.H, box, warpScratch(), reach * dpr);
       if (w) { paintGlyph(w.ctx, mul(w.base, local), u, i, st); warpEnd(w); }
       return;
     }
@@ -223,23 +235,60 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
     if (tf) M = mul(M, hToCanvas(tf.H));
     M = mul(M, local);
     if (Math.abs(M[0] * M[3] - M[1] * M[2]) < 1e-9) return;
-    paintGlyph(ctx, M, u, i, st);
+    paintGlyph(target, M, u, i, st);
   };
-  for (let i = 0; i < n; i += 1) {
-    const u = L.units[i];
-    const st = ev.states[i];
-    if (u.space || st.alpha < 0.003) continue;
-    if (st.mask) {
-      // Mask: cut the unit off at its resting ink box, so it slides in from behind it.
-      const b = maskOf(i, st.mask);
-      ctx.save();
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.beginPath();
-      ctx.rect(b.x0 - 2, b.y0, b.x1 - b.x0 + 4, b.y1 - b.y0);
-      ctx.clip();
+  // Every visible unit onto `target` (masks cut as in the Player).
+  const drawUnits = (target) => {
+    for (let i = 0; i < n; i += 1) {
+      const u = L.units[i];
+      const st = ev.states[i];
+      if (u.space || st.alpha < 0.003) continue;
+      if (st.mask) {
+        // Mask: cut the unit off at its resting ink box, so it slides in from behind it.
+        const b = maskOf(i, st.mask);
+        target.save();
+        target.setTransform(dpr, 0, 0, dpr, 0, 0);
+        target.beginPath();
+        target.rect(b.x0 - 2, b.y0, b.x1 - b.x0 + 4, b.y1 - b.y0);
+        target.clip();
+      }
+      drawUnit(i, u, st, target);
+      if (st.mask) target.restore();
     }
-    drawUnit(i, u, st);
-    if (st.mask) ctx.restore();
+  };
+  drawUnits(ctx);
+  // Glow: one glow-source plate per distinct Size (the strongest three), summed through
+  // octave blurs — equal energy per octave, i.e. the Player's inverse-square falloff — and
+  // added over the text, so a white glyph burns white-hot like the layer does.
+  const sizes = new Map();
+  for (const st of ev.states) {
+    if (!st.glows || !(st.alpha > 0.003)) continue;
+    for (const gl of st.glows) if (gl.alpha > 0.003) { const k = Math.round(gl.size * 2) / 2; sizes.set(k, (sizes.get(k) || 0) + gl.alpha); }
+  }
+  if (sizes.size) {
+    if (!glowCanvas) glowCanvas = document.createElement('canvas');
+    if (glowCanvas.width !== canvas.width || glowCanvas.height !== canvas.height) { glowCanvas.width = canvas.width; glowCanvas.height = canvas.height; }
+    const g = glowCanvas.getContext('2d');
+    for (const [size] of [...sizes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)) {
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, glowCanvas.width, glowCanvas.height);
+      g.font = L.font;
+      g.textAlign = 'center';
+      g.textBaseline = 'alphabetic';
+      plateSize = size;
+      drawUnits(g);
+      plateSize = null;
+      const reach = size * GLOW_RADIUS_PER_SIZE * dpr;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'lighter';
+      for (let sigma = 0.8 * dpr; sigma <= Math.max(0.8 * dpr, reach / 3); sigma *= 2) {
+        ctx.filter = `blur(${sigma.toFixed(2)}px)`;
+        ctx.globalAlpha = 0.8;
+        ctx.drawImage(glowCanvas, 0, 0);
+      }
+      ctx.restore();
+    }
   }
   // Caret effects, in the text colour unless they have their own.
   for (const c of ev.carets) {

@@ -101,7 +101,7 @@ Some GLBs are authored facing away from the viewer — for those, set `baseRotat
 | `env.exposure` | `0.05–8` | `1` | Tone-mapping exposure of the model pass. |
 | `env.rotation` | `±360` deg | `0` | Spins the environment (moves reflections). |
 | `lights.key/fill/rim` | `0–10` each | `1 / 0.45 / 0.35` | The three directional lights' intensities. **Accepted, normalised on read** — see "Scene Rig" below. Still the right shape to emit when a project has no rig layer; ignored on every model once one exists. |
-| `animation.clip` | glTF animation name \| `"*"` \| `null` | `null` | Plays the named animation baked into the asset; `"*"` plays EVERY clip together, each on its own length (Blender's exporter writes one clip per animated object); `null` = static. Names must match the glTF exactly. `loop: "once"` holds the last frame. |
+| `animation.clip` | glTF animation name \| `"*"` \| `null` | `null` | Plays the named animation baked into the asset; `"*"` plays EVERY clip together, each on its own length (Blender's exporter writes one clip per animated object); `null` = static. Names must match the glTF exactly. `loop: "once"` holds the last frame. A machine running or a device coming apart is made as such a GLB: video-mechanisms.md (GreenLight Dash only). |
 | `animation.speed` | `-8–8` | `1` | Playback rate (negative = reversed). |
 | `animation.loop` | `"once"` \| `"loop"` \| `"pingpong"` | `loop` | Loop mode. |
 | `animation.offset` | `±600` s | `0` | Start offset into the animation. |

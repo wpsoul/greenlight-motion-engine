@@ -18,6 +18,7 @@ export function ensureTextTexture(cacheRef, key, width, height, mipmaps = false)
     && existing.canvas.height === height
     && existing.mipmaps === mipmaps) return existing;
   existing?.texture?.dispose();
+  existing?.release?.(); // GPU extras riding the entry (the text Deep Glow's plates and targets)
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;

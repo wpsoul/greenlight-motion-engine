@@ -25,6 +25,7 @@
 | HTML pages as timeline layers (html clips) and their bakes | video-html-clips.md (GreenLight Dash only) |
 | Overlay Effects and Layer Effects, including Running Glow and Depth | [video-effects.md](video-effects.md) |
 | 3D models, Scene Rig, lighting and shadow plates | [video-3d.md](video-3d.md) |
+| Mechanisms and teardowns: a working machine or an exploded device as a 3D layer | video-mechanisms.md (GreenLight Dash only) |
 | Camera layer, Camera Rig, camera paths and presets | [video-camera.md](video-camera.md) |
 | Particles, packing, proximity, fluid and smoke | [video-particles.md](video-particles.md) |
 | Writing motion tracks, roto masks or solved cameras | tracking-data.md (GreenLight Dash only) |

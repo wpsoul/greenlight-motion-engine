@@ -28,11 +28,11 @@ import { plateToCameraAxis as plateToCameraAxisInEngine } from './layerPasses';
 import { applyLayerMask as applyLayerMaskInEngine } from './layerStages';
 import { computeLayerBox } from './layerWarps';
 import { applyMeshTransform, makePlateScale, resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
-import { ensurePassTarget as ensurePassTargetInEngine } from './passPool';
+import { runDeclarativePasses } from './declarativePasses';
 import { resolveLayerPathFx as resolveLayerPathFxInEngine } from './pathFx';
 import { ensureLayerFxTargets as ensureLayerFxTargetsInEngine } from './renderTargets';
 import { ensurePreTransitionFxTargets as ensurePreTransitionFxTargetsInEngine } from './transitions';
-import { _echoEuler, _echoPos, _echoScale, bakeableLayerStack, boxAabb, calculateVideoTime, clamp01, layerContentBox, maskSilhouetteFraming } from './layerHelpers';
+import { _echoEuler, _echoPos, _echoScale, bakeableLayerStack, calculateVideoTime, clamp01, layerContentBox, maskSilhouetteFraming } from './layerHelpers';
 
 export function runEffectChain(engine, env, item, kf, ctx) {
   let { read, write } = ctx;
@@ -281,107 +281,7 @@ export function runEffectChain(engine, env, item, kf, ctx) {
         matte: { tex: ctx.matte || read.texture, isRT: false, flip: !!ctx.matte && ctx.matteCamAxis !== false },
         ...(refPlate ? { ref: { tex: refPlate.texture, isRT: false, box: refPlate.box || null } } : {}),
       };
-      let autoSlot = 0;
-      let ok = true;
-      for (const pass of def.passes) {
-        if (!pass.main && pass.skipIf && pass.skipIf(params, setCtx)) {
-          buffers[pass.target] = buffers[pass.alias] ?? null;
-          continue;
-        }
-        const bind = { uSource: buffers.source };
-        // `inputs` may be a function of the params: Fast Blur reads whichever
-        // pyramid level this frame's Blurriness picked.
-        const passInputs = typeof pass.inputs === 'function' ? pass.inputs(params, setCtx) : pass.inputs;
-        for (const [uniform, buffer] of Object.entries(passInputs || {})) {
-          bind[uniform] = buffers[buffer] ?? null;
-        }
-        // The flip map resolves from the BOUND HANDLES, not the pass def's
-        // names: a skipped pass aliases its target straight to the matte plate
-        // (longShadow with Softness 0 reads the isolate as `sB`), so only the
-        // texture's provenance says which axis a binding is on.
-        const flips = {};
-        for (const [uniform, handle] of Object.entries(bind)) {
-          if (handle?.flip) flips[uniform] = true;
-        }
-        // Which bound samplers share ONE texture, as a pattern (uniform → index
-        // of the first sampler holding the same texture). A pass material is
-        // built per pattern: on WebGPU a material first built while two of its
-        // samplers held one texture (a skipIf alias) kept reading that texture
-        // through both after the alias ended — ASCII's edge votes came back as
-        // the cell plate. Measured; the porting guide's "key on the resolved
-        // binding" rule (§7).
-        const shared = new Map();
-        const variant = Object.keys(bind).sort().map((uniform) => {
-          const tex = bind[uniform]?.tex ?? null;
-          if (!shared.has(tex)) shared.set(tex, shared.size);
-          return `${uniform}:${shared.get(tex)}`;
-        }).join(',');
-        const passMat = getEffectMaterialInEngine(engine, eff, `pass:${pass.key}`,
-          Object.keys(flips).length ? flips : null, variant);
-        if (!passMat) { ok = false; break; }
-        // Per-pass resolution (the roadmap's `pass.scale`): a downsampled pass
-        // renders into a smaller target, and its uResolution must be THAT size
-        // (fragments derive uv from gl_FragCoord). Later passes just sample the
-        // texture by uv, so mixed sizes compose transparently.
-        // `scale` may be per axis ([sx, sy]: Fast Blur halves only the axes it
-        // blurs) and a function of the params (the pyramid level).
-        const rawScale = pass.main ? 1
-          : (typeof pass.scale === 'function' ? pass.scale(params, setCtx) : (pass.scale || 1));
-        const sx = Array.isArray(rawScale) ? rawScale[0] : rawScale;
-        const sy = Array.isArray(rawScale) ? rawScale[1] : rawScale;
-        // pass.size = a FIXED target (Copy Color Profile's 4×1 stats strip),
-        // independent of the plate; its uResolution is that size too. A function
-        // sizes it from the params (ASCII's one texel per character) and keeps ONE
-        // pool slot that resizes in place, so an animated Cell Size never piles up
-        // a target per size.
-        const dynamicSize = !pass.main && typeof pass.size === 'function';
-        const fixedRaw = pass.main ? null : (dynamicSize ? pass.size(params, setCtx) : pass.size);
-        const fixed = Array.isArray(fixedRaw) ? fixedRaw : null;
-        const pw = fixed ? Math.max(1, Math.round(fixed[0])) : Math.max(1, Math.round(read.width * sx));
-        const ph = fixed ? Math.max(1, Math.round(fixed[1])) : Math.max(1, Math.round(read.height * sy));
-        applyEffectUniforms(passMat, effForUniforms,
-          sx === 1 && sy === 1 && !fixed ? uniformCtx : { ...uniformCtx, width: pw, height: ph });
-        if (pass.set) {
-          const slots = pass.set(params, setCtx);
-          for (const [slot, value] of Object.entries(slots)) passMat.uniforms.uParams.value[Number(slot)] = value;
-        }
-        // pass.region names a buffer whose projected box bounds the pass's
-        // sampling: its frame-uv AABB (inset by params.inset %) lands in
-        // uParams[24..27]. A buffer without a box means the whole frame.
-        if (pass.region) {
-          const aabb = boxAabb(buffers[pass.region]?.box || null, Number(params.inset) || 0);
-          const up = passMat.uniforms.uParams.value;
-          up[24] = aabb[0]; up[25] = aabb[1]; up[26] = aabb[2]; up[27] = aabb[3];
-        }
-        // uSource is what the main pass's uMix bypass fades back to; an explicit
-        // `inputs.uSource` (the choker) overrides it below.
-        if (passMat.uniforms.uSource) passMat.uniforms.uSource.value = bind.uSource?.tex ?? buffers.source.tex;
-        for (const [uniform, handle] of Object.entries(bind)) {
-          if (uniform === 'uSource') continue;
-          if (passMat.uniforms[uniform]) passMat.uniforms[uniform].value = handle?.tex ?? null;
-        }
-        let target;
-        if (pass.main) {
-          target = write;
-        } else {
-          // poolSlot lets a chain reuse two targets as a ping-pong (the jump-flood
-          // steps); unnamed passes get their own auto slot. The key carries scale
-          // and filtering so unlike targets never fight over one allocation.
-          const slot = pass.poolSlot != null ? `s${pass.poolSlot}` : `a${autoSlot++}`;
-          const sizeKey = dynamicSize ? 'dyn' : (fixed ? `${pw}x${ph}` : `${sx}x${sy}`);
-          target = ensurePassTargetInEngine(engine,
-            `${slot}:${sizeKey}:${pass.nearest ? 'n' : 'l'}`,
-            pw, ph, !!pass.nearest
-          );
-          if (!target) { ok = false; break; }
-        }
-        mesh.material = passMat;
-        renderer.setRenderTarget(target);
-        renderer.setClearColor(0x000000, 0);
-        renderer.clear(true, true, true);
-        renderer.render(scene, orthoCamera);
-        if (!pass.main) buffers[pass.target] = { tex: target.texture, isRT: true };
-      }
+      const ok = runDeclarativePasses(engine, { def, eff, effForUniforms, params, setCtx, uniformCtx, read, write, buffers });
       if (!ok) continue;
       let tmp = read; read = write; write = tmp;
       if (layerScope && ctx.matte && effectClipsToLayer(eff)) {

@@ -91,12 +91,12 @@ An adjustment item processes every channel below it at its level. Inside the gro
       { "id": "plexus-glow-ch", "name": "Plexus glow", "visible": true, "unsnapped": true,
         "items": [{ "id": "plexus-glow", "clipId": "plexus-glow-clip", "freeStart": 0, "trimStart": 0, "trimEnd": 1.05,
           "effects": [{ "id": "glow", "eid": "plexus-glow-g", "enabled": true, "mix": 100,
-            "params": { "intensity": 0.85, "threshold": 0.05, "radius": 13, "color": "#33EFAB" } }] }] }]
+            "params": { "exposure": 0.85, "glowThreshold": 5, "glowRadius": 60, "tintAmount": 100, "tintInner": "#33EFAB", "tintOuter": "#33EFAB" } }] }] }]
   }
 }
 ```
 
-One glow over the composite reads slightly differently from many. Per-layer glows add up wherever layers overlap; one glow over the composite does not. When converting an existing look, compare composited stills and raise `intensity` (or keyframe `fx:<eid>:intensity`) for the stretch where the layers lie on top of each other.
+One glow over the composite reads slightly differently from many. Per-layer glows add up wherever layers overlap; one glow over the composite does not. When converting an existing look, compare composited stills and raise `exposure` (or keyframe `fx:<eid>:exposure`) for the stretch where the layers lie on top of each other.
 
 ## Storage contract
 
@@ -136,10 +136,9 @@ The chain:
   "enabled": true,
   "mix": 100,
   "params": {
-    "intensity": 1.1,
-    "threshold": 0.55,
-    "radius": 26,
-    "color": "#ffffff"
+    "glowRadius": 420,
+    "exposure": 1,
+    "glowThreshold": 72
   },
   "start": 0.5,
   "end": 2.75,
@@ -210,7 +209,9 @@ Presets (the panel's chips, all params + colours in one click): Drifting Fog, Ro
 
 #### Bloom
 
-`bloom` (**Bloom**, group Glow, both scopes) makes bright content leak light — a physically-shaped glow built on an octave pyramid rather than a blur kernel. `threshold` (0–1) with `knee` (soft shoulder) picks what counts as bright; `intensity` (0–600 %) scales the leak; `radius` (1–4) is **octaves of spread, not pixels** — 1 is a tight halo, 4 folds in a sixteenth-resolution octave whose halos span hundreds of px, and fractional values morph continuously. `saturation` desaturates or over-saturates the leaked light only, `tint` + `tintAmount` recolour it (the classic cold anamorphic look is a blue tint at ~60 %), and `blend` composites `0` Add / `1` Screen (protects already-bright frames from clipping) / `2` Lighten (max — halos never stack past the glow itself) / `3` Color Dodge (punchy filmic burn; falls back to Add over transparency so the outside halo survives) / `4` Bloom Only (just the leaked light, alpha from the bloom energy — for compositing the glow on its own). `anamorphic` (−100…100 %) smears the bloom into wide lens streaks — positive horizontal, negative vertical; magnitude sets streak length. `0` disables that pass entirely. It writes outside the silhouette by design; leave `clip` unset. On an adjustment item it blooms the whole below-stack — the usual "cinematic glow" move is an adjustment layer with `threshold` ~0.7 so only real highlights leak. Differs from `glow`: `glow` is a single-radius Gaussian with a colour; `bloom` is multi-scale, energy-conserving, and holds its shape at any radius.
+`glow` (**Deep Glow**, group Glow, both scopes) is light with a physically shaped falloff: a bright core and an inverse-square tail, computed in linear light. `glowRadius` (10–2000 px at 1080p) is how far the light reaches; `exposure` (0–4) is how much of the source's light scatters (0 = the effect does nothing and costs nothing); `falloff` (1.3–3.5, `2` = inverse square) steepens or flattens the tail. What glows: `glowThreshold` (0–100 %) with `thresholdSmooth`, measured by `thresholdBy` `0` Brightness (any bright colour, saturated neon included) / `1` Luminance / `2` Everything (the whole layer glows; the usual choice on a transparent text or shape layer). Shape: `aspect` (0.25–16 ×, above 1 = wider) and `angle` (−90…90°, clockwise) make it an ellipse — `aspect` ~11 with a short `glowRadius` (~130) is an anamorphic streak. Colour: the light takes the source's colour; `tintAmount` (0–100 %) recolours it from `tintInner` at the core to `tintOuter` at the edge (`tintMode` `0` Colorize / `1` Multiply), so a glow in one colour is `tintAmount` 100 with both set to it; `saturation` (0–200 %). The keys `intensity`, `threshold`, `radius` and `color` are not read. `radiusRed` / `radiusGreen` / `radiusBlue` (0.3–2.5 ×) let one channel reach further than another (red wide, blue tight = a warm fringe) and `aberration` (0–100 %) splits it radially. Output: `tonemap` `2` Hot Core (default — the picture under the glow stays exact; over-bright colour turns white instead of clipping) / `0` Clamp / `1` Soft Clip / `3` Reinhard / `4` ACES Filmic / `5` Hable Filmic (the last three regrade the whole layer), `linearLight` `1`/`0`, `blend` `0` Add / `1` Screen, `dither` `1`/`0`, `quality` `1` Standard / `0` Draft (half-resolution core). It writes outside the silhouette by design; leave `clip` unset. Example: `{"id": "glow", "mix": 100, "params": {"glowRadius": 260, "exposure": 1.7, "glowThreshold": 35, "saturation": 125}}` (Neon Tube).
+
+`bloom` (**Bloom**, group Glow, both scopes) makes bright content leak light — a physically-shaped glow built on an octave pyramid rather than a blur kernel. `threshold` (0–1) with `knee` (soft shoulder) picks what counts as bright; `intensity` (0–600 %) scales the leak; `radius` (1–4) is **octaves of spread, not pixels** — 1 is a tight halo, 4 folds in a sixteenth-resolution octave whose halos span hundreds of px, and fractional values morph continuously. `saturation` desaturates or over-saturates the leaked light only, `tint` + `tintAmount` recolour it (the classic cold anamorphic look is a blue tint at ~60 %), and `blend` composites `0` Add / `1` Screen (protects already-bright frames from clipping) / `2` Lighten (max — halos never stack past the glow itself) / `3` Color Dodge (punchy filmic burn; falls back to Add over transparency so the outside halo survives) / `4` Bloom Only (just the leaked light, alpha from the bloom energy — for compositing the glow on its own). `anamorphic` (−100…100 %) smears the bloom into wide lens streaks — positive horizontal, negative vertical; magnitude sets streak length. `0` disables that pass entirely. It writes outside the silhouette by design; leave `clip` unset. On an adjustment item it blooms the whole below-stack — the usual "cinematic glow" move is an adjustment layer with `threshold` ~0.7 so only real highlights leak. Differs from `glow` (Deep Glow, below): Bloom's spread stops at 4 octaves and blends in display space; Deep Glow reaches up to 2000 px with an inverse-square tail in linear light.
 
 #### Echo
 
@@ -282,7 +283,7 @@ It writes outside the silhouette by design; leave `clip` unset. Keyframable: `am
 
 **Light cone through a line (the AE "Light Text Reveal" port).** The AE rig is a 2–4 px line whose own layer carries CC Radial Fast Blur ×2, Glow ×4 and Tint, with the text layers using it as a LUMA track matte. Rebuild it as:
 
-1. A `sequence` clip holding: the glow line (`shapeType: "line"`, `lineWidth` 4, `lineStroke.paint` `{mode: "gradient", colors: ["#ffffff", "#000000", "#000000"], span: "path"}` — AE's white→black gradient stroke, which becomes the yellow→green split after the tint), animated with the AE `translateX/Y`/`rotate` keys; an adjustment item with `radialFastBlur` twice — Center 1 = Glow Position + (0, Spread), `zoom` 1, `falloff` 98, `intensity` 1500, `mix` 40; Center 2 = Glow Position − (0, Spread), `zoom` 1, `falloff` 96, `intensity` 1000 — `space` 1 on both, `amount` = AE amount (80 + Light Distance, 80 + 2 × Light Distance); and a second adjustment item with AE's outer glows (`glow` 0.5 / threshold 0.71 / radius 80, `glow` 0.1 / threshold 0 / radius 54), the Tint as `curves` with two points per channel (black → Light Color 3, white → Light Color 2: `r [[0, 43/255], [1, 198/255]]`, `g [[0, 217/255], [1, 1]]`, `b [[0, 143/255], [1, 74/255]]`) and AE's comp Curves as a second `curves` (kept inside the cone: on top of everything it also dims the white line). An effect chain holds 4 entries, hence two adjustment items.
+1. A `sequence` clip holding: the glow line (`shapeType: "line"`, `lineWidth` 4, `lineStroke.paint` `{mode: "gradient", colors: ["#ffffff", "#000000", "#000000"], span: "path"}` — AE's white→black gradient stroke, which becomes the yellow→green split after the tint), animated with the AE `translateX/Y`/`rotate` keys; an adjustment item with `radialFastBlur` twice — Center 1 = Glow Position + (0, Spread), `zoom` 1, `falloff` 98, `intensity` 1500, `mix` 40; Center 2 = Glow Position − (0, Spread), `zoom` 1, `falloff` 96, `intensity` 1000 — `space` 1 on both, `amount` = AE amount (80 + Light Distance, 80 + 2 × Light Distance); and a second adjustment item with AE's outer glows as two `glow` entries (`exposure` 0.5 / `glowThreshold` 71 / `glowRadius` 240 and `exposure` 0.1 / `glowThreshold` 0 / `glowRadius` 160), the Tint as `curves` with two points per channel (black → Light Color 3, white → Light Color 2: `r [[0, 43/255], [1, 198/255]]`, `g [[0, 217/255], [1, 1]]`, `b [[0, 143/255], [1, 74/255]]`) and AE's comp Curves as a second `curves` (kept inside the cone: on top of everything it also dims the white line). An effect chain holds 4 entries, hence two adjustment items.
 2. Two items of that ONE sequence clip at the top level: one visible (the cone), one used only as the matte source (a matte source is hidden from output).
 3. The white line (2 px) on its own channel, and the text with `trackMatte: {sourceId: <the matte item>, mode: "luma"}`.
 Key the light on/off with the cone items' `opacity` plus `fx:<eid>:amount`, and raise `fx:<eid>:falloff` towards 99.8 as it goes off (CC's trail shortens with Amount; here the visible length is set by Falloff); key the light source with `fx:<eid>:centerX/centerY`. A ready rig: `tests/radial-fast-blur/build_light_rig.py`. CC's Standard mode keeps a thin line bright, which this effect's normalised Standard does not; Brightest + Falloff + Intensity is the measured match (see the report in `tests/radial-fast-blur/README.md`).
@@ -489,7 +490,7 @@ Geometry look controls: `objectNodes` — `shape` (0–7, `8` mixed), `size`, `w
       "eid": "title-glow",
       "enabled": true,
       "mix": 85,
-      "params": { "intensity": 1.2, "threshold": 0.5, "radius": 24, "color": "#69e7ff" },
+      "params": { "glowRadius": 240, "exposure": 1.2, "glowThreshold": 50, "tintAmount": 100, "tintInner": "#69e7ff", "tintOuter": "#69e7ff" },
       "clip": false
     }
   ]
@@ -541,9 +542,9 @@ Overlay Effects use `fx:<eid>:<parameter>` tracks:
       { "position": 0, "value": "0", "easing": "AE Smooth" },
       { "position": 25, "value": "100", "easing": "AE Smooth" }
     ],
-    "fx:title-glow:radius": [
-      { "position": 0, "value": "8", "easing": "Smooth" },
-      { "position": 100, "value": "44", "easing": "Linear" }
+    "fx:title-glow:glowRadius": [
+      { "position": 0, "value": "80", "easing": "Smooth" },
+      { "position": 100, "value": "440", "easing": "Linear" }
     ]
   }
 }

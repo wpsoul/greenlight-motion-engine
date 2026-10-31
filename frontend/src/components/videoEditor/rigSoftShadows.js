@@ -109,14 +109,18 @@ const PCSS_DIR = `#else
 				int nF = int( min( shadowMapSize.x, 32.0 ) );
 				float search = capTexels * texel;
 				float blockerSum = 0.0; float blockers = 0.0;
+				// A texel still at the clear depth saw no caster at all, so it can never
+				// block. The receiver plane extrapolated across the disk can pass the clear
+				// depth (a surface nearly edge-on to the light, a far receiver), and then
+				// an EMPTY map drew shadow bands on a "Shadows only" set.
 				for ( int i = 0; i < nB; i ++ ) {
 					vec2 o = i == 0 ? vec2( 0.0 ) : pcssVogel( i - 1, nB - 1, phi ) * search;
 					float d = texture2D( shadowMap, shadowCoord.xy + o ).r;
 					float zr = shadowCoord.z + dot( dzUv, o );
 					#ifdef USE_REVERSED_DEPTH_BUFFER
-						if ( d > zr ) { blockerSum += d; blockers += 1.0; }
+						if ( d > zr && d > 0.0 ) { blockerSum += d; blockers += 1.0; }
 					#else
-						if ( d < zr ) { blockerSum += d; blockers += 1.0; }
+						if ( d < zr && d < 1.0 ) { blockerSum += d; blockers += 1.0; }
 					#endif
 				}
 				if ( blockers > 0.0 ) {
@@ -138,10 +142,11 @@ const PCSS_DIR = `#else
 						// The receiver's plane at each of the four texel centres.
 						float zb = shadowCoord.z + dot( dzUv, base - shadowCoord.xy );
 						vec4 zq = zb + vec4( 0.0, dzUv.x, dzUv.y, dzUv.x + dzUv.y ) * texel;
+						// …and a clear texel is lit whatever the plane says (see the search).
 						#ifdef USE_REVERSED_DEPTH_BUFFER
-							vec4 taps = step( depths, zq );
+							vec4 taps = max( step( depths, zq ), step( depths, vec4( 0.0 ) ) );
 						#else
-							vec4 taps = step( zq, depths );
+							vec4 taps = max( step( zq, depths ), step( vec4( 1.0 ), depths ) );
 						#endif
 						lit += mix( mix( taps.x, taps.y, f.x ), mix( taps.z, taps.w, f.x ), f.y );
 					}

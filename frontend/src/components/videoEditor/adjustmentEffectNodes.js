@@ -34,6 +34,7 @@ import { DOUBLE_EXPOSURE_PASS_BODIES } from './doubleExposureNodes.js';
 import { FILM_STOCK_PASS_BODIES } from './filmStockNodes.js';
 import { OBJECT_EFFECT_BODIES } from './objectEffectNodes.js';
 import { FAST_BLUR_PASS_BODIES } from './fastBlurNodes.js';
+import { DEEP_GLOW_PASS_BODIES } from './deepGlowNodes.js';
 import { RADIAL_FAST_BLUR_PASS_BODIES } from './radialFastBlurNodes.js';
 import { ASCII_PASS_BODIES } from './asciiNodes.js';
 import { PIXELATE_PASS_BODIES } from './pixelateNodes.js';
@@ -1728,50 +1729,6 @@ const BODIES = {
   // directly, hence no mix); the main pass reads it through uTexture while
   // uSource holds the effect's ORIGINAL input, which is what the uMix bypass
   // must fade back to.
-  glow: ({ u, uvn, pass }) => {
-    const P = u.uParams;
-    const radius = max(P.element(2), 0.5).mul(u.uResolution.y.div(1080.0));
-    const acc = vec4(0.0).toVar();
-    const ws = float(0.0).toVar();
-    const halfN = 24;
-    if (pass === 'pre') {
-      // Horizontal half of the separable blur, thresholded to the bright part.
-      const thr = clamp(P.element(1), 0.0, 0.999);
-      for (let i = 0; i <= 2 * halfN; i += 1) {
-        // Node arithmetic, not JS: `exp(-2·t²)` must fold at f32 like the GLSL,
-        // or the kernel differs in its last bits and a tight radius shows it.
-        const t = float(i - halfN).div(float(halfN));
-        const w = exp(float(-2.0).mul(t).mul(t));   // GLSL's association, exactly
-        const suv = uvn.add(vec2(t.mul(2.0).mul(radius).div(u.uResolution.x), 0.0));
-        const outside = suv.x.lessThan(0.0).or(suv.x.greaterThan(1.0))
-          .or(suv.y.lessThan(0.0)).or(suv.y.greaterThan(1.0));
-        const sm = select(outside, vec4(0.0), u.uTexture.sample(suv));
-        const straight = unpremult(sm);
-        const bright = max(float(0.0), luma(straight).sub(thr)).div(max(float(1.0).sub(thr), 1e-3));
-        const premultBright = straight.mul(bright).mul(sm.a);
-        acc.addAssign(vec4(premultBright, bright.mul(sm.a)).mul(w));
-        ws.addAssign(w);
-      }
-      return acc.div(max(ws, 1e-4));
-    }
-    // Main: the vertical half, then composite over the ORIGINAL input.
-    for (let i = 0; i <= 2 * halfN; i += 1) {
-      const t = float(i - halfN).div(float(halfN));
-      const w = exp(float(-2.0).mul(t).mul(t));   // GLSL's association, exactly
-      const suv = uvn.add(vec2(0.0, t.mul(2.0).mul(radius).div(u.uResolution.y)));
-      const outside = suv.x.lessThan(0.0).or(suv.x.greaterThan(1.0))
-        .or(suv.y.lessThan(0.0)).or(suv.y.greaterThan(1.0));
-      acc.addAssign(select(outside, vec4(0.0), u.uTexture.sample(suv)).mul(w));
-      ws.addAssign(w);
-    }
-    const bloom = acc.div(max(ws, 1e-4));
-    const base = u.uSource.sample(uvn);
-    const glowCol = bloom.rgb.mul(P.element(0)).mul(u.uColor);
-    const outPre = base.rgb.add(glowCol);
-    const outA = clamp(base.a.add(bloom.a.mul(P.element(0))), 0.0, 1.0);
-    return vec4(min(outPre, vec3(outA)), outA);
-  },
-
   waveLines: ({ u, uvn, helpers, pass }) => {
     const P = u.uParams;
     const radius = max(P.element(8), 1.0).mul(u.uResolution.y.div(1080.0));
@@ -2546,7 +2503,7 @@ Object.assign(BODIES, STRIP_BODIES);
 // Effects with a def.prePass / def.pyramidPass. Their MAIN pass fades back to
 // uSource — the effect's original input — not to the half-built intermediate the
 // pre-pass left in uTexture, which is what a low uMix would otherwise reveal.
-const TWO_PASS = new Set(['glow', 'auraBlur', 'waveLines']);
+const TWO_PASS = new Set(['auraBlur', 'waveLines']);
 
 /** Is this effect's main pass driven from uSource rather than uTexture? */
 export function isTwoPassEffect(id) {
@@ -2748,6 +2705,7 @@ const PASS_BODIES = {
   ...RADIAL_FAST_BLUR_PASS_BODIES,
   ...ASCII_PASS_BODIES,
   ...PIXELATE_PASS_BODIES,
+  ...DEEP_GLOW_PASS_BODIES,
 };
 for (const key of BLUR_PASS_KEYS) {
   if (!PASS_BODIES[key]) PASS_BODIES[key] = blurPassBody;

@@ -50,6 +50,7 @@ import { applyMeshTransform } from './meshTransform';
 import { RECORDING_CURSOR_FLIP_ON_WEBGPU, bakeRecordingCursor } from './recordingCursorPass';
 import { getShapeSvgImage, getShapeTextureLayout, MAX_SHAPE_TEXTURE_DIM } from './pathFx';
 import { SHAPE_PAINT_KEY_RE, TEXT_PAINT_KEY_RE, activeTextRun, applyTextLetterCase, buildTextRandomPlan, buildWrappedTokens, clamp, densityMotionCtx, drawShapeToCanvas, drawTextBgRevealBar, drawTextDecorationLine, getPlaceholderTexture, getTextPathArcTable, itemPaintFieldSignature, kernBetween, measureTextWithLetterSpacing, motionCtmSafe, paintTextWithLetterSpacing, probeMotionCtx, setActiveTextRun, strokeTextWithLetterSpacing, txaBaseRgb, txaHasTrack, txaScratch } from './textPaint';
+import { TEXT_GLOW_FLIP_ON_WEBGPU, TEXT_GLOW_MAX_PLATES, TEXT_GLOW_PLATE_MAX, renderTextDeepGlow, textGlowPlate } from './textDeepGlow';
 
 export function setupMesh(engine, env, mesh, material, item, clip, video, progress, durationSec = 0, cs = null, overrideTexture = null, parentXform = null, itemFollow = null) {
   if (mesh?.userData) { mesh.userData.cameraBaked3d = false; mesh.userData.particlePlate = false; mesh.userData.quadRect = null; mesh.userData.fxFrame = null; mesh.userData.mediaFrac = null; }
@@ -76,6 +77,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
   let layerWidth = W;
   let layerHeight = H;
   let textureRasterScale = 1;
+  // The text plate this frame is the Deep Glow target (premultiplied), not the canvas.
+  let textGlowLit = false;
   // An image clip whose source is an SVG: drawn on its own plate at adaptive
   // density, so it shares the text/shape geometry rules rather than the bitmap ones.
   let isVectorLayer = false;
@@ -917,7 +920,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         ctx.miterLimit = 2;
       }
     };
-    // Text Animator light under a glyph: drop shadow and glow passes drawn as SHADOW
+    // Text Animator light under a glyph: the drop shadow drawn as SHADOW
     // ONLY — the glyph goes far off the plate and only its shadow is pushed back
     // (shadow offsets are device px, untransformed) — so the glyph is never painted
     // twice. Then the stroke, under the fill, so it reads as an outline of the ink.
@@ -928,6 +931,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // to ~25 fps. Both are device px (the filter ignores the transform); shadowBlur B is
     // a Gaussian of σ = B/2 and blur(r) one of σ = r, so together σ = √((B/2)² + r²).
     const TXA_OFF = 4096;
+    // Set while drawToken paints a glow-source plate (the plate pass below): { size }.
+    let txaGlowPlate = null;
     const txaShadowOnly = (str, gx, gy, alpha, color, blur, ox, oy, unitBlur) => {
       const m = ctx.getTransform();
       ctx.save();
@@ -961,16 +966,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
           txaShadowOnly(str, gx, gy, alpha, txaRgbCss(st.shadow.c, clamp(st.shadow.alpha, 0, 1)),
             st.shadow.blur * textDensity, st.shadow.x * textDensity, st.shadow.y * textDensity, st.blur);
         }
-        if (st.glows) {
-          for (const g of st.glows) {
-            // Strength above 100 % adds passes (max 3), alternating wide and tight.
-            const passes = clamp(Math.ceil(g.alpha), 1, 3);
-            for (let p = 0; p < passes; p += 1) {
-              txaShadowOnly(str, gx, gy, alpha, txaRgbCss(g.c, clamp(g.alpha / passes, 0, 1)),
-                g.size * textDensity * (p % 2 ? 0.45 : 1), 0, 0, st.blur);
-            }
-          }
-        }
+        // Glows are not painted here: each glow size gets its own glow-source plate
+        // (the plate pass below) and Deep Glow lights the plate on the GPU (textDeepGlow.js).
       }
       if (st.stroke && st.stroke.w > 0.05 && !st.outlineK) txaStroke(st, str, gx, gy, alpha, st.stroke.w * 2);
     };
@@ -1055,6 +1052,15 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         const m = du._txaM || du._txaLocal;
         if (m && Math.abs(m[0] * m[3] - m[1] * m[2]) < 1e-9) return;
       }
+      // Glow-source plate pass: only the units that carry a glow of this plate's size.
+      let plateGlow = null;
+      if (txaGlowPlate) {
+        let a = 0;
+        let c = null;
+        for (const g of txa?.glows || []) if (Math.abs(g.size - txaGlowPlate.size) < 0.26) { a += g.alpha; c = c || g.c; }
+        if (!(a > 0.003) || !c) return;
+        plateGlow = { a, c };
+      }
       const drawStr = txa ? txaGlyphFor(txa, token) : token;
       const tokenColor = du._txaPaint || du.rndColor || textColor;
       const tokenIsGradient = du._txaPaint ? isCssGradient(du._txaPaint) : baseIsGradient;
@@ -1078,7 +1084,6 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       const txaReachDev = () => {
         let r = 3 * tokenBlur + 1.5 * tsBlur + Math.max(Math.abs(tsX), Math.abs(tsY));
         if (txa?.shadow) r += (Math.abs(txa.shadow.x) + Math.abs(txa.shadow.y) + 1.5 * txa.shadow.blur) * textDensity;
-        if (txa?.glows) r += 1.5 * Math.max(...txa.glows.map((g) => g.size)) * textDensity;
         return r;
       };
       ctx.save();
@@ -1103,8 +1108,9 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         if (!txaWarp) { ctx.restore(); return; }
         ctx = txaWarp.ctx;
       } else if (du._txaM) { const m = du._txaM; ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]); }
-      // Apply blur via canvas filter (per-unit)
-      if (tokenBlur > 0.1) {
+      // Apply blur via canvas filter (per-unit). Not on a glow source: the glow spreads it
+      // far more anyway, and a per-glyph filter is the slowest thing on that path.
+      if (tokenBlur > 0.1 && !plateGlow) {
         ctx.filter = `blur(${tokenBlur}px)`;
       }
       if (du._path) {
@@ -1135,6 +1141,19 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       }
       const glyphX = -drawW * 0.5;
       const glyphY = -lineHeightPx * 0.5 + glyphDrop;
+      if (plateGlow) {
+        // The glyph in the glow colour; its alpha carries the strength (÷ TEXT_GLOW_PLATE_MAX).
+        ctx.globalAlpha = tokenAlpha * clamp(plateGlow.a / TEXT_GLOW_PLATE_MAX, 0, 1);
+        ctx.fillStyle = txaRgbCss(plateGlow.c);
+        paintTextWithLetterSpacing(ctx, drawStr, glyphX, glyphY, letterSpacing, 'fill');
+        ctx.restore();
+        if (txaWarp) {
+          ctx = txaWarp.plate;
+          txaWarpEnd(txaWarp);
+          ctx.restore();
+        }
+        return;
+      }
       if (txa) txaDrawBehind(txa, drawStr, glyphX, glyphY, tokenAlpha);
       drawShadowSpreadPass(drawStr, glyphX, glyphY);
       if (txa && txa.outlineK > 0) ctx.globalAlpha = tokenAlpha * (1 - txa.outlineK);
@@ -1399,6 +1418,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       strokeTextWithLetterSpacing(ctx, str, sx, sy, letterSpacing);
       ctx.restore();
     };
+    textPaintPlate.glowSizes = [];
     if (text3dOn) {
       // 3D Text: no glyph is painted — the run carries every letter to the 3D
       // pass (model3dLayer.js renderText3dLayer), which films it.
@@ -1417,6 +1437,41 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       // The randomizer and text on path draw per unit even without animators — no
       // animation state applies then, so drawToken is a styled static draw.
       for (const du of drawUnits) drawToken(du);
+      // Text Animator glows: one glow-source plate per distinct glow size (the strongest
+      // TEXT_GLOW_MAX_PLATES), each painted by the same drawToken — masks, paths, the
+      // randomizer and warps come along — into a plate the size of this one.
+      if (txaActive && !isMask) {
+        const sizes = new Map();
+        for (const du of drawUnits) {
+          const st = du._txa;
+          if (!st?.glows || !(st.alpha > 0.002)) continue;
+          for (const g of st.glows) {
+            if (!(g.alpha > 0.003)) continue;
+            const key = Math.round(g.size * 2) / 2;
+            sizes.set(key, (sizes.get(key) || 0) + g.alpha);
+          }
+        }
+        const picked = [...sizes.entries()].sort((a, b) => b[1] - a[1]).slice(0, TEXT_GLOW_MAX_PLATES).map(([size]) => size);
+        if (picked.length) {
+          const textCtx = ctx;
+          picked.forEach((size, j) => {
+            const plate = textGlowPlate(textPaintPlate, j);
+            ctx = plate.ctx;
+            ctx.setTransform(textDensity, 0, 0, textDensity, 0, 0);
+            ctx.font = baseFont;
+            ctx.textBaseline = textCtx.textBaseline;
+            ctx.textAlign = textCtx.textAlign;
+            txaGlowPlate = { size };
+            for (const du of drawUnits) drawToken(du);
+            txaGlowPlate = null;
+          });
+          ctx = textCtx;
+        }
+        textPaintPlate.glowSizes = picked;
+        textPaintPlate.glowDirty = true;
+      } else {
+        textPaintPlate.glowSizes = [];
+      }
     }
     // Advanced Animations ▸ Caret: a text cursor at its animator's reveal front (the
     // engine's caretRect), drawn over the glyphs.
@@ -1453,6 +1508,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     if (!engine.exporting && getInlineTextEditId() === item.id) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      textPaintPlate.glowSizes = [];
     }
     textTexture.needsUpdate = true;
     textPaintPlate.paintSig = textPaintSig;
@@ -1461,6 +1517,18 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     }
     setActiveTextRun(null);
     texture = textTexture;
+    // Text Animator glows: Deep Glow over the plate (textDeepGlow.js), recomputed only when
+    // the plate repainted — a settled caption keeps its lit plate for free.
+    if (!text3dOn && !isMask && textPaintPlate.glowSizes?.length) {
+      if (textPaintPlate.glowDirty || !textPaintPlate.glowTexture) {
+        textPaintPlate.glowTexture = renderTextDeepGlow(engine, textPaintPlate, textPaintPlate.glowSizes, canvasH, !!textPaintPlate.mipmaps);
+        textPaintPlate.glowDirty = false;
+      }
+      if (textPaintPlate.glowTexture) {
+        texture = textPaintPlate.glowTexture;
+        textGlowLit = true;
+      }
+    }
     // The run of the last paint (a skipped paint keeps the one it would have made).
     mesh.userData.text3dRun = text3dOn ? (textPaintPlate.text3dRun || null) : null;
   } else if (clip.mediaType === 'shape') {
@@ -2074,6 +2142,13 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       || clip?.mediaType === 'grid'
       || overrideTexture?.userData?.plateNormalized === true;
     if (selectedBackend() === 'webgpu' && material.uniforms.uInputFlipV && !plateAlreadyNormalized) {
+      material.uniforms.uInputFlipV.value = 1;
+    }
+  }
+  // A text plate lit by Deep Glow is the glow pass's premultiplied target, not the straight-alpha canvas.
+  if (textGlowLit) {
+    material.uniforms.uInputPremultiplied.value = 1;
+    if (TEXT_GLOW_FLIP_ON_WEBGPU && selectedBackend() === 'webgpu' && material.uniforms.uInputFlipV) {
       material.uniforms.uInputFlipV.value = 1;
     }
   }

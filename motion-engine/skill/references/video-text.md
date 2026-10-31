@@ -247,7 +247,7 @@ Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid
 | `gradient` | `colors` (2–6 hex), `angle` 0°, `span` `text`\|`unit`, `shift` 0 %, `repeat` false, `mix` 100 % | paints the unit with the gradient (across the whole text or each unit); `shift` slides the colours, `repeat` lets them loop |
 | `hue` | `hue` 180°, `saturation` 0, `brightness` 0 % | rotates whatever colour the unit has at that point |
 | `stroke` | `color` `#ffffff`, `width` 4 px, `outline` false | outline around the glyphs; `outline: true` fades the fill out |
-| `glow` | `color` `#5ef2ff`, `size` 30 px, `strength` 120 % | soft light around the glyphs |
+| `glow` | `color` `#5ef2ff`, `size` 30 px, `strength` 120 % | light around the glyphs (Deep Glow): a hot core and an inverse-square tail reaching about 5 × `size`; units with the same `size` share one glow, at most three sizes per layer |
 | `shadow` | `color` `#000000`, `x` 0, `y` 18, `blur` 20 px, `opacity` 70 % | offset shadow; only when the user asks for a text shadow |
 | `blur` | `amount` 18 px | defocus |
 | `box` | `color` `#33efab`, `behind` `selected`\|`revealed`, `shape` `line`\|`unit`\|`block`, `padX` 12, `padY` 4, `radius` 10 px, `opacity` 100 %, `grow` true, `withText` false | `line`: one bar behind each run of selected units in a row; `unit`: a bar behind each selected unit of `basedOn` (a whole word even when drawn by letters), as bright as its amount; `block`: one shape around all of it. `behind: revealed` = behind what this animator lets through (a typing animator grows its box). `grow` makes a moving span sweep it like a marker. `withText` (`unit` only): each bar is as visible as its unit — every animator's opacity included — so a word that has not appeared yet has no bar |

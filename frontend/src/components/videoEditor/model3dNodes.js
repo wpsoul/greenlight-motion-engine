@@ -52,6 +52,9 @@ export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, dept
   const dzUv = g.mul(min(float(1), float(16).div(max(length(g), 1e-9)))).toVar();
   const sum = float(0).toVar(), count = float(0).toVar();
   const nB = int(min(mapSize.x, 16)), nF = int(min(mapSize.x, 32));
+  const reversed = builder.renderer.reversedDepthBuffer;
+  // WebGL's rule: a texel still at the clear depth saw no caster and never blocks,
+  // however far the receiver plane extrapolates past it (bands on "Shadows only").
   Loop({ start: int(0), end: nB, type: 'int', condition: '<' }, ({ i }) => {
     const offset = select(i.equal(0), vec2(0), vogelDiskSample(i.sub(1), nB.sub(1), phi).mul(cap.div(mapSize.x)));
     const pixel = ivec2(clamp(shadowCoord.xy.add(offset).mul(mapSize), vec2(0), mapSize.sub(1)));
@@ -59,7 +62,7 @@ export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, dept
     if (depthTexture.isArrayTexture) sample = sample.depth(depthLayer);
     const d = sample.r;
     const zr = shadowCoord.z.add(dot(dzUv, offset));
-    If(builder.renderer.reversedDepthBuffer ? d.greaterThan(zr) : d.lessThan(zr), () => {
+    If(reversed ? d.greaterThan(zr).and(d.greaterThan(0)) : d.lessThan(zr).and(d.lessThan(1)), () => {
       sum.addAssign(d); count.addAssign(1);
     });
   });
@@ -72,7 +75,10 @@ export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, dept
       const o = vogelDiskSample(i, nF, phi).mul(penumbra);
       let sample = texture(depthTexture, shadowCoord.xy.add(o));
       if (depthTexture.isArrayTexture) sample = sample.depth(depthLayer);
-      lit.addAssign(sample.compare(shadowCoord.z.add(dot(dzUv, o))));
+      // The hardware comparison cannot see the clear texel, so the reference is held
+      // just inside the clear depth instead: a clear texel then always passes.
+      const ref = shadowCoord.z.add(dot(dzUv, o));
+      lit.addAssign(sample.compare(reversed ? max(ref, 1e-6) : min(ref, 1 - 1e-6)));
     });
     result.assign(lit.div(float(nF)));
   });

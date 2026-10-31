@@ -58,7 +58,7 @@ export function releaseEngineResources(engine) {
   }
   engine.imageTextureCache.clear();
   for (const entry of engine.textTextureCache.values()) {
-    try { entry.texture.dispose(); } catch { /* no-op */ }
+    try { entry.texture.dispose(); entry.release?.(); } catch { /* no-op */ }
   }
   engine.textTextureCache.clear();
   // Layer Mask coverage plates — same CanvasTexture contract as the text
@@ -286,6 +286,7 @@ export function handleContextLost(engine, event) {
   for (const entry of engine.textTextureCache.values()) {
     entry.vectorKey = null;
     entry.paintSig = null; // text/shape plate paint cache — same reason
+    entry.release?.(); // the text Deep Glow's targets died with the context
   }
 }
 

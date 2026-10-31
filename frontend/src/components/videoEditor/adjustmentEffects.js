@@ -12,6 +12,7 @@ import { OBJECT_GEOMETRY_EFFECTS } from './objectGeometryEffects';
 import { writeTrackSlots } from './objectTracking';
 import { SHAPE_RULERS_GLSL } from './shapeRulersGlsl';
 import { FAST_BLUR_EFFECT } from './fastBlurEffect';
+import { DEEP_GLOW_EFFECT } from './deepGlowEffect';
 import { RADIAL_FAST_BLUR_EFFECT } from './radialFastBlurEffect';
 import { GRID_LINES_EFFECT } from './gridLinesEffect';
 import { ASCII_EFFECT, getAsciiAtlas } from './asciiEffect';
@@ -481,75 +482,8 @@ vec4 fx(vec2 uv) {
 //   - type: 'color' → routed to uColor, or to uColors[colorSlot] when `colorSlot`
 //     is set (multi-stop effects); 'select' → rendered as a dropdown
 export const ADJUSTMENT_EFFECTS = [
-  // ── Glow ──────────────────────────────────────────────────────────────────
-  {
-    id: 'glow',
-    name: 'Glow',
-    group: 'Glow',
-    animated: false,
-    params: [
-      { key: 'intensity', slot: 0, label: 'Intensity', min: 0, max: 3, step: 0.05, default: 1.1 },
-      { key: 'threshold', slot: 1, label: 'Threshold', min: 0, max: 1, step: 0.01, default: 0.55 },
-      { key: 'radius', slot: 2, label: 'Radius', min: 1, max: 80, step: 1, default: 26, suffix: 'px' },
-      { key: 'color', type: 'color', label: 'Color', default: '#ffffff' },
-    ],
-    // True separable Gaussian bloom. The old single-pass spiral sampled only
-    // 18–48 isolated points across the disc, which made wide glows visibly
-    // different from the reference and changed between preview qualities.
-    // Radius is authored at the prototypes' 1080px reference height.
-    prePass: /* glsl */ `
-vec4 fx(vec2 uv) {
-  float radius = max(uParams[2], 0.5) * (uResolution.y / 1080.0);
-  float thr = clamp(uParams[1], 0.0, 0.999);
-  const int MAX_TAPS = 49;
-  int half_ = 24;
-  vec4 acc = vec4(0.0);
-  float ws = 0.0;
-  for (int i = 0; i < MAX_TAPS; i++) {
-    if (i > 2 * half_) break;
-    float t = (float(i) - float(half_)) / float(half_);
-    float w = exp(-2.0 * t * t);
-    vec2 suv = uv + vec2(t * 2.0 * radius / uResolution.x, 0.0);
-    vec4 s = (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0)
-      ? vec4(0.0)
-      : texture2D(uTexture, suv);
-    vec3 straight = unpremult(s);
-    float bright = max(0.0, luma(straight) - thr) / max(1.0 - thr, 1e-3);
-    vec3 premultBright = straight * bright * s.a;
-    acc += vec4(premultBright, bright * s.a) * w;
-    ws += w;
-  }
-  return acc / max(ws, 1e-4);
-}
-`,
-    fragment: /* glsl */ `
-vec4 fx(vec2 uv) {
-  float radius = max(uParams[2], 0.5) * (uResolution.y / 1080.0);
-  const int MAX_TAPS = 49;
-  int half_ = 24;
-  vec4 bloom = vec4(0.0);
-  float ws = 0.0;
-  for (int i = 0; i < MAX_TAPS; i++) {
-    if (i > 2 * half_) break;
-    float t = (float(i) - float(half_)) / float(half_);
-    float w = exp(-2.0 * t * t);
-    vec2 suv = uv + vec2(0.0, t * 2.0 * radius / uResolution.y);
-    vec4 s = (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0)
-      ? vec4(0.0)
-      : texture2D(uTexture, suv);
-    bloom += s * w;
-    ws += w;
-  }
-  bloom /= max(ws, 1e-4);
-
-  vec4 base = texture2D(uSource, uv);
-  vec3 glow = bloom.rgb * uParams[0] * uColor;
-  vec3 outPre = base.rgb + glow;
-  float outA = clamp(base.a + bloom.a * uParams[0], 0.0, 1.0);
-  return vec4(min(outPre, vec3(outA)), outA);
-}
-`,
-  },
+  // ── Deep Glow (deepGlowEffect.js; id 'glow', which it replaced) ───────────────
+  DEEP_GLOW_EFFECT,
 
   // ── Bloom ─────────────────────────────────────────────────────────────────
   // Ported from html/bloom-lab.html (minus its star-streaks mode). Bloom here is
