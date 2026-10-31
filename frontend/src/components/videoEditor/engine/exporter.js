@@ -4,6 +4,7 @@
  * frame at a time and returns it as a PNG data URL; exportVideo renders the project frame by frame into a video file
  * (WebCodecs mp4 / webm, alpha, motion blur, audio mix). The Player's handle keeps the same keys and calls these.
  */
+import { posterizedTimeInClip } from '../posterizeTime';
 import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 import { prepareLocalEffectsFor } from '../adjustmentEffects';
 import { clampTransitionSoundCue, getAdvancedTransitionPreset, loadAdvancedTransitionPackages } from '../advancedTransitions';
@@ -12,17 +13,18 @@ import { bakesPending, bakesSettled, consumeBakeChange } from '../asyncBakes';
 import { itemHasAudioFade, sanitizeAudioFadeCurve } from '../audioFade';
 import { cssColorAlpha, isTransparentBackground } from '../backgroundLayer';
 import { setAlphaExportMode } from '../clipShader';
+import { releaseFrameResampler, resampleFrame } from '../frameResampler';
 import { describeGpuLoad, gpuResetCount } from '../gpuReset';
 import { getItemKeyframeValues, itemHasKeyframes } from '../gsapTransitions';
 import { disposeHtmlLiveExportPages, htmlBlankCanvas, htmlLiveExportCanvas, htmlLiveSettleUsed, htmlLiveSupported } from '../htmlLive';
 import { preloadImagePlate } from '../imagePlate';
 import { preloadVideoPlate } from '../videoPlate';
-import { getParenting } from '../keyframeParenting';
+import { getParenting, localPrs } from '../keyframeParenting';
 import { motionBlurLevelForShutter } from '../motionBlurLevels';
 import { ensureMotionTemplate, motionMediaPending, pumpMotionMedia } from '../motionTemplates';
 import { notePerfRenderer } from '../perfRegistry.js';
-import { CAMERA_KF_LABELS, resolveCameraPose } from '../projectCamera';
-import { resolveScaledOutputSize } from '../renderOutputSize';
+import { CAMERA_KF_LABELS, perspectiveDistance, resolveCameraPose } from '../projectCamera';
+import { resolveScaledOutputSize, resolveScaledRenderSize } from '../renderOutputSize';
 import { getTimelineLayout } from '../speedUtils';
 import { waitForTransitionPackageInstances } from '../transitionPackageRuntime';
 import { isContainerClip, SEQUENCE_MAX_DEPTH } from '../types';
@@ -48,6 +50,23 @@ function videoPlateUrls(env) {
       .filter((clip) => clip?.mediaType === 'video' && !clip.htmlSource && (clip.url || clip.proxyUrl))
       .map((clip) => clip.url || clip.proxyUrl),
   )];
+}
+
+// The project camera's magnification of the picture plane at `time`: its lens zoom,
+// times a dolly's push-in (the camera at D − camDolly from a plane it frames from D).
+// 1 with no camera under the playhead, and in world view, where the posed camera
+// stands down (poseEngineCamera). Sizes a downscaled render's buffer
+// (resolveScaledRenderSize).
+function cameraMagnificationAt(engine, env, time) {
+  if (engine.worldActive) return 1;
+  const W = engine.videoSize?.w || env.videoWidth;
+  const H = engine.videoSize?.h || env.videoHeight;
+  const pose = resolveCameraPose(env.channels, env.clipsMap, (ch) => env.layoutMap.get(ch.id), time, { width: W, height: H });
+  if (!pose) return 1;
+  const zoom = Number.isFinite(pose.camZoom) && pose.camZoom > 0 ? pose.camZoom : 1;
+  const D = perspectiveDistance(H);
+  const dist = D - (Number.isFinite(pose.camDolly) ? pose.camDolly : 0);
+  return dist > 0 ? (zoom * D) / dist : zoom;
 }
 
 export async function captureFrameAtTime(engine, env, time, opts = {}) {
@@ -97,14 +116,23 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
     engine.videoSize?.w || env.videoWidth,
     engine.videoSize?.h || env.videoHeight,
   );
+  // A downscale seen through a camera zoom draws at a buffer that shrinks with the
+  // zoom, so the footage is not magnified and then shrunk again (resolveScaledRenderSize).
+  const stillBuffer = stillScale?.upscale ? stillScale : resolveScaledRenderSize(
+    stillScale,
+    engine.videoSize?.w || env.videoWidth,
+    engine.videoSize?.h || env.videoHeight,
+    stillScale ? cameraMagnificationAt(engine, env, time) : 1,
+  );
+  let resampled = false;
   try {
     engine.currentTime = time;
     // A still capture is an export too: authoring aids (the grid's guide
     // line) must not appear in it.
     engine.exporting = true;
-    if (stillScale?.upscale && renderer) {
-      renderer.setSize(stillScale.w, stillScale.h, false);
-      notePerfRenderer({ w: stillScale.w, h: stillScale.h });
+    if (stillBuffer && renderer) {
+      renderer.setSize(stillBuffer.w, stillBuffer.h, false);
+      notePerfRenderer({ w: stillBuffer.w, h: stillBuffer.h });
     }
     if (wantAlpha) {
       engine.alphaExport = true;
@@ -207,9 +235,15 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
     if (selectedBackend() === 'webgpu') engine.renderFrame();
     if (stillScale && !stillScale.upscale) {
       // Downscale: resample the full-size frame (read in the same task as the
-      // render, like toDataURL below) into the requested size.
-      const src = engine.canvas;
+      // render, like toDataURL below) into the requested size. A camera-sized
+      // buffer between output and composition takes the filtered resample
+      // (frameResampler.js); the 2D one below then copies 1:1.
+      let src = engine.canvas;
       if (!src) return null;
+      if (stillBuffer && (src.width !== stillScale.w || src.height !== stillScale.h)) {
+        resampled = true;
+        src = resampleFrame(src, stillScale.w, stillScale.h) || src;
+      }
       const out = document.createElement('canvas');
       out.width = stillScale.w;
       out.height = stillScale.h;
@@ -232,7 +266,8 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
       setAlphaExportMode(false);
       renderer?.setClearColor(0x000000, 1);
     }
-    if (stillScale?.upscale && renderer) {
+    if (resampled) releaseFrameResampler();
+    if (stillBuffer && renderer) {
       const previewSize = engine.previewRenderSize;
       renderer.setSize(previewSize.w || env.renderWidth, previewSize.h || env.renderHeight, false);
       notePerfRenderer({ w: previewSize.w || env.renderWidth, h: previewSize.h || env.renderHeight });
@@ -335,6 +370,33 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   // Set renderer to full resolution for export
   renderer.setSize(RW, RH, false);
   notePerfRenderer({ w: RW, h: RH });
+  // A downscale seen through a camera zoom draws each frame at a buffer that
+  // shrinks with that frame's zoom (resolveScaledRenderSize) — down to the output,
+  // where the exporter encodes the canvas as it is. Per frame, so an unzoomed
+  // stretch keeps the full-size render; set before the frame's first render, so a
+  // motion-blur accumulation keeps one size throughout. While the zoom moves the
+  // buffer follows it in steps, not every frame: reallocating the canvas and every
+  // target sized to it costs more than a few percent of pixels saves, and a moving
+  // picture hides the slight resample. A hold (two frames that need the same size)
+  // gets its exact size. A live Echo / Motion Trail / TimeShift / Repetile ring is
+  // sized to the buffer and restarts when it changes, so the buffer holds while one
+  // records.
+  let resamplerUsed = false;
+  let lastNeedW = 0;
+  const sizeBufferForFrame = (outScale && !outScale.upscale && !previewCacheRender)
+    ? (time) => {
+      if (engine.echoState.size || engine.trailState.size || engine.timeshiftState.size || engine.repetileHist.size) return;
+      const buf = resolveScaledRenderSize(outScale, W, H, cameraMagnificationAt(engine, env, time));
+      const w = buf ? buf.w : RW;
+      const h = buf ? buf.h : RH;
+      const moving = w !== lastNeedW;
+      lastNeedW = w;
+      if (canvas.width === w && canvas.height === h) return;
+      if (moving && Math.abs(canvas.width - w) < canvas.width * 0.04) return;
+      renderer.setSize(w, h, false);
+      notePerfRenderer({ w, h });
+    }
+    : null;
 
   // For alpha export, use transparent background. setAlphaExportMode also stops
   // clip letterboxing from filling its bars with opaque black (see clipShader).
@@ -964,10 +1026,13 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         }
       }
 
+      // Posterize Time: a posterized layer's media sits on its held step (the same
+      // clock channelRender gives the layer).
+      const layerTimeInClip = posterizedTimeInClip(item, timeInClip, itemLayout.duration);
       if (isContainerClip(clip) && depth < SEQUENCE_MAX_DEPTH) {
         const st = ensureSequenceStateInEngine(engine, item.id, clip);
         if (st) {
-          const localTime = calculateVideoTime(item, Math.max(0, timeInClip));
+          const localTime = calculateVideoTime(item, Math.max(0, layerTimeInClip));
           pending.push(positionChannelVideosForExport(
             clip.sequence.channels, st.clipsMap, (ch) => st.layouts.get(ch.id), st.channelStates, localTime, depth + 1, seeks,
             instanceKeyOf(item),
@@ -979,7 +1044,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       if (clip.mediaType !== 'video') continue;
       const useVideoA = activeIndex % 2 === 0;
       const activeVideo = useVideoA ? cs.videos.a : cs.videos.b;
-      pending.push(positionClip(activeVideo, clip, calculateVideoTime(item, timeInClip), seeks, instanceKeyOf(item)));
+      pending.push(positionClip(activeVideo, clip, calculateVideoTime(item, layerTimeInClip), seeks, instanceKeyOf(item)));
 
       const inOverlap = activeIndex > 0 && itemLayout.overlapIn > 0 && timeInClip <= itemLayout.overlapIn;
       if (inOverlap) {
@@ -1120,7 +1185,23 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       // the accumulation agree.
       const level = motionBlurLevelForShutter(engine.motionBlurShutter);
       const shutterWindow = (level.shutter / 360) / clampedFps;
-      const kfMotionKeys = ['scale', 'rotate', 'rotateX', 'rotateY', 'translateX', 'translateY', 'translateZ', 'xPercent', 'yPercent'];
+      // Two poses differ by more than rounding. Thresholds: px, radians, scale factor.
+      const prsMoves = (a, b) => Math.abs(a.px - b.px) > 5e-3 || Math.abs(a.py - b.py) > 5e-3
+        || Math.abs(a.pz - b.pz) > 5e-3
+        || Math.abs(a.rx - b.rx) > 1e-4 || Math.abs(a.ry - b.ry) > 1e-4
+        || Math.abs(a.rz - b.rz) > 1e-4
+        || Math.abs(a.sx - b.sx) > 5e-4 || Math.abs(a.sy - b.sy) > 5e-4;
+      // A keyframed layer moves when its RESOLVED pose moves — the same localPrs the
+      // renderer places it with — not when some named track changes. So Scale X/Y, a
+      // live motion path (its progress, offsets or keyed shape) and a transform
+      // origin all count, and positional tracks a live path overrides do not.
+      const keyedPoseMoves = (it, entry, ta, tb) => {
+        const d = entry.endTime - entry.startTime;
+        if (!(d > 0)) return false;
+        const ka = getItemKeyframeValues(it, clamp01((ta - entry.startTime) / d));
+        const kb = getItemKeyframeValues(it, clamp01((tb - entry.startTime) / d));
+        return prsMoves(localPrs(it, ka, W, H), localPrs(it, kb, W, H));
+      };
       // Transform motion detector for one output frame: keyframed transforms
       // (incl. adjustment-layer zoom/pan) and speed-ramped video on the active
       // top-level items, and the same inside every active sequence clip.
@@ -1166,17 +1247,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           if (c.mediaType === PARTICLE_MEDIA_TYPE && it?.particleSystem) return true;
           if (c.htmlSource && htmlLiveMode !== 'off' && htmlLiveSupported()) return true;
           if (c.mediaType === 'sequence' && sequenceHasMotion(c, it, en.startTime, a, b, depth + 1)) return true;
-          if (!itemHasKeyframes(it)) continue;
-          const d = en.endTime - en.startTime;
-          if (!(d > 0)) continue;
-          const ka = getItemKeyframeValues(it, clamp01((a - en.startTime) / d));
-          const kb = getItemKeyframeValues(it, clamp01((b - en.startTime) / d));
-          if (!ka || !kb) continue;
-          for (const key of kfMotionKeys) {
-            const va = Number.isFinite(ka[key]) ? ka[key] : (key === 'scale' ? 1 : 0);
-            const vb = Number.isFinite(kb[key]) ? kb[key] : (key === 'scale' ? 1 : 0);
-            if (Math.abs(va - vb) > (key === 'scale' ? 5e-4 : 5e-3)) return true;
-          }
+          if (itemHasKeyframes(it) && keyedPoseMoves(it, en, a, b)) return true;
         }
         return false;
       };
@@ -1223,13 +1294,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           if (getParenting(item)) {
             const pa = resolveParentingInEngine(engine, env.parentIndex, item, t0)?.prs;
             const pb = resolveParentingInEngine(engine, env.parentIndex, item, t1)?.prs;
-            if (pa && pb) {
-              if (Math.abs(pa.px - pb.px) > 5e-3 || Math.abs(pa.py - pb.py) > 5e-3
-                || Math.abs(pa.pz - pb.pz) > 5e-3
-                || Math.abs(pa.rx - pb.rx) > 1e-4 || Math.abs(pa.ry - pb.ry) > 1e-4
-                || Math.abs(pa.rz - pb.rz) > 1e-4
-                || Math.abs(pa.sx - pb.sx) > 5e-4) return true;
-            }
+            if (pa && pb && prsMoves(pa, pb)) return true;
           }
           // Same reasoning for a motion-track link: a layer with no keyframes
           // at all can be moving fast because the thing it follows is. Without
@@ -1244,17 +1309,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
                 || Math.abs(fa.scaleMul - fb.scaleMul) > 5e-4) return true;
             }
           }
-          if (!itemHasKeyframes(item)) continue;
-          const duration = entry.endTime - entry.startTime;
-          if (!(duration > 0)) continue;
-          const a = getItemKeyframeValues(item, clamp01((t0 - entry.startTime) / duration));
-          const b = getItemKeyframeValues(item, clamp01((t1 - entry.startTime) / duration));
-          if (!a || !b) continue;
-          for (const key of kfMotionKeys) {
-            const va = Number.isFinite(a[key]) ? a[key] : (key === 'scale' ? 1 : 0);
-            const vb = Number.isFinite(b[key]) ? b[key] : (key === 'scale' ? 1 : 0);
-            if (Math.abs(va - vb) > (key === 'scale' ? 5e-4 : 5e-3)) return true;
-          }
+          if (itemHasKeyframes(item) && keyedPoseMoves(item, entry, t0, t1)) return true;
         }
         return false;
       };
@@ -1283,6 +1338,11 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     } catch (e) {
       console.warn('[export] motion blur unavailable, exporting without it: ' + (e?.message || e));
     }
+  }
+
+  if (sizeBufferForFrame) {
+    const renderSized = renderExportFrame;
+    renderExportFrame = async (time) => { sizeBufferForFrame(time); await renderSized(time); };
   }
 
   engine.exportActive = true; // renderFrame skips <video> seeks; uses decode canvases
@@ -1319,6 +1379,16 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         ? (t) => renderExportFrame((rangeStartFrames + Math.round(t * clampedFps)) / clampedFps)
         : renderExportFrame,
       canvas,
+      // A camera-sized buffer between output and composition takes the filtered
+      // resample (frameResampler.js) and is encoded at the output size as it is;
+      // the composition-sized and output-sized buffers keep the exporter's own path.
+      captureFrame: sizeBufferForFrame
+        ? () => {
+          if ((canvas.width === RW && canvas.height === RH) || (canvas.width === OW && canvas.height === OH)) return canvas;
+          resamplerUsed = true;
+          return resampleFrame(canvas, OW, OH) || canvas;
+        }
+        : undefined,
       duration: exportDuration,
       fps: clampedFps,
       width: OW,
@@ -1442,6 +1512,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     }
     for (const entry of engine.canvasTextureCache.values()) { try { entry.texture.dispose(); } catch { /* ignore */ } }
     engine.canvasTextureCache.clear();
+    if (resamplerUsed) releaseFrameResampler();
     // Restore preview state
     engine.alphaExport = false;
     setAlphaExportMode(false);

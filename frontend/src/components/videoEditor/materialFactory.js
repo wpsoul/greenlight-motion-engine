@@ -323,9 +323,10 @@ export const materials = {
     const n = nodes();
     return n ? n.comp.createMixNodeMaterial() : null;
   },
-  maskComposite: () => {
+  // `opts.flipTexture`: sample the camera-rendered inputs flipped — see createMaskCompositeNodeMaterial.
+  maskComposite: (opts) => {
     const n = nodes();
-    return n ? n.comp.createMaskCompositeNodeMaterial() : null;
+    return n ? n.comp.createMaskCompositeNodeMaterial(opts) : null;
   },
   // `opts.flipTexture` selects the consumer-read orientation — see
   // createTrackMatteNodeMaterial; Player keeps one material of each.

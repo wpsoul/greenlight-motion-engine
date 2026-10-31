@@ -267,6 +267,18 @@ export const api = {
   getMoodboard: (id) => request(`/moodboards/${id}`),
   updateMoodboard: (id, data) => request(`/moodboards/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   reorderMoodboards: (items) => request("/moodboards/reorder", { method: "POST", body: JSON.stringify({ items }) }),
+  // Board tags (the Boards panel's chips): a tag is { id, name, color }; a board carries tag ids in `tags`.
+  listBoardTags: () => request("/board-tags"),
+  createBoardTag: (name, color) => request("/board-tags", { method: "POST", body: JSON.stringify({ name, color }) }),
+  updateBoardTag: (id, data) => request(`/board-tags/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteBoardTag: (id) => request(`/board-tags/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  setBoardTags: (id, tags) => request(`/moodboards/${encodeURIComponent(id)}/tags`, { method: "PUT", body: JSON.stringify({ tags }) }),
+  // What each top-level board is about (name, sub-boards, card text, previews, sig) — Sort with AI reads these.
+  getBoardDigests: () => request("/board-digests"),
+  // Search by picture: every picture card (with `indexed`), and the CLIP vectors kept for them.
+  listIndexPictures: (model) => request(`/picture-index/pictures?model=${encodeURIComponent(model)}`),
+  loadPictureVectors: (model) => request(`/picture-index/vectors?model=${encodeURIComponent(model)}`),
+  savePictureVectors: (model, items) => request("/picture-index/vectors", { method: "POST", body: JSON.stringify({ model, items }) }),
   deleteMoodboard: (id, deleteFolder = false, force = false) =>
     request(
       `/moodboards/${id}?delete_folder=${deleteFolder ? "true" : "false"}${force ? "&force=true" : ""}`,
@@ -321,6 +333,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path, mode }),
     }),
+  // Astro site cards (desktop): a board folder's Astro project run with its own `astro dev`.
+  // status → { state: off|install|starting|live|failed|oldnode, running: {url, pid}, log?: {offset, route, error}, probe? };
+  // `since` is a byte offset into Astro's dev log (-1 = from now on), `probe` a route the server GETs.
+  astroStatus: (id, folder, { since, probe } = {}) => {
+    const q = new URLSearchParams({ folder });
+    if (since != null) q.set("since", String(since));
+    if (probe) q.set("probe", probe);
+    return request(`/moodboards/${id}/astro/status?${q}`);
+  },
+  astroStart: (id, folder) => request(`/moodboards/${id}/astro/start`, { method: "POST", body: JSON.stringify({ folder }) }),
+  astroStop: (id, folder) => request(`/moodboards/${id}/astro/stop`, { method: "POST", body: JSON.stringify({ folder }) }),
+  astroRoutes: (id, folder) => request(`/moodboards/${id}/astro/routes?${new URLSearchParams({ folder })}`),
+  // the page's height at each width (the app's browser measures it): { widths, heights }
+  astroMeasure: (id, folder, route, widths) => request(`/moodboards/${id}/astro/measure?${new URLSearchParams({ folder, route: route || "/", widths: widths.join(",") })}`),
+  astroSource: (id, folder, file, line) => request(`/moodboards/${id}/astro/source?${new URLSearchParams({ folder, file, line: String(line || 1) })}`),
+  astroProjects: (id) => request(`/moodboards/${id}/astro/projects`),
+  astroInspectLocal: (path) => request(`/astro/inspect-local?${new URLSearchParams({ path })}`),
+  astroImport: (id, path) => request(`/moodboards/${id}/astro/import`, { method: "POST", body: JSON.stringify({ path }) }),
   // Lightweight board info for sub-board cards: { id, name, parent_id,
   // element_count, thumbnail_url }.
   getMoodboardSummary: (id) => request(`/moodboards/${id}/summary`),
@@ -377,6 +407,9 @@ export const api = {
       body: JSON.stringify({ resolution }),
     }),
   getElement: (mbId, elId) => request(`/moodboards/${mbId}/elements/${elId}`),
+  // Live: agents shown on the board like collaborators (backend/agent_live.py)
+  getAgentLive: () => request("/agent-live"),
+  setAgentLive: (sessionId, live, name) => request(`/agent-live/${encodeURIComponent(sessionId)}`, { method: "PUT", body: JSON.stringify({ live, ...(name ? { name } : {}) }) }),
   updateElement: (mbId, elId, data) => request(`/moodboards/${mbId}/elements/${elId}`, { method: "PUT", body: JSON.stringify(data) }),
   bulkUpdateElements: (mbId, elements) => request(`/moodboards/${mbId}/elements`, { method: "PUT", body: JSON.stringify({ elements }) }),
   deleteElement: (mbId, elId) => request(`/moodboards/${mbId}/elements/${elId}`, { method: "DELETE" }),
@@ -455,8 +488,16 @@ export const api = {
   socialPostEdit: (mbId, frameId, cardId, body) =>
     request(`/moodboards/${mbId}/social/posts/${frameId}/items/${cardId}`, { method: "PUT", body: JSON.stringify(body) }),
   // action: approve | cancel | unschedule | retry | post-now | next-slot | remove
-  socialPostAction: (mbId, frameId, cardId, action) =>
-    request(`/moodboards/${mbId}/social/posts/${frameId}/items/${cardId}/${action}`, { method: "POST", body: JSON.stringify({}) }),
+  socialPostAction: (mbId, frameId, cardId, action, body = {}) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/items/${cardId}/${action}`, { method: "POST", body: JSON.stringify(body) }),
+  // Post it myself: the post's files in a folder of their own, shown selected (desktop); its words and files to Telegram
+  socialPostFiles: (mbId, frameId, cardId, reveal = true) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/items/${cardId}/files`, { method: "POST", body: JSON.stringify({ reveal }) }),
+  // Send to ▸ Social Post (nothing scheduled): these board files (/media/…) in a folder of their own, shown selected. Desktop only.
+  socialFiles: (mbId, urls, title = "") =>
+    request(`/moodboards/${mbId}/social/files`, { method: "POST", body: JSON.stringify({ urls, title }) }),
+  socialPostSendToPhone: (mbId, frameId, cardId) =>
+    request(`/moodboards/${mbId}/social/posts/${frameId}/items/${cardId}/send-to-phone`, { method: "POST", body: JSON.stringify({}) }),
 
   // Connections (Settings ▸ Social ▸ Accounts): named accounts and sites for posting and Support. Keys go in, never out.
   connectionsList: (type) => request(`/connections${type ? `?type=${encodeURIComponent(type)}` : ""}`),
@@ -899,13 +940,15 @@ export const api = {
   // Pass { words: true } to get word-level timestamps for the transcript editor
   // ({ text, words:[{word,start,end}], language, duration }); otherwise returns { text }.
   // { verbatim: true } biases Whisper to keep filler words ("um", "uh") in the transcript.
-  transcribeAudio: async (audioBlob, language = null, { words = false, verbatim = false } = {}) => {
+  transcribeAudio: async (audioBlob, language = null, { words = false, verbatim = false, engine = null } = {}) => {
     const form = new FormData();
     form.append("file", audioBlob, "recording.webm");
     const params = new URLSearchParams();
     if (language) params.set("language", language);
     if (words) params.set("words", "1");
     if (verbatim) params.set("verbatim", "1");
+    // a pinned engine ('local' | 'voicestudio' | 'openai' | 'wavespeed') — never silently another one
+    if (engine) params.set("engine", engine);
     const qs = params.toString();
     const url = qs ? `${API}/ai/transcribe?${qs}` : `${API}/ai/transcribe`;
     const res = await fetch(url, { method: "POST", body: form, headers: await withRuntimeApiKeyHeaders() });
@@ -1550,9 +1593,20 @@ export const api = {
 
   // Keys status
   getKeysStatus: () => request("/keys/status"),
+  // On-device speech to text (backend/local_stt.py): the Fast / Best Whisper models a user downloads once.
+  getLocalSpeechStatus: () => request("/local-stt/status"),
+  downloadLocalSpeechModel: (id) => request(`/local-stt/models/${encodeURIComponent(id)}/download`, { method: "POST" }),
+  cancelLocalSpeechDownload: (id) => request(`/local-stt/models/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  deleteLocalSpeechModel: (id) => request(`/local-stt/models/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  warmUpLocalSpeech: () => request("/local-stt/warm-up", { method: "POST" }),
+  // App settings ▸ Speech: { voice?, captions? } each "local" | "cloud" (the backend merges; every transcription reads it)
+  setSpeechEngines: (engines) => request("/local-stt/engines", { method: "POST", body: JSON.stringify(engines) }),
 
   // AI Generation
   listAIModels: () => request("/ai/models"),
+  // Voice Studio bridge (the user's own local TTS app): {available, url, running, engines, voices, signature, error}
+  getVoiceStudioStatus: (refresh = false) => request(`/voicestudio/status${refresh ? "?refresh=1" : ""}`),
+  setVoiceStudioUrl: (url) => request("/voicestudio/settings", { method: "PUT", body: JSON.stringify({ url }) }),
   // Custom AI models (App settings ▸ Custom AI models): user-supplied provider manifests.
   listCustomModels: () => request("/custom-models"),
   validateCustomManifest: (manifest) => request("/custom-models/validate", { method: "POST", body: JSON.stringify({ manifest }) }),

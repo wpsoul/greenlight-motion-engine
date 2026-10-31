@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 const FONT_WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900];
 const FONT_PREVIEW_TEXT = 'The quick brown fox';
+// Search shows at most this many Google Fonts families (each one loads for its preview).
+const GOOGLE_RESULTS_LIMIT = 30;
+const GOOGLE_SEARCH_DELAY_MS = 200;
 const API_BASE = import.meta.env?.VITE_API_BASE_URL || '/api';
 const fontStylesheetCache = new Map();
 const customFontFaceCache = new Map();
@@ -82,6 +85,55 @@ function ensureCustomFontFace(font) {
   })().catch(() => {});
   customFontFaceCache.set(font.name, promise);
   return promise;
+}
+
+// --- Google Fonts catalogue (every family; searched on demand) ---
+// Any family name loads from Google Fonts at draw time (ensureFontsLoaded), so the
+// picker can offer the whole catalogue, not only FONT_FAMILIES. The list is a
+// lazily imported chunk: nothing loads until someone types in the search box.
+
+const GOOGLE_CATEGORIES = {
+  s: { label: 'sans-serif', fallback: 'sans-serif' },
+  e: { label: 'serif', fallback: 'serif' },
+  d: { label: 'display', fallback: 'sans-serif' },
+  h: { label: 'handwriting', fallback: 'cursive' },
+  m: { label: 'mono', fallback: 'monospace' },
+};
+
+let googleCatalogPromise = null;
+
+function loadGoogleFontCatalog() {
+  if (!googleCatalogPromise) {
+    googleCatalogPromise = import('./googleFontCatalog.js')
+      .then((mod) => String(mod.default || '').split('\n').filter(Boolean).map((line) => {
+        const [name, code] = line.split('|');
+        const category = GOOGLE_CATEGORIES[code] || GOOGLE_CATEGORIES.s;
+        return { name, css: `'${name}', ${category.fallback}`, category: category.label, google: true };
+      }))
+      .catch(() => {
+        googleCatalogPromise = null;
+        return [];
+      });
+  }
+  return googleCatalogPromise;
+}
+
+// Name matches beat category matches; within a tier the catalogue's popularity order holds.
+function searchGoogleFonts(catalog, query, excludeNames) {
+  const ranked = [];
+  catalog.forEach((font, index) => {
+    if (excludeNames.has(font.name.toLowerCase())) return;
+    const name = font.name.toLowerCase();
+    let tier;
+    if (name.startsWith(query)) tier = 0;
+    else if (name.includes(` ${query}`)) tier = 1;
+    else if (name.includes(query)) tier = 2;
+    else if (font.category.includes(query)) tier = 3;
+    else return;
+    ranked.push({ font, tier, index });
+  });
+  ranked.sort((a, b) => (a.tier - b.tier) || (a.index - b.index));
+  return ranked.slice(0, GOOGLE_RESULTS_LIMIT).map((entry) => entry.font);
 }
 
 export const FONT_FAMILIES = [
@@ -182,6 +234,31 @@ export function getFontName(fontValue = 'Inter') {
   if (font) return font.name;
   const primary = extractPrimaryFontName(fontValue);
   return primary || 'Inter';
+}
+
+// One picker entry per family the caller's document already uses (`projectFonts`
+// holds stored values: names or full CSS stacks). A family the lists don't know
+// keeps its stored stack, so picking it writes what the other layer already has.
+function buildProjectFontEntries(values) {
+  const seen = new Set();
+  const entries = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    if (!value) continue;
+    const name = getFontName(value);
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push(findFontFamily(value) || { name, css: getFontCSS(value), category: 'project' });
+  }
+  return entries.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function filterFontList(fonts, query) {
+  if (!query) return fonts;
+  return fonts.filter((font) => (
+    font.name.toLowerCase().includes(query) ||
+    font.category.toLowerCase().includes(query)
+  ));
 }
 
 function normalizeGoogleFontNames(fontValues) {
@@ -290,10 +367,15 @@ export default function FontFamilySelect({
   className = '',
   triggerClassName = '',
   dropdownClassName = '',
-  searchPlaceholder = 'Search fonts',
+  searchPlaceholder = 'Search fonts and Google Fonts',
+  // Families the document already uses (names or CSS stacks) — listed first under
+  // "In this project", so a font set elsewhere (e.g. by an agent) can be reused.
+  projectFonts = null,
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [googleQuery, setGoogleQuery] = useState('');
+  const [googleCatalog, setGoogleCatalog] = useState(null);
   const [customFonts, setCustomFonts] = useState(getCustomFonts);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -309,15 +391,44 @@ export default function FontFamilySelect({
   }, []);
 
   const allFonts = useMemo(() => [...customFonts, ...FONT_FAMILIES], [customFonts]);
+  // customFonts is a dependency: findFontFamily resolves uploaded families from its cache.
+  const projectList = useMemo(() => buildProjectFontEntries(projectFonts), [projectFonts, customFonts]);
 
-  const filteredFonts = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return allFonts;
-    return allFonts.filter((font) => (
-      font.name.toLowerCase().includes(query) ||
-      font.category.toLowerCase().includes(query)
-    ));
-  }, [allFonts, search]);
+  const query = search.trim().toLowerCase();
+  const filteredProject = useMemo(() => filterFontList(projectList, query), [projectList, query]);
+  const filteredFonts = useMemo(() => filterFontList(allFonts, query), [allFonts, query]);
+
+  // The Google search trails the typing a beat, so passing keystrokes don't each
+  // load a page of preview fonts.
+  useEffect(() => {
+    const next = query.length >= 2 ? query : '';
+    if (!next) {
+      setGoogleQuery('');
+      return undefined;
+    }
+    const timer = setTimeout(() => setGoogleQuery(next), GOOGLE_SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    if (!googleQuery || googleCatalog) return undefined;
+    let cancelled = false;
+    loadGoogleFontCatalog().then((catalog) => {
+      if (!cancelled) setGoogleCatalog(catalog);
+    });
+    return () => { cancelled = true; };
+  }, [googleQuery, googleCatalog]);
+
+  const googleMatches = useMemo(() => {
+    if (!googleQuery || !googleCatalog) return [];
+    const listed = new Set([...allFonts, ...projectList].map((font) => font.name.toLowerCase()));
+    return searchGoogleFonts(googleCatalog, googleQuery, listed);
+  }, [googleQuery, googleCatalog, allFonts, projectList]);
+
+  useEffect(() => {
+    if (googleMatches.length === 0) return;
+    ensureFontsLoaded(googleMatches.map((font) => font.name), { weights: [400], size: 22, sampleText: FONT_PREVIEW_TEXT });
+  }, [googleMatches]);
 
   useEffect(() => {
     ensureFontsLoaded([value], { weights: [400, 500, 600, 700, 800, 900], size: 28, sampleText: FONT_PREVIEW_TEXT });
@@ -325,7 +436,7 @@ export default function FontFamilySelect({
 
   useEffect(() => {
     if (!isOpen) return undefined;
-    ensureFontsLoaded(allFonts.map((font) => font.name), { weights: [400, 700], size: 22, sampleText: FONT_PREVIEW_TEXT });
+    ensureFontsLoaded([...projectList, ...allFonts].map((font) => font.name), { weights: [400, 700], size: 22, sampleText: FONT_PREVIEW_TEXT });
     const handlePointerDown = (event) => {
       if (!wrapRef.current?.contains(event.target)) {
         setIsOpen(false);
@@ -333,7 +444,16 @@ export default function FontFamilySelect({
     };
     window.addEventListener('mousedown', handlePointerDown);
     return () => window.removeEventListener('mousedown', handlePointerDown);
-  }, [isOpen, allFonts]);
+  }, [isOpen, allFonts, projectList]);
+
+  // Headings appear only when the list has more than one part; Google results
+  // always say where they come from.
+  const sections = [
+    { key: 'project', label: 'In this project', fonts: filteredProject },
+    { key: 'all', label: 'All fonts', fonts: filteredFonts },
+    { key: 'google', label: 'Google Fonts', fonts: googleMatches },
+  ].filter((section) => section.fonts.length > 0);
+  const showHeadings = sections.length > 1;
 
   const handleSelect = (font) => {
     onChange?.(returnValue === 'css' ? font.css : font.name);
@@ -416,32 +536,42 @@ export default function FontFamilySelect({
             {uploadError && <div className="ff-picker-upload-error">{uploadError}</div>}
           </div>
           <div className="ff-picker-list">
-            {filteredFonts.map((font) => {
-              const isSelected = selectedFont?.name === font.name || (!selectedFont && selectedLabel === font.name);
-              return (
-                <button
-                  key={font.id || font.name}
-                  type="button"
-                  className={`ff-picker-option${isSelected ? ' ff-picker-option-selected' : ''}${font.category === 'custom' ? ' ff-picker-option-custom' : ''}`}
-                  onClick={() => handleSelect(font)}
-                >
-                  <span className="ff-picker-option-preview" style={{ fontFamily: font.css }}>{font.name}</span>
-                  {font.category === 'custom' && (
-                    <span
-                      className="ff-picker-option-delete"
-                      title="Delete font"
-                      role="button"
-                      tabIndex={-1}
-                      onClick={(event) => handleDeleteCustomFont(event, font)}
+            {sections.map((section) => (
+              <Fragment key={section.key}>
+                {(showHeadings || section.key === 'google') && (
+                  <div className="ff-picker-group-label">{section.label}</div>
+                )}
+                {section.fonts.map((font) => {
+                  const isSelected = selectedFont?.name === font.name || (!selectedFont && selectedLabel === font.name);
+                  return (
+                    <button
+                      key={`${section.key}:${font.id || font.name}`}
+                      type="button"
+                      className={`ff-picker-option${isSelected ? ' ff-picker-option-selected' : ''}${font.category === 'custom' ? ' ff-picker-option-custom' : ''}${font.google ? ' ff-picker-option-google' : ''}`}
+                      onClick={() => handleSelect(font)}
                     >
-                      ×
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-            {filteredFonts.length === 0 && (
-              <div className="ff-picker-empty">No fonts found</div>
+                      <span className="ff-picker-option-preview" style={{ fontFamily: font.css }}>{font.name}</span>
+                      {font.google && <span className="ff-picker-option-tag">{font.category}</span>}
+                      {font.category === 'custom' && (
+                        <span
+                          className="ff-picker-option-delete"
+                          title="Delete font"
+                          role="button"
+                          tabIndex={-1}
+                          onClick={(event) => handleDeleteCustomFont(event, font)}
+                        >
+                          ×
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </Fragment>
+            ))}
+            {sections.length === 0 && (
+              <div className="ff-picker-empty">
+                {query.length >= 2 && (googleQuery !== query || !googleCatalog) ? 'Searching Google Fonts…' : 'No fonts found'}
+              </div>
             )}
           </div>
         </div>

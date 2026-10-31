@@ -99,7 +99,7 @@ button.hl-flab{cursor:pointer;height:23px;padding:0 5px 0 0;border-radius:4px}bu
 .hl-tph{width:23px;height:23px;margin-left:4px;display:grid;place-items:center;border:0;border-radius:4px;background:transparent;color:#868d8b;cursor:pointer}
 .hl-tph:hover:not(:disabled){color:#33efab;background:rgba(51,239,171,.1)}
 .hl-notefield{display:flex;flex-direction:column;gap:6px;padding:9px 0 0}
-.hl-note{display:block;width:100%;min-height:52px;max-height:150px;resize:vertical;padding:7px 9px;box-sizing:border-box;border:1px solid #303633;border-radius:7px;background:#111413;color:#dfe6e3;font:11px/1.55 system-ui,-apple-system,sans-serif;outline:none;transition:border-color .13s}
+.hl-note{display:block;width:100%;min-height:52px;max-height:150px;resize:vertical;padding:7px 9px;box-sizing:border-box;border:1px solid #303633;border-radius:7px;background:#111413;color:#dfe6e3;font:12px/1.55 system-ui,-apple-system,sans-serif;outline:none;transition:border-color .13s}
 .hl-note::placeholder{color:#747e78}.hl-note:hover{border-color:#3a4043}.hl-note:focus{border-color:#33efab80}
 .hl-panel[data-mode=edit] .hl-note{border-color:rgba(119,97,240,.45)}.hl-panel[data-mode=edit] .hl-note:focus{border-color:#a78bfa}
 .hl-acts{display:flex;align-items:center;gap:4px;padding-top:12px;flex-wrap:wrap}
@@ -186,7 +186,7 @@ body.rv-mode-highlight{--lab-timeline:186px}
 .glm-app .hl-hc-tag{font:650 9.5px system-ui,-apple-system,sans-serif}
 .glm-app button.hl-flab{font:450 11px system-ui,-apple-system,sans-serif}
 .glm-app .hl-it-note{font:400 11px system-ui,-apple-system,sans-serif}
-.glm-app .hl-note{font:400 11px/1.55 system-ui,-apple-system,sans-serif}
+.glm-app .hl-note{font:400 12px/1.55 system-ui,-apple-system,sans-serif}
 .glm-app .hl-track:not(.hl-on) .hl-hc-tag{font-size:8.5px}
 
 /* Notes uses this timeline too: the note tools in the toolbar row, the note flags and ranges on the ruler, the parts,
@@ -199,3 +199,8 @@ body:not(.rv-mode-notes) .hl-tl .mn-toolbar{display:none}
 .hl-tlbar .mn-toolbar{position:static;flex:1;min-width:0;height:auto;padding:0}
 /* on this ruler (30 px: flags on top, seconds below) a flag's range span sits along its foot */
 .hl-ruler .mn-flag-span{top:auto;bottom:1px}
+
+/* the note box's mic (voice.js; its look is in notes.css) */
+.hl-voice{position:relative;display:block}
+.hl-voice .hl-note{padding-right:32px}
+.hl-voice .hl-mic{position:absolute;top:5px;right:5px}

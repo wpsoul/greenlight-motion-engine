@@ -225,6 +225,13 @@ export function releaseEngineResources(engine) {
 }
 
 export function resizeEngine(engine, sizeVideoW, sizeVideoH, sizeRenderW, sizeRenderH) {
+  // Every channel state is built at the video size current when it is created, so its
+  // planes only go stale when THAT changes. The render size alone changes on every
+  // play and pause (the playing preview draws at 0.75×): rebuilding then threw away
+  // each sequence's inner layers — their videos unloaded, their materials disposed —
+  // so every sequence started cold on its next entry (a stop at its edge, ~25 ms of
+  // shader build per inner layer on WebGPU).
+  const videoSizeChanged = engine.videoSize?.w !== sizeVideoW || engine.videoSize?.h !== sizeVideoH;
   engine.videoSize = { w: sizeVideoW, h: sizeVideoH };
   const renderer = engine.renderer;
   const camera = engine.camera;
@@ -244,7 +251,10 @@ export function resizeEngine(engine, sizeVideoW, sizeVideoH, sizeRenderW, sizeRe
     posed.updateProjectionMatrix();
   }
 
+  if (!videoSizeChanged) return true;
+
   // Plane geometry at the new size; sequence states rebuild lazily (engine/channelStates.js).
+  // Their render targets follow the drawing buffer on their own (ensureSequenceState).
   resizeChannelStates(engine, sizeVideoW, sizeVideoH);
 
   // Keep the adjustment-layer plane sized to the frame too.

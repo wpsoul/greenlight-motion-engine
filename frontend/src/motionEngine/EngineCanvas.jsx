@@ -5,9 +5,10 @@
  * gives the same `exportVideo` / `captureFrameAtTime` / `isWebCodecsSupported` — but underneath is createMotionEngine
  * (videoEditor/engine/motionEngine.js), the React-free driver, so the bundle carries the engine without the editor.
  */
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createMotionEngine } from '../components/videoEditor/engine/motionEngine';
 import { isWebCodecsSupported } from '../components/videoEditor/videoExporter';
+import { substituteHtmlClips } from '../components/videoEditor/htmlClips';
 
 export const EngineCanvas = forwardRef(function EngineCanvas(props, ref) {
   const {
@@ -43,15 +44,21 @@ export const EngineCanvas = forwardRef(function EngineCanvas(props, ref) {
     };
   }, [backend]);
 
+  // The app's html clips (a Video Editor project opened in the engine: a review card's source) go in as the editor's
+  // Player gets them (htmlClips.js): a baked one plays its bake, and every one draws its page live where the browser
+  // has HTML-in-canvas (htmlLive.js, the desktop app) — handed over as 'html' they were never drawn. The same arrays
+  // come back for a project without html clips.
+  const played = useMemo(() => substituteHtmlClips(channels || [], clips || []), [channels, clips]);
+
   // the project and options, exactly as the Player received them
   useEffect(() => {
     if (!engine) return;
     engine.setProject({
-      channels: channels || [], clips: clips || [], videoWidth, videoHeight, outputSize, previewQuality, soundEnabled,
+      channels: played.channels, clips: played.clips, videoWidth, videoHeight, outputSize, previewQuality, soundEnabled,
       forceMuteAudio, motionBlurEnabled, background, markers, textVariables, timecodeFps,
       ...(motionBlurShutter != null ? { motionBlurShutter } : {}), ...(textureQuality != null ? { textureQuality } : {}),
     }).then(() => setReady(true));
-  }, [engine, channels, clips, videoWidth, videoHeight, outputSize, previewQuality, soundEnabled, forceMuteAudio,
+  }, [engine, played, videoWidth, videoHeight, outputSize, previewQuality, soundEnabled, forceMuteAudio,
     motionBlurEnabled, motionBlurShutter, textureQuality, background, markers, textVariables, timecodeFps]);
 
   // a render cache controller that measures playback (the page's red line), or none

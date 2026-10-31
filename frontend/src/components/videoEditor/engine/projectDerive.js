@@ -78,28 +78,62 @@ export function deriveParentIndex({ channels, layoutMap, clipsMap = null }) {
 export function deriveTextFontLoadRequest({ channels, clipsMap }) {
   const families = [];
   const weights = [];
-  for (const channel of channels) {
-    for (const item of channel.items) {
-      const clip = clipsMap.get(item.clipId);
-      if (clip?.mediaType === 'motion') {
-        // Motion templates draw text on canvas with the param font — load it
-        // like text-clip fonts so preview/export don't fall back mid-render.
-        const params = item.motionParams || {};
-        if (params.fontFamily) families.push(params.fontFamily);
-        if (Number.isFinite(Number(params.fontWeight))) weights.push(Number(params.fontWeight));
-        continue;
-      }
-      if (clip?.mediaType !== 'text') continue;
-      if (item.textFontFamily) families.push(item.textFontFamily);
-      if (Number.isFinite(Number(item.textFontWeight))) {
-        weights.push(Number(item.textFontWeight));
+  // Inside sequences and grids too: their text draws with these fonts as well,
+  // and a family nobody requested is never loaded (a custom font falls back).
+  const walk = (levelChannels, levelClips, depth) => {
+    if (!Array.isArray(levelChannels) || depth > SEQUENCE_MAX_DEPTH) return;
+    for (const channel of levelChannels) {
+      for (const item of channel?.items || []) {
+        const clip = levelClips.get(item.clipId);
+        if (clip?.mediaType === 'motion') {
+          // Motion templates draw text on canvas with the param font — load it
+          // like text-clip fonts so preview/export don't fall back mid-render.
+          const params = item.motionParams || {};
+          if (params.fontFamily) families.push(params.fontFamily);
+          if (Number.isFinite(Number(params.fontWeight))) weights.push(Number(params.fontWeight));
+          continue;
+        }
+        if (isContainerClip(clip)) {
+          walk(clip.sequence.channels, new Map((clip.sequence.clips || []).map((c) => [c.id, c])), depth + 1);
+          continue;
+        }
+        if (clip?.mediaType !== 'text') continue;
+        if (item.textFontFamily) families.push(item.textFontFamily);
+        if (Number.isFinite(Number(item.textFontWeight))) {
+          weights.push(Number(item.textFontWeight));
+        }
       }
     }
-  }
+  };
+  walk(channels, clipsMap, 0);
   return {
     families: [...new Set(families)],
     weights: [...new Set(weights)],
   };
+}
+
+// Every font family a text or motion layer uses, inside sequences and grids too —
+// the font picker's "In this project" list. `levels` is one or more
+// { channels, clips } compositions (the open one plus the levels above it).
+export function collectProjectFontFamilies(levels) {
+  const families = new Set();
+  const add = (value) => {
+    if (typeof value === 'string' && value.trim()) families.add(value);
+  };
+  const walk = (channels, clips, depth) => {
+    if (!Array.isArray(channels) || depth > SEQUENCE_MAX_DEPTH) return;
+    const clipsMap = new Map((clips || []).map((clip) => [clip.id, clip]));
+    for (const channel of channels) {
+      for (const item of channel?.items || []) {
+        const clip = clipsMap.get(item.clipId);
+        if (clip?.mediaType === 'text') add(item.textFontFamily);
+        else if (clip?.mediaType === 'motion') add(item.motionParams?.fontFamily);
+        else if (isContainerClip(clip)) walk(clip.sequence.channels, clip.sequence.clips, depth + 1);
+      }
+    }
+  };
+  for (const level of levels) walk(level?.channels, level?.clips, 0);
+  return [...families];
 }
 
 export function deriveMotionImageUrls({ channels, clipsMap }) {

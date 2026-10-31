@@ -25,12 +25,16 @@
 
 const D2R = Math.PI / 180;
 
-export const CAMERA_MOVE_MODES = ['free', 'path', 'rig'];
+// 'smartZoom' is the Zoom tab (smartZoomCamera.js): zoom ranges on the camera layer, automatic from a screen
+// recording's clicks or placed by hand. Its stored id keeps the name the first recordings were saved with.
+export const CAMERA_MOVE_MODES = ['free', 'path', 'rig', 'smartZoom'];
 export const CAMERA_MOVE_MODE_LABELS = {
   free: 'Free',
   path: 'Motion Path',
   rig: 'Camera Rig',
+  smartZoom: 'Zoom',
 };
+const STORED_MOVE_MODES = CAMERA_MOVE_MODES;
 
 export const CAMERA_RIG_TYPES = ['orbit', 'dolly', 'crane', 'pushIn', 'truck', 'spiral', 'handheld', 'follow'];
 
@@ -128,7 +132,7 @@ export function sanitizeCameraRig(item) {
 }
 
 export function sanitizeCameraMoveMode(value) {
-  return CAMERA_MOVE_MODES.includes(value) ? value : 'free';
+  return STORED_MOVE_MODES.includes(value) ? value : 'free';
 }
 
 // Deterministic value noise. NEVER Math.random() or wall-clock — a handheld move

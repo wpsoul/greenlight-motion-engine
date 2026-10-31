@@ -26,7 +26,9 @@ import { isDepthScanEnabled } from '../depthScanLayer';
 import { isDrosteEnabled } from '../drosteLayer';
 import { isFresnelRimEnabled } from '../fresnelRimLayer';
 import { isGlassLayer } from '../glassEffect';
-import { getItemKeyframeValues, itemHasKeyframes } from '../gsapTransitions';
+import { getItemKeyframeValues, itemHasKeyframes, evaluatePathTrack } from '../gsapTransitions';
+import { MOTION_PATH_KF_KEY } from '../objectMotionPath';
+import { posterizedLayerTime } from '../posterizeTime';
 import { htmlLiveBeginFrame } from '../htmlLive';
 import { setKeyframeFxScene } from '../keyframeFx';
 import { applyParenting, localPrs } from '../keyframeParenting';
@@ -450,6 +452,12 @@ export function renderFrame(engine, env) {
         if (objectPathItem) break;
       }
     }
+    // An animated path is shown (and edited) where it is at this frame.
+    const keyedPath = objectPathItem?.propertyKeyframes?.[MOTION_PATH_KF_KEY];
+    if (objectPathItem?.motionPath && Array.isArray(keyedPath) && keyedPath.length && Number.isFinite(objectPathLayer?.pct)) {
+      const live = evaluatePathTrack(keyedPath, objectPathLayer.pct, MOTION_PATH_KF_KEY);
+      if (live?.length >= 2) objectPathItem = { ...objectPathItem, motionPath: { ...objectPathItem.motionPath, points: live } };
+    }
     worldView.setObjectPathItem?.(objectPathItem ? {
       itemId: env.motionPathEditItemId,
       item: objectPathItem,
@@ -592,10 +600,12 @@ export function renderFrame(engine, env) {
   // costs anything: the multi-pass detour, a reference pre-render, consumption.
   const overlayLiveAt = (item, entry) => {
     const dur = entry ? entry.endTime - entry.startTime : 0;
-    const progress = dur > 0 ? clamp01((tNow - entry.startTime) / dur) : 0;
+    // A posterized layer is live on its held step (posterizeTime.js).
+    const tLayer = entry ? posterizedLayerTime(item, entry.startTime, dur, tNow) : tNow;
+    const progress = dur > 0 ? clamp01((tLayer - entry.startTime) / dur) : 0;
     const kf = itemHasKeyframes(item) ? getItemKeyframeValues(item, progress) : null;
     return {
-      kf, time: entry ? tNow - entry.startTime : null, duration: dur,
+      kf, time: entry ? tLayer - entry.startTime : null, duration: dur,
       master: Number.isFinite(kf?.effectAmount) ? clamp01(kf.effectAmount) : 1,
     };
   };

@@ -275,8 +275,12 @@ export function createMixNodeMaterial() {
  * texel cannot leak its hidden colour into later post/export passes. `uInvert`
  * flips the matte for a knockout.
  */
-export function createMaskCompositeNodeMaterial() {
-  const u = { uTexture: makeSampler(), uMask: makeSampler(), uInvert: uniform(0) };
+// `flipTexture`: both inputs are CAMERA-rendered (the composite below and the mask layer), and a plain-uv quad pass
+// re-stores a plate on the opposite V axis on WebGPU — so the clip-mask pass samples both flipped and the composite
+// keeps its orientation for the layers drawn on top of it afterwards (without it the masked result came out
+// upside down while later layers stayed upright).
+export function createMaskCompositeNodeMaterial({ flipTexture = false } = {}) {
+  const u = { uTexture: makeSampler(flipTexture), uMask: makeSampler(flipTexture), uInvert: uniform(0) };
   const material = new THREE.MeshBasicNodeMaterial();
   material.fragmentNode = Fn(() => {
     const uvn = uv();

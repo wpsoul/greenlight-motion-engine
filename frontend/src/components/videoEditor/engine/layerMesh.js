@@ -25,13 +25,17 @@ import { getInlineTextEditId } from '../inlineTextEdit';
 import { localPrs, setLayerPivotBox } from '../keyframeParenting';
 import { applyMotionParamKeyframes } from '../motionKf';
 import { drawMotionFrame } from '../motionTemplates';
-import { evaluateObjectMotionPath } from '../objectMotionPath';
+import { evaluateObjectMotionPath, liveObjectMotionPath, motionPathTrackReach, motionPathSignature, MOTION_PATH_KF_KEY } from '../objectMotionPath';
+import { isPosterizeTimeEnabled } from '../posterizeTime';
+import { normalizeTextPathCorners, sharpCornerPose } from '../textPathCorners';
+import { isText3dLayer, resolveText3d } from '../text3d';
+import { GLYPH_RASTER_PX } from '../text3dGlyphConstants';
 import { strokeCopyDelays, strokeEngineMoves } from '../pathStroke';
 import { densityBytes, RASTER_DENSITY_BUCKETS, resolveDensity, VECTOR_DENSITY_BUCKETS } from '../rasterDensity';
 import { measureScreenScale } from '../rasterDensityProject';
 import { isCameraBaked3dPlate, RIG_MEDIA_TYPE } from '../rig3d';
 import { isStrokeShape, resolveLineSettings, SHAPE_PATH_KF_KEY, withShapeSizeKeyframes } from '../shapePath';
-import { animatorsMove as txaAnimatorsMove, boxRects as txaBoxRects, caretRect as txaCaretRect, evaluate as txaEvaluate, glyphFor as txaGlyphFor, grainOf as txaGrainOf, groupBoxes as txaGroupBoxes, hToCanvas as txaHToCanvas, KF_PREFIX as TXA_KF_PREFIX, layerSettings as txaLayerSettings, liveAnimators as txaLiveAnimators, maskedXf as txaMaskedXf, motionKey as txaMotionKey, needsLayout as txaNeedsLayout, paintCss as txaPaintCss, rgbCss as txaRgbCss, unitTransform as txaUnitTransform, warpBegin as txaWarpBegin, warpEnd as txaWarpEnd } from '../textAnimators';
+import { animatorsMove as txaAnimatorsMove, boxRects as txaBoxRects, caretRect as txaCaretRect, evaluate as txaEvaluate, glyphFor as txaGlyphFor, grainOf as txaGrainOf, groupBoxes as txaGroupBoxes, hToCanvas as txaHToCanvas, KF_PREFIX as TXA_KF_PREFIX, layerSettings as txaLayerSettings, liveAnimators as txaLiveAnimators, maskedXf as txaMaskedXf, motionKey as txaMotionKey, needsLayout as txaNeedsLayout, paintCss as txaPaintCss, rgbCss as txaRgbCss, unitTransform as txaUnitTransform, unitTransform3d as txaUnitTransform3d, m4Mul as txaM4Mul, warpBegin as txaWarpBegin, warpEnd as txaWarpEnd } from '../textAnimators';
 import { clearTextFootprint, getTextFootprint, setTextFootprint } from '../textFootprint';
 import { buildPlaceholderRun, expandStaticPlaceholders, parsePlaceholderText } from '../textPlaceholders';
 import { DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT, resolveTextFontSize, TEXT_BG_GROW_APPEAR, TEXT_BG_REVEAL_STYLES, TEXT_BG_REVEAL_TYPES, TEXT_BORDER_STYLES, TransitionEasing } from '../types';
@@ -43,6 +47,7 @@ import { ensureTextTexture } from './canvasHelpers';
 import { calculateVideoTime, maskSilhouetteFraming } from './layerHelpers';
 import { animatedFrameTexture as animatedFrameTextureInEngine, getClipPlaybackUrl, getImageTexture as getImageTextureInEngine, getVideoTexture as getVideoTextureInEngine, normalizeUrl } from './mediaTextures';
 import { applyMeshTransform } from './meshTransform';
+import { RECORDING_CURSOR_FLIP_ON_WEBGPU, bakeRecordingCursor } from './recordingCursorPass';
 import { getShapeSvgImage, getShapeTextureLayout, MAX_SHAPE_TEXTURE_DIM } from './pathFx';
 import { SHAPE_PAINT_KEY_RE, TEXT_PAINT_KEY_RE, activeTextRun, applyTextLetterCase, buildTextRandomPlan, buildWrappedTokens, clamp, densityMotionCtx, drawShapeToCanvas, drawTextBgRevealBar, drawTextDecorationLine, getPlaceholderTexture, getTextPathArcTable, itemPaintFieldSignature, kernBetween, measureTextWithLetterSpacing, motionCtmSafe, paintTextWithLetterSpacing, probeMotionCtx, setActiveTextRun, strokeTextWithLetterSpacing, txaBaseRgb, txaHasTrack, txaScratch } from './textPaint';
 
@@ -67,6 +72,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
   const { w: W, h: H } = engine.videoSize;
   const clipSource = normalizeUrl(getClipPlaybackUrl(clip));
   let texture = null;
+  let cursorBaked = false; // a cursor-free recording drawn with its cursor (engine/recordingCursorPass.js)
   let layerWidth = W;
   let layerHeight = H;
   let textureRasterScale = 1;
@@ -279,14 +285,22 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // origin at the composition centre, +y up). Placement happens per draw
     // unit below; localPrs skips its Follow-Path position override while this
     // is live, so the curve is applied exactly once.
-    const textPathObj = item.motionPath;
+    // The path AT THIS FRAME: an animated path (a copied roto outline, a keyed
+    // motion path) is the keyed snapshot, else the stored one.
+    const textPathObj = liveObjectMotionPath(item, keyframeProps);
+    const textPathKeyed = Array.isArray(keyframeProps?.[MOTION_PATH_KF_KEY]);
     const textPathOn = !!item.textPathEnabled
       && Array.isArray(textPathObj?.points) && textPathObj.points.length >= 2;
     const textPathGrainMode = item.textPathGrain === 'words' ? 'words' : 'symbols';
+    // 3D Text (text3d.js): the letters are laid out and animated here as always,
+    // then handed to the 3D pass as a run instead of being painted — per LETTER.
+    const text3dOn = !isMask && isText3dLayer(item, clip);
     const textPathDir = ['forward', 'backward'].includes(item.textPathDirection) ? item.textPathDirection : 'center';
     const textPathTravel = item.textPathTravel === 'through' ? 'through' : 'fit';
     const textPathEven = item.textPathSpacingMode === 'even';
     const textPathRotate = item.textPathRotate !== false;
+    // Corners (textPathCorners.js): 'sharp' keeps every letter wholly on one side of a bend.
+    const textPathSharp = normalizeTextPathCorners(item.textPathCorners) === 'sharp';
     // Every distribution control is keyframable (registry tracks); a track
     // overrides the static field, same pattern as letterSpacing above.
     const textPathKfNum = (key, fallback, lo, hi) => {
@@ -399,13 +413,14 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     const pathGrainNeeded = textPathOn ? GRAIN[textPathGrainMode] : GRAIN[splitMode];
     // Text Animators select by their finest "Based on" kind.
     const txaGrainNeeded = txaActive ? GRAIN[txaGrainOf(txaList)] : GRAIN[splitMode];
-    const neededGrain = Math.max(GRAIN[splitMode], rndGrainNeeded, pathGrainNeeded, txaGrainNeeded);
+    const text3dGrainNeeded = text3dOn ? GRAIN.symbols : GRAIN[splitMode];
+    const neededGrain = Math.max(GRAIN[splitMode], rndGrainNeeded, pathGrainNeeded, txaGrainNeeded, text3dGrainNeeded);
     const subdivide = neededGrain > GRAIN[splitMode];
     const subMode = neededGrain === 2 ? 'symbols' : 'words';
     const partsAreChars = subdivide ? subMode === 'symbols' : splitMode === 'symbols';
     const drawUnits = [];
     let txaCounts = null;
-    if (rndActive || textPathOn || txaActive) {
+    if (rndActive || textPathOn || txaActive || text3dOn) {
       let wordCounter = 0;
       let symCounter = 0;
       // Every character, spaces included (Text Animators' "Characters").
@@ -610,7 +625,16 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       // cover its horizontal reach so path text isn't clipped at the layer
       // edge (same mechanism as the nowrap overflow). Vertical reach clips
       // like any tall text block — the composition camera crops there anyway.
-      if (textPathOn && !isMask) {
+      // A keyed path is sized from the reach of ALL its keys (cached per track), so
+      // the plate keeps one width while the outline moves instead of reallocating.
+      const textPathReach = textPathOn && !isMask && textPathKeyed
+        ? motionPathTrackReach(item.propertyKeyframes?.[MOTION_PATH_KF_KEY], textPathObj.closed === true)
+        : null;
+      if (textPathReach) {
+        const pad = fontSize * 2;
+        contentLeft = Math.min(contentLeft, canvasW / 2 + textPathReach.min - pad);
+        contentRight = Math.max(contentRight, canvasW / 2 + textPathReach.max + pad);
+      } else if (textPathOn && !isMask) {
         const pad = fontSize * 2;
         for (let i = 0; i <= 64; i += 1) {
           const hit = evaluateObjectMotionPath(textPathObj, i / 64);
@@ -698,6 +722,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         textPaintClock, txaClock === null ? '' : txaClock, durationSec || 0,
         letterSpacing, textColor, textOutlineColor, bgColor,
         textPathSpread, textPathSpacingPx, textPathTrimA, textPathTrimB, textPathOffY, textPathT,
+        // The outline itself moves on a keyed path while the item object stays the same.
+        textPathOn && textPathKeyed ? motionPathSignature(textPathObj.points) : '',
         textDensity, texW, canvasW, canvasH, canvas.width, canvas.height,
         isMask ? 1 : 0,
         (!engine.exporting && getInlineTextEditId() === item.id) ? 1 : 0,
@@ -787,7 +813,16 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
             // World +y is up, canvas +y is down — flip the tangent for the
             // canvas rotation.
             ang: textPathRotate ? Math.atan2(-hit.tangent.y, hit.tangent.x) : 0,
+            tang: Math.atan2(hit.tangent.y, hit.tangent.x),
           };
+        };
+        // Sharp corners: look past a rounded bend (¾ of the type size, or half the unit if wider) for the
+        // straight sides, then lay the unit on the side its centre is on.
+        // The unit keeps the side it RESTS on (homeArc: Path Progress 0) while it travels less than half its width.
+        const sharpPoseAt = (arc, du, homeArc) => {
+          const half = du.w * spreadMul * 0.5;
+          const hit = sharpCornerPose(poseAt, arc, Math.max(half, fontSize * 0.75), homeArc, half);
+          return hit ? { x: hit.x, y: hit.y, ang: textPathRotate ? -hit.tang : 0 } : null;
         };
         const rowCount = rowMetrics.length;
         const byRow = new Map();
@@ -850,7 +885,9 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
             * (textPathDir === 'backward' ? -1 : 1);
           const perp = textPathOffY + (rowIdx - (rowCount - 1) / 2) * lineHeightPx;
           for (const du of units) {
-            const pose = poseAt(start + progressPx + du._pathArc);
+            const pose = textPathSharp
+              ? sharpPoseAt(start + progressPx + du._pathArc, du, start + du._pathArc)
+              : poseAt(start + progressPx + du._pathArc);
             if (!pose) continue;
             du._path = {
               cx: textLogicalW / 2 + pose.x,
@@ -885,10 +922,19 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // (shadow offsets are device px, untransformed) — so the glyph is never painted
     // twice. Then the stroke, under the fill, so it reads as an outline of the ink.
     // Clip-mask text gets neither light nor overlays: they would become coverage.
+    // A unit's own Blur (drawToken's canvas filter) is folded into the shadow instead of
+    // filtering it: the filter's layer would reach out to the glyph parked TXA_OFF px
+    // away, and a blurred, glowing entrance (Smart Overshoot: ~5 passes a letter) fell
+    // to ~25 fps. Both are device px (the filter ignores the transform); shadowBlur B is
+    // a Gaussian of σ = B/2 and blur(r) one of σ = r, so together σ = √((B/2)² + r²).
     const TXA_OFF = 4096;
-    const txaShadowOnly = (str, gx, gy, alpha, color, blur, ox, oy) => {
+    const txaShadowOnly = (str, gx, gy, alpha, color, blur, ox, oy, unitBlur) => {
       const m = ctx.getTransform();
       ctx.save();
+      if (unitBlur > 0.1) {
+        ctx.filter = 'none';
+        blur = Math.hypot(blur, 2 * unitBlur);
+      }
       ctx.shadowColor = color;
       ctx.shadowBlur = blur;
       ctx.shadowOffsetX = m.a * TXA_OFF + ox;
@@ -913,7 +959,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       if (!isMask) {
         if (st.shadow && st.shadow.alpha > 0.003) {
           txaShadowOnly(str, gx, gy, alpha, txaRgbCss(st.shadow.c, clamp(st.shadow.alpha, 0, 1)),
-            st.shadow.blur * textDensity, st.shadow.x * textDensity, st.shadow.y * textDensity);
+            st.shadow.blur * textDensity, st.shadow.x * textDensity, st.shadow.y * textDensity, st.blur);
         }
         if (st.glows) {
           for (const g of st.glows) {
@@ -921,7 +967,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
             const passes = clamp(Math.ceil(g.alpha), 1, 3);
             for (let p = 0; p < passes; p += 1) {
               txaShadowOnly(str, gx, gy, alpha, txaRgbCss(g.c, clamp(g.alpha / passes, 0, 1)),
-                g.size * textDensity * (p % 2 ? 0.45 : 1), 0, 0);
+                g.size * textDensity * (p % 2 ? 0.45 : 1), 0, 0, st.blur);
             }
           }
         }
@@ -941,6 +987,55 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         }
       }
       if (st.stroke && st.stroke.w > 0.05 && st.outlineK > 0) txaStroke(st, str, gx, gy, alpha, st.stroke.w);
+    };
+    // 3D Text: every visible letter as { font, ch, color, alpha, index, m } where m
+    // (row-major 4×4, plate px: x right, y DOWN, z AWAY) carries a glyph mesh —
+    // built in raster px, y up, front on z = 0 (text3dGlyphs.js) — onto exactly
+    // where drawToken would paint it: the animators' real 3D transform, the unit
+    // centre (or its pose on the path), the glyph's draw origin, then the axis
+    // flip and the raster → font-size scale.
+    const buildText3dRun = () => {
+      const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+      const T = (x, y) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, 0, 0, 0, 0, 1];
+      const glyphs = [];
+      const units = drawUnits.length ? drawUnits : [];
+      for (const du of units) {
+        const txa = du._txa || null;
+        const alpha = txa ? txa.alpha : 1;
+        if (alpha < 0.002) continue;
+        const drawStr = txa ? txaGlyphFor(txa, du.token) : du.token;
+        if (!drawStr || !drawStr.trim()) continue;
+        const font = du.rndFont || baseFont;
+        const tokFontSize = du.rndSize || fontSize;
+        if (du.rndFont) ctx.font = du.rndFont;
+        const drawW = measureTextWithLetterSpacing(ctx, drawStr, letterSpacing);
+        let base;
+        if (du._path) {
+          const ca = Math.cos(du._path.ang || 0); const sa = Math.sin(du._path.ang || 0);
+          base = txaM4Mul(
+            txaM4Mul([ca, -sa, 0, du._path.cx, sa, ca, 0, du._path.cy, 0, 0, 1, 0, 0, 0, 0, 1], T(0, du._path.off || 0)),
+            du._txaLocalM4 || I,
+          );
+        } else {
+          base = txaM4Mul(du._txaM4 || I, T(du.x + du.w * 0.5, du.y + lineHeightPx * 0.5));
+        }
+        const k = tokFontSize / GLYPH_RASTER_PX;
+        const color = du._txaPaint || du.rndColor || textColor;
+        // One glyph per character (a symbol unit is one; a scrambled or word unit
+        // lays its characters out by their own advances).
+        let gx = -drawW * 0.5;
+        const gy = -lineHeightPx * 0.5 + glyphDrop;
+        for (const ch of Array.from(drawStr)) {
+          const adv = measureTextWithLetterSpacing(ctx, ch, 0);
+          if (ch.trim()) {
+            const local = [k, 0, 0, gx, 0, -k, 0, gy, 0, 0, -k, 0, 0, 0, 0, 1];
+            glyphs.push({ font, ch, color, alpha, index: Math.max(0, du.sIdx), fv: engine.fontLoadVersion, m: txaM4Mul(base, local) });
+          }
+          gx += adv + letterSpacing;
+        }
+        if (du.rndFont) ctx.font = baseFont;
+      }
+      return { plateW: textLogicalW, plateH: canvasH, settings: resolveText3d(item), glyphs };
     };
     const drawToken = (du) => {
       const { token, x: tokenX, y: tokenY, w: tokenWidth } = du;
@@ -1140,12 +1235,14 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
             const tf = txaUnitTransform(st.xf, () => own, pivot);
             if (tf.projective) du._txaLocalH = tf.H;
             else du._txaLocal = txaHToCanvas(tf.H);
+            if (text3dOn) du._txaLocalM4 = txaUnitTransform3d(st.xf, () => own, pivot);
           } else {
             // Under a mask a rise travels at least the mask box, so it starts hidden.
             const mb = du._txaMaskBox;
             const tf = txaUnitTransform(mb ? txaMaskedXf(st, mb.y1 - mb.y0) : st.xf, (lv) => boxOf(i, lv), pivot);
             if (tf.projective) du._txaH = tf.H;
             else du._txaM = txaHToCanvas(tf.H);
+            if (text3dOn) du._txaM4 = txaUnitTransform3d(st.xf, (lv) => boxOf(i, lv), pivot);
           }
         }
         if (st.touched) {
@@ -1302,7 +1399,11 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       strokeTextWithLetterSpacing(ctx, str, sx, sy, letterSpacing);
       ctx.restore();
     };
-    if (!rndActive && !textPathOn && !txaActive) {
+    if (text3dOn) {
+      // 3D Text: no glyph is painted — the run carries every letter to the 3D
+      // pass (model3dLayer.js renderText3dLayer), which films it.
+      textPaintPlate.text3dRun = buildText3dRun();
+    } else if (!rndActive && !textPathOn && !txaActive) {
       setGlyphPaint(textColor, blockBox, '#ffffff');
       for (const metric of rowMetrics) {
         const { rowText, rowWidth } = metric;
@@ -1360,6 +1461,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     }
     setActiveTextRun(null);
     texture = textTexture;
+    // The run of the last paint (a skipped paint keeps the one it would have made).
+    mesh.userData.text3dRun = text3dOn ? (textPaintPlate.text3dRun || null) : null;
   } else if (clip.mediaType === 'shape') {
     // Keyframed Width / Height / Radius (shapePath.js withShapeSizeKeyframes) and
     // Border width / colour (borderKeyframes.js) size the plate and the draw; the
@@ -1775,7 +1878,23 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       layerHeight = htmlPlate.height;
       isHtmlPagePlate = true;
     }
-    texture = getVideoTextureInEngine(engine, video);
+    // Posterize Time while playing: the <video> runs on the real clock and the
+    // texture holds its frame for the whole step (the held progress is the key).
+    texture = getVideoTextureInEngine(engine, video,
+      engine.isPlaying && !engine.exportActive && isPosterizeTimeEnabled(item) ? progress : null);
+    // A screen recording with no cursor in its picture gets the drawn one stamped in. While playing, at the time of
+    // the frame the texture really holds (the <video> free-runs ahead of the playhead); paused and in an export, at the
+    // playhead (exact: a paused seek's stale frame is replaced moments later, and an export decodes exact frames).
+    if (texture && clip.mediaType === 'video' && clip.recordingMeta?.cursorInVideo === false) {
+      const clockTime = calculateVideoTime(item, Math.max(0, progress * durationSec));
+      const presented = engine.isPlaying && video && !video.__decodeCanvas && !engine.exportActive ? engine.uploadedMediaTime.get(video) : null;
+      const shownSrc = video ? (video.currentSrc || video.src || '') : '';
+      const baked = bakeRecordingCursor(engine, item, clip, texture, presented && presented.src === shownSrc ? presented.time : clockTime);
+      if (baked) {
+        texture = baked;
+        cursorBaked = true;
+      }
+    }
     if (!texture) {
       const fallbackTexture = material.uniforms.uTexture.value;
       const canReuseTexture =
@@ -1957,6 +2076,10 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     if (selectedBackend() === 'webgpu' && material.uniforms.uInputFlipV && !plateAlreadyNormalized) {
       material.uniforms.uInputFlipV.value = 1;
     }
+  }
+  // The recording with its drawn cursor samples a pooled target, which on WebGPU runs opposite to an uploaded picture.
+  if (cursorBaked && RECORDING_CURSOR_FLIP_ON_WEBGPU && selectedBackend() === 'webgpu' && material.uniforms.uInputFlipV) {
+    material.uniforms.uInputFlipV.value = 1;
   }
 
   // A Grid Builder member is drawn into the grid's private camera target before

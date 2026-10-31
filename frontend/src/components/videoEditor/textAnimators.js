@@ -54,6 +54,8 @@ const TXA = (function () {
   const bool = (label, def, title = '') => ({ type: 'bool', label, default: def, title });
   const col = (label, def) => ({ type: 'color', label, default: def });
   const cols = (label, def) => ({ type: 'colors', label, default: def });
+  // A cubic bezier [x1, y1, x2, y2] — the keyframe graph's Custom curve — or null.
+  const bez = (label, title = '') => ({ type: 'bezier', label, default: null, title });
 
   // The app's easing names (TransitionEasing values), each played by the same maths
   // GSAP uses in the app (see CURVE_FNS) — so a Time / Voice animator in the lab, a
@@ -75,7 +77,10 @@ const TXA = (function () {
     delay: num('Delay', 0, -60, 600, 0.01, 's', false, 'In: after the layer starts. Out: before the layer ends. Voice: after the word is spoken (negative = before)'),
     stagger: num('Stagger', 0.06, 0, 10, 0.005, 's', false, 'Time between one unit\'s turn and the next'),
     duration: num('Duration', 0.6, 0, 20, 0.01, 's', false, 'How long each unit takes'),
-    curve: en('Curve', 'Ease Out', Object.fromEntries(CURVE_NAMES.map((n) => [n, n])), 'Each unit\'s own easing: Back, Bounce and Overshoot land past their rest and settle'),
+    // Custom plays `bezier` (the app's keyframe Custom: a curve shaped by its handles).
+    curve: en('Curve', 'Ease Out', { ...Object.fromEntries(CURVE_NAMES.map((n) => [n, n])), Custom: 'Custom' },
+      'Each unit\'s own easing: Back, Bounce and Overshoot land past their rest and settle'),
+    bezier: bez('Custom curve', 'The Custom curve\'s handles, x1 y1 x2 y2 (x 0…1, y −3…4)'),
     hold: num('Hold', 0, 0, 600, 0.01, 's', false, 'How long a unit stays lit. 0 = until the next unit\'s turn'),
     fadeOut: num('Fade out', 0, 0, 20, 0.01, 's', false),
     keepLast: bool('Keep last on', false, 'The last unit stays lit'),
@@ -106,7 +111,7 @@ const TXA = (function () {
   };
   // Range fields that only mean something under one drive (panel + keyframe rows).
   const RANGE_ONLY = { units: 1, start: 1, end: 1, offset: 1, shape: 1, smooth: 1, easeHigh: 1, easeLow: 1, flow: 1 };
-  const DRIVE_ONLY = { animate: 1, order: 1, delay: 1, stagger: 1, duration: 1, curve: 1, hold: 1, fadeOut: 1, keepLast: 1, spread: 1 };
+  const DRIVE_ONLY = { animate: 1, order: 1, delay: 1, stagger: 1, duration: 1, curve: 1, bezier: 1, hold: 1, fadeOut: 1, keepLast: 1, spread: 1 };
   // Which Range fields a panel shows for an animator (lab and app alike). voiced = a
   // Voice animator whose timings fit the text: Order and Stagger only matter when
   // they don't (it then runs as Time).
@@ -244,6 +249,15 @@ const TXA = (function () {
         const list = Array.isArray(v) ? v.filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)).slice(0, 6) : [];
         return list.length >= 2 ? list.map((c) => c.toLowerCase()) : f.default.slice();
       }
+      // The app's sanitizeBezier (easingCurves.js): x stays in 0…1 so the solver
+      // converges, y may overshoot; 4 dp so a dragged handle stays short.
+      case 'bezier': {
+        if (!Array.isArray(v) || v.length !== 4) return f.default;
+        const n = v.map(Number);
+        if (n.some((x) => !Number.isFinite(x))) return f.default;
+        const r4 = (x) => Math.round(x * 1e4) / 1e4;
+        return [r4(clamp(n[0], 0, 1)), r4(clamp(n[1], -3, 4)), r4(clamp(n[2], 0, 1)), r4(clamp(n[3], -3, 4))];
+      }
       default: return f.default;
     }
   }
@@ -266,11 +280,16 @@ const TXA = (function () {
       .map(sanitizeEffect)
       .filter((e) => e && !seen.has(e.pid) && seen.add(e.pid))
       .slice(0, MAX_EFFECTS);
+    const range = sanitizeGroup(RANGE_FIELDS, raw.range);
+    // The handles belong to Custom alone: a Custom without them plays the default
+    // curve, and a named curve drops them (as a keyframe does when a name is picked).
+    if (range.curve !== 'Custom') range.bezier = null;
+    else if (!range.bezier) range.curve = RANGE_FIELDS.curve.default;
     return {
       aid: raw.aid,
       name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 40) : `Animator ${i + 1}`,
       enabled: raw.enabled !== false,
-      range: sanitizeGroup(RANGE_FIELDS, raw.range),
+      range,
       wiggle: sanitizeGroup(WIGGLE_FIELDS, raw.wiggle),
       effects,
     };
@@ -660,7 +679,16 @@ const TXA = (function () {
       'Glide Easing Stop': bezier(0, 0.9125, 1, -0.0338),
     };
   })();
-  const curveFn = (name) => CURVE_FNS[name] || CURVE_FNS['Ease Out'];
+  // Custom plays its own handles; the last one is kept, since the drive asks every frame.
+  let lastBez = null;
+  const curveFn = (name, handles) => {
+    if (name === 'Custom' && Array.isArray(handles) && handles.length === 4) {
+      const key = handles.join(',');
+      if (!lastBez || lastBez.key !== key) lastBez = { key, fn: bezier(...handles) };
+      return lastBez.fn;
+    }
+    return CURVE_FNS[name] || CURVE_FNS['Ease Out'];
+  };
 
   // ── Drives: Time and Voice ────────────────────────────────────────────────
   // Every unit takes a TURN. Time: Delay + rank × Stagger from the layer start, the
@@ -758,7 +786,7 @@ const TXA = (function () {
     const amounts = new Float32Array(Math.max(0, N));
     const res = { amounts, voiced: false, spans: [], inEnd: 0, outStart: Infinity };
     if (N <= 0) return res;
-    const E = curveFn(r.curve);
+    const E = curveFn(r.curve, r.bezier);
     const d = Math.max(0, r.duration);
     const ramp = (t, t0, len) => (len > 1e-6 ? clamp((t - t0) / len, 0, 1) : (t >= t0 ? 1 : 0));
     const time = Number(ctx.time) || 0;
@@ -1282,6 +1310,74 @@ const TXA = (function () {
     return xf || st.xf;
   }
 
+  // ── The same transform as a REAL 3D matrix (3D Text, text3d.js) ─────────────
+  // levelH projects Rotate 3D onto the plate (a homography); a solid letter needs
+  // the turn itself. Same order and pivots as levelH — scale and skew, then
+  // Rotate 3D (Ry · Rx, the rotation whose x / y / depth rows levelH projects),
+  // then the in-plane rotation, then the move — in plate space (x right, y DOWN,
+  // z AWAY from the viewer). The perspective is the project camera's, so `persp`
+  // has nothing to do here. Row-major 4×4.
+  function m4Mul(A, B) {
+    const C = new Array(16);
+    for (let r = 0; r < 4; r += 1) {
+      for (let c = 0; c < 4; c += 1) {
+        C[r * 4 + c] = A[r * 4] * B[c] + A[r * 4 + 1] * B[4 + c] + A[r * 4 + 2] * B[8 + c] + A[r * 4 + 3] * B[12 + c];
+      }
+    }
+    return C;
+  }
+  function levelM4(e, box, pivot) {
+    const cx = (box.x0 + box.x1) / 2;
+    const cy = (box.y0 + box.y1) / 2;
+    const px = cx + (pivot.x * (box.x1 - box.x0)) / 2;
+    const py = cy + (pivot.y * (box.y1 - box.y0)) / 2;
+    const sx = e.s * e.sx;
+    const sy = e.s * e.sy;
+    let k00 = 1, k01 = 0, k10 = 0, k11 = 1;
+    if (e.skew) {
+      const t = Math.tan((clamp(e.skew, -85, 85) * Math.PI) / 180);
+      const ca = Math.cos((e.axis * Math.PI) / 180);
+      const sa = Math.sin((e.axis * Math.PI) / 180);
+      k00 = 1 + t * ca * sa; k01 = -t * ca * ca; k10 = t * sa * sa; k11 = 1 - t * sa * ca;
+    }
+    const a00 = k00 * sx, a01 = k01 * sy, a10 = k10 * sx, a11 = k11 * sy;
+    const az = e.s;
+    const th = (e.rx * Math.PI) / 180;
+    const ph = (e.ry * Math.PI) / 180;
+    const ct = Math.cos(th), st = Math.sin(th), cp = Math.cos(ph), sp = Math.sin(ph);
+    // Columns: the turned x axis (cp, 0, sp), y axis (sp·st, ct, −cp·st) — exactly
+    // levelH's rows — and their cross product for depth.
+    const R = [cp, sp * st, -sp * ct, 0, ct, st, sp, -cp * st, cp * ct];
+    const rad = (e.rot * Math.PI) / 180;
+    const cr = Math.cos(rad), sr = Math.sin(rad);
+    // L = Rz · R · A
+    const RA = [
+      R[0] * a00 + R[1] * a10, R[0] * a01 + R[1] * a11, R[2] * az,
+      R[3] * a00 + R[4] * a10, R[3] * a01 + R[4] * a11, R[5] * az,
+      R[6] * a00 + R[7] * a10, R[6] * a01 + R[7] * a11, R[8] * az,
+    ];
+    const L = [
+      cr * RA[0] - sr * RA[3], cr * RA[1] - sr * RA[4], cr * RA[2] - sr * RA[5],
+      sr * RA[0] + cr * RA[3], sr * RA[1] + cr * RA[4], sr * RA[2] + cr * RA[5],
+      RA[6], RA[7], RA[8],
+    ];
+    // translate(P + move) · L · translate(−P)
+    const tx = px + e.tx - (L[0] * px + L[1] * py);
+    const ty = py + e.ty - (L[3] * px + L[4] * py);
+    const tz = -(L[6] * px + L[7] * py);
+    return [L[0], L[1], L[2], tx, L[3], L[4], L[5], ty, L[6], L[7], L[8], tz, 0, 0, 0, 1];
+  }
+  function unitTransform3d(xf, boxOf, pivot) {
+    let M = null;
+    for (const lv of LEVELS) {
+      const e = xf && xf[lv];
+      if (!e) continue;
+      const r = levelM4(e, boxOf(lv), pivot);
+      M = M ? m4Mul(r, M) : r;
+    }
+    return M;
+  }
+
   function unitTransform(xf, boxOf, pivot) {
     let H = null;
     let projective = false;
@@ -1693,7 +1789,7 @@ const TXA = (function () {
     liveAnimators, grainOf, needsLayout, animatorsMove,
     trackKey, parseTrackKey, channelInfo, trackLabel, buildKfProps,
     evalTrack, evaluate, selection, rangeEdges, mapToUnits, glyphFor, mul, revealedOf, boxRects,
-    LEVELS, levelOf, hasTransform, groupBoxes, maskedXf, unitTransform, applyH, hToCanvas, warpBegin, warpEnd,
+    LEVELS, levelOf, hasTransform, groupBoxes, maskedXf, unitTransform, unitTransform3d, m4Mul, applyH, hToCanvas, warpBegin, warpEnd,
     hexToRgb, rgbCss, mixRgb, sampleStops, paintCss, easeShape, shapeAt,
     CURVE_NAMES, RANGE_ONLY, DRIVE_ONLY, rangeShows, fieldShown, curveFn, ranksOf, voiceFits, voiceTurns, driveAmounts, rangeAt,
     caretRect, motionKey,
@@ -1745,6 +1841,8 @@ export const {
   groupBoxes,
   maskedXf,
   unitTransform,
+  unitTransform3d,
+  m4Mul,
   applyH,
   hToCanvas,
   warpBegin,

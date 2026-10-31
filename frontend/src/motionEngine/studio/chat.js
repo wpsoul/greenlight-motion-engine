@@ -36,7 +36,11 @@ function hsl(r, g, b) {
   if (d) { s = d / (1 - Math.abs(2 * l - 1)); h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h = (h * 60 + 360) % 360; }
   return { h, s, l };
 }
+// …except the cross-transition band's own soft violet (owner, 2026-10-29): the `--glm-xfade` token is left as it is
 export function whiten(text) {
+  return String(text).split(/(--glm-xfade\s*:[^;}]*)/).map((part, i) => (i % 2 ? part : whitenPart(part))).join('');
+}
+function whitenPart(text) {
   return String(text).replace(/rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)\s*(?:[,/]\s*([\d.]+%?)\s*)?\)|#([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})\b/g, (m, r, g, b, a, hex) => {
     if (hex) {   // #rgb, #rgba, #rrggbb, #rrggbbaa
       if (hex.length <= 4) hex = hex.replace(/./g, '$&$&');

@@ -70,6 +70,7 @@ export async function ensureParticleModule(engine, onBake) {
 export function disposeEngine3d(engine) {
   try { engine.model3d?.disposeAllModelLayers?.(); } catch { /* no-op */ }
   try { engine.model3d?.disposeAllPlateLayers?.(); } catch { /* no-op */ }
+  try { engine.model3d?.disposeAllText3dLayers?.(); } catch { /* no-op */ }
   try { engine.model3d?.disposeRigLayer?.(); } catch { /* no-op */ }
   try { engine.model3d?.disposeSharedWorld?.(); } catch { /* no-op */ }
   // Instanced geometry, shader, ramp texture and render target per solver, plus

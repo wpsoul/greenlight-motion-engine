@@ -5,7 +5,10 @@
    Play, which does the same; a note box beside Add highlight (the new range's note, or the edited highlight's).
    Frames are 1/fps of the shared timeline, ranges inclusive. A card over rendered videos gives each source its own
    cuts (source.cuts, frames) and the music's beats (RV_CONFIG.beats): the ruler shows the beats, each filmstrip its
-   source's cuts, and a selection snaps to both. The lab's film uses its keyframes for all three. */
+   source's cuts, and a selection snaps to both. The lab's film uses its keyframes for all three.
+   The note box has a mic (voice.js). */
+import { micButton } from './voice.js';
+
 export function install(STUDIO) {
   const $ = s => document.querySelector(s), api = () => window.GreenLightMotion?.page;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -406,6 +409,9 @@ export function install(STUDIO) {
     A('reel').onclick = () => { if (reel) stopReel(); else startReel(); };
     const noteBox = panel.querySelector('.hl-note');
     noteBox.oninput = () => { if (edit) { edit.h.note = noteBox.value; store(); renderList(); } else draftNote = noteBox.value; };
+    // its mic (voice.js), in the box's corner
+    const noteMic = micButton(noteBox, { key: 'hl-note', onError: toast, className: 'hl-mic' });
+    if (noteMic) { const wrap = document.createElement('span'); wrap.className = 'hl-voice'; noteBox.before(wrap); wrap.append(noteBox, noteMic); }
     noteBox.onkeydown = e => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); noteBox.blur(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.stopPropagation(); noteBox.blur(); add(); }

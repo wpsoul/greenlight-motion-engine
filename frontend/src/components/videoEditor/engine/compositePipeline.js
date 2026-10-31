@@ -159,8 +159,9 @@ export function buildCompositePipeline(engine, { camera, initW, initH, fov }) {
   const mixMaterial = makeMaterial.mix() ?? createMixMaterial();
   const mixScene = new THREE.Scene();
   mixScene.add(new THREE.Mesh(fsQuadGeo, mixMaterial));
-  // Full-screen clip-mask pass: below-composite kept only where the mask has coverage.
-  const maskMaterial = makeMaterial.maskComposite() ?? createMaskCompositeMaterial();
+  // Full-screen clip-mask pass: below-composite kept only where the mask has coverage. Both inputs are
+  // camera-rendered, so on WebGPU the pass samples them flipped (storage identity, like seqPlateCopyMaterial).
+  const maskMaterial = makeMaterial.maskComposite({ flipTexture: true }) ?? createMaskCompositeMaterial();
   const maskScene = new THREE.Scene();
   maskScene.add(new THREE.Mesh(fsQuadGeo, maskMaterial));
   // Full-screen track-matte pass: ONE consumer layer's isolate kept only where

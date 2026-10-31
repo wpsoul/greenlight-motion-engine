@@ -21,7 +21,7 @@ body.original .mn-toolbar,body.original .mn-markers,body.original .mn-range-over
 .mn-section-title{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:38px;font-size:10px;color:#c8ceca}
 .mn-section-title b{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.055em}.mn-section-title small{font-size:10px;color:#7d8480}
 .mn-hint,.mn-empty{margin:0 0 10px;font-size:11px;line-height:1.6;color:#868d8b}
-.mn-note-text{display:block;width:100%;padding:9px 10px;min-height:84px;resize:vertical;border:1px solid #303633;border-radius:7px;background:#111413;color:#dfe6e3;font:11px/1.6 system-ui;outline:none}
+.mn-note-text{display:block;width:100%;padding:9px 10px;min-height:84px;resize:vertical;border:1px solid #303633;border-radius:7px;background:#111413;color:#dfe6e3;font:12px/1.55 system-ui;outline:none}
 .mn-note-text::placeholder{color:#747e78}.mn-note-text:focus{border-color:#33efab80}
 .mn-actions{display:flex;align-items:center;gap:6px;margin-top:10px}.mn-local{color:#7d8480;font-size:9px;margin-left:auto}
 .mn-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:27px;padding:0 10px;border:1px solid #363d39;border-radius:5px;background:#202622;color:#c8ceca;white-space:nowrap;font-size:11px}
@@ -66,7 +66,7 @@ body.mn-open:not(.original) .glm-ruler,body.mn-open:not(.original) .glm-bar{curs
 .mn-msg.agent .mn-msg-text{color:#f3e7cf}
 .mn-msg .mn-saved-shots{margin-top:6px}
 .mn-reply{display:flex;align-items:flex-end;gap:6px}
-.mn-reply-text{flex:1;min-width:0;min-height:30px;max-height:120px;resize:none;padding:6px 9px;box-sizing:border-box;border:1px solid #303633;border-radius:7px;background:#111413;color:#dfe6e3;font:11px/1.5 system-ui,-apple-system,sans-serif;outline:none}
+.mn-reply-text{flex:1;min-width:0;min-height:30px;max-height:120px;resize:none;padding:6px 9px;box-sizing:border-box;border:1px solid #303633;border-radius:7px;background:#111413;color:#dfe6e3;font:12px/1.5 system-ui,-apple-system,sans-serif;outline:none}
 .mn-reply-text::placeholder{color:#747e78}.mn-reply-text:focus{border-color:#33efab80}
 .mn-panel .mn-send{width:30px;height:30px;min-width:30px;padding:0;border:1px solid #33efab55;background:#33efab14;color:#33efab;border-radius:7px}
 .mn-panel .mn-send:hover{background:#33efab24}
@@ -120,8 +120,23 @@ body.rv-mode-highlight .mn-markers,body.rv-mode-highlight .mn-range-overlay{disp
 .mn-range-edit .mn-button{min-height:28px}
 
 /* the engine page's `.glm-app button, input, textarea { font: inherit }` would resize these: their own sizes */
-.glm-app .mn-reply-text{font:400 11px/1.5 system-ui,-apple-system,sans-serif}
+.glm-app .mn-reply-text{font:400 12px/1.5 system-ui,-apple-system,sans-serif}
+.glm-app .mn-note-text{font:400 12px/1.55 system-ui,-apple-system,sans-serif}
 .glm-app .mn-range-row input{font:400 11px system-ui}
 .glm-app .mn-panel .mn-solved{font:600 11px system-ui,-apple-system,sans-serif}
 .glm-app .mn-panel .mn-undo-b{font:700 11px system-ui,-apple-system,sans-serif}
 .glm-app .mn-flag{font:700 9.5px/13px system-ui,-apple-system,sans-serif}
+
+/* the mic (voice.js), the app's voice button: red and pulsing while it records, a spinner while it writes the take in */
+.glm-mic{position:relative;display:grid;place-items:center;flex:none;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:#a4aaa6;cursor:pointer;transition:background .12s,color .12s}
+.glm-mic:hover:not(:disabled){background:#ffffff14;color:#edf1ee}
+.glm-mic.recording{background:#ef4444;color:#fff;animation:glm-voice-pulse 1.4s ease-out infinite}
+.glm-mic.busy{cursor:default}
+.glm-mic.busy svg{visibility:hidden}
+.glm-mic.busy::after{content:"";position:absolute;width:11px;height:11px;border:2px solid #ffffff26;border-top-color:#33efab;border-radius:50%;animation:glm-voice-spin .6s linear infinite;box-sizing:border-box}
+@keyframes glm-voice-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.3)}50%{box-shadow:0 0 0 5px rgba(239,68,68,0)}}
+@keyframes glm-voice-spin{to{transform:rotate(360deg)}}
+.mn-voice{position:relative}
+.mn-voice .mn-note-text{padding-right:34px}
+.mn-voice .mn-mic{position:absolute;top:6px;right:6px}
+.mn-reply .mn-mic-reply{width:30px;height:36px}

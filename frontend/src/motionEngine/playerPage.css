@@ -6,6 +6,7 @@
   --glm-bg: #121211; --glm-panel: #1A1A19; --glm-line: #2A2927; --glm-txt: #E9E7E2; --glm-sub: #8F8B84; --glm-soft: #242320;
   --glm-acc: #33EFAB; --glm-on-acc: #0F1115; --glm-chip: rgba(18,18,17,.74); --glm-scrim: rgba(8,8,7,.74);
   --glm-warn: #F5A524; --glm-bad: #FF6369; --glm-good: #33EFAB; --glm-field: #141413;
+  --glm-xfade: #B4A8F5;   /* a cross transition's band: a very soft violet (owner, 2026-10-29) */
   --side-w: clamp(320px, 26vw, 372px); --ease: cubic-bezier(.22, .8, .24, 1); --dur: 300ms;
   position: fixed; inset: 0; box-sizing: border-box; display: grid; overflow: hidden; overflow: clip;
   grid-template-columns: minmax(0, 1fr) var(--side-w); grid-template-rows: auto minmax(0, 1fr);
@@ -16,13 +17,13 @@
 .glm-app[data-theme="light"] {
   --glm-bg: #F4F3F0; --glm-panel: #FFFFFF; --glm-line: #E0DDD7; --glm-txt: #161614; --glm-sub: #6B675F; --glm-soft: #ECEAE5;
   --glm-acc: #2BE0A0; --glm-on-acc: #0F1115; --glm-chip: rgba(255,255,255,.86); --glm-scrim: rgba(20,18,14,.5);
-  --glm-warn: #B26B00; --glm-bad: #C4262E; --glm-good: #0B8F63; --glm-field: #FAF9F7; color-scheme: light;
+  --glm-warn: #B26B00; --glm-bad: #C4262E; --glm-good: #0B8F63; --glm-field: #FAF9F7; --glm-xfade: #8C7BE6; color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
   .glm-app[data-theme="auto"] {
     --glm-bg: #F4F3F0; --glm-panel: #FFFFFF; --glm-line: #E0DDD7; --glm-txt: #161614; --glm-sub: #6B675F; --glm-soft: #ECEAE5;
     --glm-acc: #2BE0A0; --glm-on-acc: #0F1115; --glm-chip: rgba(255,255,255,.86); --glm-scrim: rgba(20,18,14,.5);
-    --glm-warn: #B26B00; --glm-bad: #C4262E; --glm-good: #0B8F63; --glm-field: #FAF9F7; color-scheme: light;
+    --glm-warn: #B26B00; --glm-bad: #C4262E; --glm-good: #0B8F63; --glm-field: #FAF9F7; --glm-xfade: #8C7BE6; color-scheme: light;
   }
 }
 .glm-app *, .glm-app *::before, .glm-app *::after { box-sizing: border-box; }
@@ -112,15 +113,20 @@
 .glm-trim.is-l::after { left: 2px; } .glm-trim.is-r::after { right: 2px; }
 .glm-app .glm-layer:hover .glm-trim::after, .glm-app .glm-layer.is-on .glm-trim::after { opacity: .9; }
 .glm-bar.is-moving { cursor: grabbing; }
-/* transitions: a block over each cross overlap (click to change), a "+" on a seam without one, ramps for a layer's
-   own entrance / exit */
-.glm-app .glm-xfade { position: absolute; top: 0; height: 22px; min-width: 10px; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 0 4px;
-  border: 1px solid color-mix(in srgb, var(--glm-txt) 55%, transparent); border-radius: 0; cursor: pointer; overflow: hidden;
-  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--glm-txt) 26%, var(--glm-panel)) 0 4px, color-mix(in srgb, var(--glm-txt) 12%, var(--glm-panel)) 4px 8px);
-  color: var(--glm-txt); font-size: 10.5px; line-height: 1; white-space: nowrap; }
-.glm-xfade span { overflow: hidden; text-overflow: ellipsis; }
-.glm-app .glm-xfade:hover { border-color: var(--glm-txt); }
-.glm-app .glm-xfade.is-on { border-color: var(--glm-acc); box-shadow: 0 0 0 1px var(--glm-acc); }
+/* transitions: a cross transition is a band across the track between the two shots, its start and end dashed lines
+   (as in GreenLight Dash's timeline), soft diagonal stripes in a very soft violet (--glm-xfade) — click it to change it; a "+" on a seam without one; ramps for a layer's own
+   entrance / exit. The band has no label: the name is its tooltip and its accessible name */
+.glm-app .glm-xfade { position: absolute; top: 0; bottom: 0; min-width: 6px; z-index: 2; box-sizing: border-box; padding: 0; border: 0; border-radius: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--glm-xfade) 72%, transparent); border-right: 1px dashed color-mix(in srgb, var(--glm-xfade) 72%, transparent);
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--glm-xfade) 26%, transparent) 0 4px, color-mix(in srgb, var(--glm-xfade) 13%, transparent) 4px 8px);
+  cursor: pointer; }
+.glm-xfade span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.glm-app .glm-xfade:hover { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--glm-xfade) 36%, transparent) 0 4px, color-mix(in srgb, var(--glm-xfade) 20%, transparent) 4px 8px);
+  border-color: var(--glm-xfade); }
+.glm-app .glm-xfade.is-on { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--glm-acc) 24%, transparent) 0 4px, color-mix(in srgb, var(--glm-acc) 11%, transparent) 4px 8px);
+  border-color: var(--glm-acc); }
+.glm-app .glm-xfade:focus-visible { outline: 1px solid var(--glm-acc); outline-offset: 1px; }
+.glm-app .glm-layer.has-xin i { position: absolute; left: 0; top: 0; bottom: 0; }
 .glm-app .glm-seam { position: absolute; top: 3px; width: 16px; height: 16px; margin-left: -8px; z-index: 2; display: grid; place-items: center; padding: 0;
   border: 1px solid var(--glm-line); border-radius: 50%; background: var(--glm-panel); color: var(--glm-sub); font-size: 12px; line-height: 1; cursor: pointer;
   opacity: 0; transition: opacity .15s; }

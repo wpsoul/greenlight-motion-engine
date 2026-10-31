@@ -34,7 +34,8 @@ import { applyMeshTransform, resolveFollow as resolveFollowInEngine, resolvePare
 import { measureMotionBlur as measureMotionBlurInEngine, renderLayerAccumBlur as renderLayerAccumBlurInEngine, renderLayerGlow as renderLayerGlowInEngine, renderLayerMotionBlur as renderLayerMotionBlurInEngine, renderLayerTrail as renderLayerTrailInEngine } from './motionPasses';
 import { ensureMipPassTarget as ensureMipPassTargetInEngine, ensurePassTarget as ensurePassTargetInEngine } from './passPool';
 import { ensureAdjustmentTargets as ensureAdjustmentTargetsInEngine, ensureDepthProbeTarget as ensureDepthProbeTargetInEngine } from './renderTargets';
-import { _platePos, seatLayerMesh, unseatLayerMesh } from './compositeHelpers';
+import { _platePos, seatLayerMesh, unseatLayerMesh, resolveActiveIndex } from './compositeHelpers';
+import { isPosterizeTimeEnabled, posterizedLayerTime } from '../posterizeTime';
 
 export function setLayerDepthMode(engine, on) {
   if (engine.layerDepthMode === on) return;
@@ -215,6 +216,14 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
 
   const mat = clipMesh.material;
   const t = engine.currentTime;
+  // A posterized layer's clock (posterizeTime.js) — the frame time for every other.
+  const layerClockAt = (channel) => {
+    const item = engine.layerItems.get(channel.id);
+    if (!isPosterizeTimeEnabled(item)) return t;
+    const layout = env.layoutMap?.get(channel.id);
+    const entry = layout ? layout[resolveActiveIndex(layout, t)] : null;
+    return entry ? posterizedLayerTime(item, entry.startTime, entry.duration, t) : t;
+  };
   const depthStampScene = engine.depthStampScene;
   const depthStampMaterial = engine.depthStampMaterial;
   const depthCompositeScene = engine.depthCompositeScene;
@@ -486,6 +495,10 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   // pooled effect destination). Two callers: the composite loop's per-layer
   // branch, and the track-matte source pre-pass below.
   const renderStyledLayerIsolate = (channel, cs, chCam, coc) => {
+    // Posterize Time: every per-layer pass below (mask, motion blur, glow, the
+    // Overlay chain, warps…) reads the layer's HELD time, the clock channelRender
+    // posed it with. Shadows the frame's `t` for this layer only.
+    const t = layerClockAt(channel);
     const glow = engine.glowLayers.get(channel.id) || null;
     const fx = engine.overlayFx.get(channel.id) || null;
     const mblur = engine.motionBlurLayers.get(channel.id) || null;

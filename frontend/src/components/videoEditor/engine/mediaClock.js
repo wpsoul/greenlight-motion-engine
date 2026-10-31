@@ -8,6 +8,7 @@
  * Each takes an `env` with the editor values it reads, memoized over exactly the old callback's dependency list (a value
  * it read WITHOUT listing it — `forceMuteAudio` — rides along at the same staleness).
  */
+import { posterizedTimeInClip } from '../posterizeTime';
 import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 import { applyMute, isWebKitEngine, learnStartLag, parkAudio, startPlayingAudio, syncPlayingAudio, webkitPlayingSeekTarget } from '../audioDriftSync';
 import { countLoadingPerfVideos, perfRegistry } from '../perfRegistry.js';
@@ -467,7 +468,8 @@ export async function seekAllVideosForTime(engine, env, time) {
     if (!clip || clip.mediaType !== 'video') continue;
 
     const timeInClip = time - itemLayout.startTime;
-    const targetVideoTime = calculateVideoTime(item, timeInClip);
+    // Posterize Time: a still of a posterized layer shows its held step.
+    const targetVideoTime = calculateVideoTime(item, posterizedTimeInClip(item, timeInClip, itemLayout.duration));
     const useVideoA = activeIndex % 2 === 0;
     const activeVideo = useVideoA ? cs.videos.a : cs.videos.b;
 

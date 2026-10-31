@@ -6,6 +6,7 @@
  * before it is read. The envs a React-free driver builds (step 28e) hold these as plain functions.
  */
 import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
+import { isText3dLayer } from '../text3d';
 import { evaluatePropertyTrack } from '../gsapTransitions';
 import { isMotionVideoUrl, prepareMotionVideo } from '../motionTemplates';
 import { getMotionImage } from '../motionTemplates/mtl';
@@ -61,8 +62,9 @@ export function awaitMotionImages(engine, env) {
 
 export function hasModel3dLayers(engine, env) {
   return env.channels.some((ch) => (ch.items || []).some((item) => {
-    const type = env.clipsMap.get(item.clipId)?.mediaType;
-    return type === 'model3d' || type === RIG_MEDIA_TYPE;
+    const clip = env.clipsMap.get(item.clipId);
+    const type = clip?.mediaType;
+    return type === 'model3d' || type === RIG_MEDIA_TYPE || isText3dLayer(item, clip);
   }));
 }
 

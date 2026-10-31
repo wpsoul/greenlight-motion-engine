@@ -20,6 +20,12 @@
 
 import { isMaskPathTrackKey } from './keyframeProps.js';
 import {
+  isMotionPathTrackKey,
+  encodeMotionPathValue,
+  decodeMotionPathValue,
+  interpolateMotionPaths,
+} from './objectMotionPath.js';
+import {
   resolveLineStroke,
   strokeEngineActive,
   strokeEngineReach,
@@ -1322,5 +1328,22 @@ export function isShapePathTrackKey(prop) {
  * `=== SHAPE_PATH_KF_KEY`.
  */
 export function isPathTrackKey(prop) {
-  return prop === SHAPE_PATH_KF_KEY || isMaskPathTrackKey(prop);
+  return prop === SHAPE_PATH_KF_KEY || isMaskPathTrackKey(prop) || isMotionPathTrackKey(prop);
+}
+
+// The codec of a path track, by key. Shape and mask outlines are 2D unit-box
+// points; a layer's motion path is 3D world pixels with anchor rotations. Every
+// GENERIC site that handles "any path track" (sampling, splitting, seeding,
+// capturing a key) must go through these — the shape codec on a motion path
+// would clamp it to ±8 and drop z.
+export function encodePathTrackValue(prop, points) {
+  return isMotionPathTrackKey(prop) ? encodeMotionPathValue(points) : encodeShapePathValue(points);
+}
+
+export function decodePathTrackValue(prop, value) {
+  return isMotionPathTrackKey(prop) ? decodeMotionPathValue(value) : decodeShapePathValue(value);
+}
+
+export function interpolatePathTrackValues(prop, a, b, t) {
+  return isMotionPathTrackKey(prop) ? interpolateMotionPaths(a, b, t) : interpolateShapePaths(a, b, t);
 }

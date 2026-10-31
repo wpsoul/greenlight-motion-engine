@@ -201,7 +201,11 @@ export function animatedFrameTexture(engine, lane) {
   return entry.texture;
 }
 
-export function getVideoTexture(engine, video) {
+// `holdKey` (Posterize Time while playing): while it is unchanged the texture keeps
+// the frame it already shows. The decoded-frame flag is left set, so the step that
+// changes the key uploads the newest frame at once. null = no hold (every caller
+// but a playing posterized layer).
+export function getVideoTexture(engine, video, holdKey = null) {
   // Fast export path: this clip's frame was decoded (WebCodecs / WebM cache) onto
   // an offscreen canvas, not seeked into the <video>. Sample that canvas instead.
   if (video?.__decodeCanvas) return textureFromCanvas(engine, video.__decodeCanvas);
@@ -217,16 +221,19 @@ export function getVideoTexture(engine, video) {
     if (seekPending || awaitingFreshFrame || video.readyState < 2) {
       return cached.hadFrame ? cached.texture : null;
     }
+    if (holdKey !== null && cached.hadFrame && cached.holdKey === holdKey) return cached.texture;
     // Use RVFC frame-ready signal when available for precise texture updates
     if (engine.videoFrameReady.has(video)) {
       cached.texture.needsUpdate = true;
       cached.hadFrame = true;
+      cached.holdKey = holdKey;
       engine.videoFrameReady.delete(video);
       promoteUploadedMediaTime(engine, video);
     } else if (typeof video.requestVideoFrameCallback !== 'function') {
       // Fallback: always update when RVFC not supported
       cached.texture.needsUpdate = true;
       cached.hadFrame = true;
+      cached.holdKey = holdKey;
       promoteUploadedMediaTime(engine, video);
     }
     return cached.texture;

@@ -2696,6 +2696,16 @@ body.gl-tablet .ve-tl-ripple-btn {
   box-shadow: none;
 }
 
+/* Add Zoom ON changes what a click on the camera layer does, so it wears that
+   layer's sand (the zoom blocks' colour), the way armed Ripple wears its amber. */
+.ve-tl-zoom-add-btn.is-on,
+.ve-tl-zoom-add-btn.is-on:hover:not(:disabled) {
+  background: rgb(196 173 120 / 14%);
+  color: #d6c08c;
+  border-color: rgb(214 192 140 / 45%);
+  box-shadow: none;
+}
+
 .ve-timeline-hint {
   font-size: 10px;
   color: #555;
@@ -3836,6 +3846,151 @@ body.gl-tablet .ve-tl-ripple-btn {
 .ve-track-row-camera .ve-clip-kf-prop-pill:hover {
   background: rgba(196, 173, 120, 0.18);
   color: #d6cbb0;
+}
+
+/* ── Zoom mode on the camera layer (ZoomRangeLane.jsx) ────────────────────────
+   The camera clip's zoom ranges as blocks in the row's own sand. Dashed = the
+   automatic zooms made from a recording's clicks, solid = the project's own. The
+   lane sits over the clip's picture and under its trim handles (z-index 20). With
+   Add Zoom off it lets the pointer through to the camera clip, so only the blocks
+   answer; with it on, the whole lane is the zoom tool. */
+.ve-zoom-lane {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.ve-zoom-lane.adding {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* A Zoom camera that follows its recording stays on the recording's span, so its
+   layer has no drag to offer (Timeline.jsx zoomPinned). */
+.ve-timeline-clip.ve-clip-zoom-pinned,
+.ve-timeline-clip.ve-clip-zoom-pinned:active {
+  cursor: default;
+}
+
+.ve-zoom-block {
+  pointer-events: auto;
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: #f2e7cf;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(196, 173, 120, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(214, 192, 140, 0.7);
+  cursor: grab;
+  transition: background-color 0.15s cubic-bezier(0.45, 0, 0.2, 1);
+}
+
+.ve-zoom-block:active { cursor: grabbing; }
+
+.ve-zoom-block.auto {
+  background: rgba(196, 173, 120, 0.2);
+  box-shadow: none;
+  border: 1px dashed rgba(214, 192, 140, 0.6);
+}
+
+.ve-zoom-block.sel {
+  background: rgba(214, 192, 140, 0.62);
+  box-shadow: inset 0 0 0 1px #f2e7cf, 0 0 0 1px rgba(0, 0, 0, 0.4);
+  border-color: transparent;
+  color: #15130e;
+}
+
+.ve-zoom-block.off {
+  background: transparent;
+  color: rgba(242, 231, 207, 0.45);
+  text-decoration: line-through;
+}
+
+.ve-zoom-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.ve-zoom-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+}
+
+.ve-zoom-edge.l { left: 0; }
+.ve-zoom-edge.r { right: 0; }
+
+.ve-zoom-del {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.ve-zoom-block:hover .ve-zoom-del,
+.ve-zoom-block.sel .ve-zoom-del { display: block; }
+
+/* Where a new zoom would go, from the pointer: click adds it. */
+.ve-zoom-ghost {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  box-sizing: border-box;
+  border: 1px dashed rgba(214, 192, 140, 0.6);
+  border-radius: 4px;
+  background: rgba(196, 173, 120, 0.08);
+  pointer-events: none;
+}
+
+.ve-zoom-plus {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #d6c08c;
+  color: #15130e;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.ve-rows-compact .ve-zoom-block,
+.ve-rows-compact .ve-zoom-ghost { top: 2px; bottom: 2px; }
+.ve-rows-compact .ve-zoom-label { display: none; }
+
+/* The preview framing the picked zoom: Capture Camera's surface without its frame (owner, 2026-10-28) — the badge
+   above the preview says what the gestures do. */
+.ve-zoom-edit-overlay.armed {
+  box-shadow: none;
 }
 
 /* A 24px camera clip has no room for a name or a length — the camera thumb already
@@ -12338,6 +12493,13 @@ button:focus-visible {
   flex: 1;
   min-width: 0;
 }
+/* A Voice Studio saved voice picked: the reference tile stays (to go back to) but isn't sent */
+.ve-vp-tile-unused {
+  opacity: 0.4;
+}
+.ve-vp-voice {
+  margin-top: 8px;
+}
 .ve-vp-tile .generation-media-input {
   width: 40px;
   height: 40px;
@@ -14984,10 +15146,13 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 }
 
 /* ========== Sequence breadcrumb (compound-clip editing) ========== */
+/* Leads .ve-timeline-toolbar-right; on a narrow strip the crumbs give way first,
+   never the Back button or the Manage / Compact buttons beside it. */
 .ve-seq-breadcrumb {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   padding-right: 12px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.55);
@@ -14996,6 +15161,7 @@ body.ve-layer-picking .ve-timeline-clip:hover {
 }
 
 .ve-seq-back-btn {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -16755,16 +16921,6 @@ color: var(--accent, #33efab);
 /* ── Agents page — GLEA header (recreated, EditorAgentPanel's own is hidden)
       + the run-with row from the old HeaderBar dropdown ──────────────────── */
 .ve-agent-pane-header { flex: 0 0 46px; }
-.ve-agent-pro-pill {
-  flex: 0 0 auto;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: #edf1ee;
-  color: #0b0c0c;
-  font-size: 8px;
-  font-weight: 750;
-  letter-spacing: 0.05em;
-}
 .ve-agent-run {
   flex: 0 0 auto;
   display: flex;
@@ -22783,6 +22939,11 @@ color: var(--accent, #33efab);
   color: var(--m-txt3);
 }
 .ve-aitx-engine-desc { font-size: 11.5px; line-height: 1.5; color: var(--m-txt3); display: block; }
+/* "On this computer" picked with no model yet: the download line under its row (App.css .voice-setup-progress) */
+.ve-aitx-local-dl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 2px 4px 4px 38px; }
+.ve-aitx-local-dl .library-pack-progress { flex: 1; min-width: 240px; }
+.ve-aitx-local-err { flex-basis: 100%; font-size: 11.5px; color: #ff9d9d; }
+.ve-aitx-local-note { flex-basis: 100%; font-size: 11.5px; line-height: 1.5; color: var(--m-txt3); }
 
 .ve-aitx-rows {
   margin: 16px 0;
@@ -25015,6 +25176,7 @@ color: var(--accent, #33efab);
 /* Roto ▸ SAM 3 (cloud) tile + steps — look-dev html/roto-sam3-lab.html. */
 .ve-rs-mode { position: relative; }
 .ve-rs-mode-cloud { display: inline-block; margin-left: 5px; vertical-align: 1px; font-style: normal; font-size: 8px; font-weight: 700; letter-spacing: .05em; color: #9fb7ff; background: rgba(110, 140, 255, .14); border-radius: 4px; padding: 0 4px; line-height: 13px; }
+.ve-rs-mode-cloud.is-local { color: #7ee0b0; background: rgba(126, 224, 176, .14); }
 .ve-rs-sam-model { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: 8px; border: 1px solid #33383b; background: #1e2024; }
 .ve-rs-sam-pv { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 10px; font-weight: 800; color: #06140e; background: #33efab; flex: none; }
 .ve-rs-sam-name { flex: 1; min-width: 0; font-size: 11.5px; font-weight: 600; color: #dfe3ea; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

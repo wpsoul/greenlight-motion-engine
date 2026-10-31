@@ -133,6 +133,8 @@ const NO_VOICE_REFERENCE_PROVIDERS = new Set(["pika"]);
 export function getVoiceCloneModels(models, modelType) {
   return getModelsByType(models, modelType).filter(
     (m) => !NO_VOICE_REFERENCE_PROVIDERS.has(m.provider)
+      // A Voice Studio engine clones only when it declares a reference-voice slot (KittenTTS has presets only).
+      && !(m.provider === "voicestudio" && !(m.fields || []).some((f) => f.field_type === "audio"))
   );
 }
 
@@ -243,8 +245,29 @@ export const PROVIDER_ICONS = {
   kling: { label: "Kling", color: "#f59e0b" },
   higgsfield: { label: "HiggsField", color: "#6366f1" },
   heygen: { label: "HeyGen", color: "#c026d3" },
+  voicestudio: { label: "Voice Studio", color: "#f43f5e" },
 };
 
 export function clearModelCache() {
   cachedModels = null;
+}
+
+// Voice Studio (the user's own TTS app) can be opened or closed, and gain voices, while the app runs, so the voice
+// pickers ask before loading: when its model list changed since the last look, the cached list is dropped. The
+// first look can't know what an already-cached list saw, so it drops that once.
+let voiceStudioSignature;
+
+export async function syncVoiceStudioModels() {
+  try {
+    const status = await api.getVoiceStudioStatus();
+    if (!status?.available) return false;
+    const changed = voiceStudioSignature === undefined
+      ? cachedModels !== null
+      : status.signature !== voiceStudioSignature;
+    voiceStudioSignature = status.signature;
+    if (changed) clearModelCache();
+    return changed;
+  } catch {
+    return false;
+  }
 }

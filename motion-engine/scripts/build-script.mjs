@@ -20,12 +20,18 @@ if (at < 0 || !process.argv[at + 1]) { console.error('usage: node build-script.m
 const OUT = path.resolve(process.argv[at + 1]);
 
 const STUB = /^(three|three\/.*|react|react-dom|react\/.*)$|[\\/](advancedTransitions|builtinTransitionPackages|transitionPackageRuntime|materialFactory|videoRenderer)(\.js)?$/;
+// three.js itself stands in with its OWN export names, each one inert function that can also be constructed: a module
+// that builds three.js objects as it loads (projectCamera.js: `const _pfMat = new THREE.Matrix4()`) reads them off the
+// namespace (`import * as THREE`), which copies only the names a module really exports
+const THREE_NAMES = Object.keys(await import(pathToFileURL(path.resolve(here, '../../frontend/node_modules/three/build/three.module.js')).href));
 const stubs = {
   name: 'renderer-stand-ins',
   setup(b) {
     b.onResolve({ filter: /.*/ }, (args) => (STUB.test(args.path) ? { path: args.path, namespace: 'stand-in' } : null));
     // an empty module whose every named import is an inert function (never called by the preset maths)
-    b.onLoad({ filter: /.*/, namespace: 'stand-in' }, () => ({ contents: 'const f = () => undefined; module.exports = new Proxy(f, { get: () => f });', loader: 'js' }));
+    b.onLoad({ filter: /.*/, namespace: 'stand-in' }, (args) => (args.path === 'three'
+      ? { contents: `function f() {}\nexport { ${THREE_NAMES.map((n) => `f as ${n}`).join(', ')} };`, loader: 'js' }
+      : { contents: 'const f = () => undefined; module.exports = new Proxy(f, { get: () => f });', loader: 'js' }));
   },
 };
 const opts = (entry, plugins) => ({ ...entry, bundle: true, format: 'esm', platform: 'neutral', write: false, loader: { '.md': 'text' },

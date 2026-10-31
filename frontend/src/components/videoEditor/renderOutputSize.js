@@ -38,3 +38,38 @@ export function resolveScaledOutputSize(output, compW, compH) {
   if (Math.abs(w * ch - h * cw) > Math.max(cw, ch)) return null;
   return { w, h, upscale: w > cw || h > ch };
 }
+
+/**
+ * The drawing buffer a DOWNSCALED render draws one frame at, given the camera's
+ * magnification of that frame.
+ *
+ * A downscale renders at the composition size and resamples to the output. Under a
+ * camera zoom that resamples the footage twice: the GPU first magnifies it `zoom`×
+ * into the composition-sized buffer (interpolated pixels, no new detail), and the
+ * resampler then shrinks it back. A 2× zoom on a 4K recording in a 4K project
+ * delivered at 1080p is a pixel-for-pixel crop of the source; magnify-then-shrink
+ * turned its 1 px lines grey (a third of the edge sharpness — plan 1.8 of
+ * PLANS/SCREEN_RECORDER_SMOOTH_MOTION_PLAN.md).
+ *
+ * So the buffer shrinks with the zoom, to the size at which a composition pixel
+ * under the camera is one buffer pixel again (composition / zoom), and never below
+ * the output, where the resample disappears altogether. It never grows: no zoom, a
+ * zoom-out or an upscale keep today's buffer, and a zoomed frame draws fewer pixels.
+ *
+ * @param {{w:number,h:number,upscale:boolean}|null} scaled resolveScaledOutputSize's answer
+ * @param {number} compW composition width
+ * @param {number} compH composition height
+ * @param {number} zoom the camera's magnification of the picture plane in this frame
+ * @returns {{w:number,h:number}|null} the buffer, or null to keep the composition size
+ */
+export function resolveScaledRenderSize(scaled, compW, compH, zoom) {
+  if (!scaled || scaled.upscale) return null;
+  const cw = Math.round(Number(compW));
+  const ch = Math.round(Number(compH));
+  const z = Number(zoom);
+  if (!(cw >= MIN_SIDE && ch >= MIN_SIDE) || !(z > 1)) return null;
+  if (cw / z <= scaled.w || ch / z <= scaled.h) return { w: scaled.w, h: scaled.h };
+  const w = Math.round(cw / z);
+  const h = Math.round(ch / z);
+  return w < cw || h < ch ? { w, h } : null;
+}

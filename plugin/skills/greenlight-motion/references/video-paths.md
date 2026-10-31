@@ -109,16 +109,47 @@ A **text** item with a motion path can lay its glyphs out along the curve instea
   "textPathTrimStart": 0,            // % of curve length — usable window start
   "textPathTrimEnd": 100,            // % — window end
   "textPathOffsetY": 0,              // px perpendicular (baseline) offset; rows stack along the normal
-  "textPathRotate": true             // align each unit with the curve tangent
+  "textPathRotate": true,            // align each unit with the curve tangent
+  "textPathCorners": "smooth"        // 'smooth' = units turn with the curve | 'sharp' = a unit never straddles a bend
 }
 ```
 
 - Placement is arc-length parameterised (kerning survives corners) and shares `evaluateObjectMotionPath`, so preview, WebCodecs export and `/render-onserver` agree.
-- **Progress reuses `motionPathT` + its Path Progress track** and moves every glyph along the curve (not the block as one object). A closed untrimmed loop wraps like a marquee; an open or trimmed path extrapolates straight past its end tangents, so text can slide onto/off the curve. Keying `textPathTrimEnd` 0→100 is a write-on.
+- **Progress reuses `motionPathT` + its Path Progress track** and moves every glyph along the curve (not the block as one object). A closed untrimmed loop wraps like a marquee; an open or trimmed path extrapolates straight past its end tangents, so text can slide onto/off the curve. The trims move the WINDOW the run is laid out in — they do NOT hide letters (those run on past the window's ends), so keyed trims are not a write-on: use a Text Animator reveal for that. Letters that run past the path's own ends are cut at the text plate's edge — extend the path to run text off the frame.
 - `textPathDirection` decides where the run rests at 0% and which way progress carries it: `forward` parks the text ON the first point and travels to the last, `backward` ends it on the last point and travels back to the first, `center` (default) keeps the legacy middle anchor and follows `textAlign` (start/centre/end of the trimmed window). Multi-line text stacks rows along the curve normal at line-height steps.
 - `textPathTravel` sets how far 100% carries a forward/backward run: `fit` (default) stops when the run's far end reaches the far point, so the whole text stays on the path; `through` keeps going until the leading unit gets there, sliding the text off the end. Travel is computed per row (each row's run has its own length), and a run longer than the trimmed window has nowhere to travel under `fit`. Ignored by `center` (which always slides the full window) and by a wrapping closed loop (always a whole lap).
+- `textPathCorners: "sharp"` treats bends as corners (a turn of 20°+ within ¾ of the type size, or half the unit if wider): a unit never takes an in-between angle on a bend — it belongs wholly to ONE side, turned to that side and laid on that side's straight line carried through the bend. The side is the one it RESTS on (Path Progress 0), so a glide or drift shorter than half a unit never turns a letter at a corner; a unit carried further (a marquee round a square) moves across when its centre passes the middle of the bend. Use it for text running or gliding round a square / ∩ path (rounded corners included); keep `smooth` for curves (an outline, a wave).
 - While `textPathEnabled` is live (path has ≥2 points), `follow` is ignored — the glyph run owns the curve and the layer's own transform stays put. The caption background bar (`textBgEnabled`) is suppressed on a path; split/in-out animations, highlight, randomizer and word timings all compose per unit on the curve.
 - `follow` is NOT required: draw a path, leave `follow: false`, set `textPathEnabled: true`.
+
+#### Animated motion path (`motionPathPoints`)
+
+The path ITSELF can be keyframed, like a Layer Mask outline: `propertyKeyframes.motionPathPoints` holds snapshots of the
+points, and Follow Path and Text on Path both ride the snapshot at the current frame — so text can follow a tracked
+(RotoScope) outline frame by frame.
+
+```json
+"propertyKeyframes": {
+  "motionPathPoints": [
+    { "position": 0,   "value": "[{\"x\":-520,\"y\":0,\"z\":0,\"hIn\":{\"x\":0,\"y\":0,\"z\":0},\"hOut\":{\"x\":0,\"y\":0,\"z\":0},\"manual\":true}, …]", "easing": "Linear" },
+    { "position": 100, "value": "[…the same points, moved…]", "easing": "Linear" }
+  ]
+}
+```
+
+- **Value:** a JSON string of the points in the WORLD space of `motionPath` (pixels, origin at the comp centre, +y up,
+  z toward the viewer, handles as offsets, optional `rx/ry/rz`). `closed`, `follow`, `aim` stay on `item.motionPath`.
+- **Same point count in every key**, as for mask paths; the shorter list wins if they differ. Dense (per-frame) tracks
+  use LINEAR keys.
+- **Keep `item.motionPath`** with the same points (any key's): the track is only kept while the layer has a path of
+  2+ points, and point counts / Text on Path liveness read it.
+- **In the editor:** MOTION PATH ▸ **Animate path** keys the path at the playhead; from then on every canvas, 3D-view
+  or panel edit keys it where the playhead is (adding or deleting an anchor changes every key, split at the same spot
+  of the curve). **Copy path** from an ANIMATED source — a RotoScope mask, a keyed shape path or another animated
+  motion path (the menu shows `n◆`) — brings all its keys, at their absolute times on this layer's span, cut with an
+  interpolated key where the source runs past either end.
+- **Text on Path:** the text plate is sized from the reach of ALL keys once, so the outline can move without the
+  texture being reallocated.
 
 ### Motion-track follow (`motionTracks` + `motionFollow`)
 

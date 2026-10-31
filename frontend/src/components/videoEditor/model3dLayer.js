@@ -16,10 +16,11 @@ import { setModelFootprint, clearModelFootprint } from './model3dFootprint';
 import { applyModelGrowFill, removeModelGrowFill } from './model3dGrowFill';
 import { notifyModelAssetLoaded } from './model3dEvents';
 import { createModelTonePassMaterial } from './model3dTonePass';
+import { glyphGeometry, clearGlyphGeometries } from './text3dGlyphs';
 import { makeShadowPlateMaterial } from './model3dShadowPlate';
 import {
   normalizeRig, vectorFromSpherical, candelaIntensity, areaLuminance, lightTarget, AREA_SHADOW_SHARE,
-  cycSizePx, resolveEnvUrl, cycSurfaceColor,
+  cycSizePx, resolveEnvUrl, cycSurfaceColor, legacyRigLights,
 } from './rig3d';
 // Importing installs the PCSS shadow lookup (a ShaderChunk edit) — only projects
 // that draw 3D ever load this module, so nothing else pays for it.
@@ -2078,6 +2079,260 @@ export function renderPlateLayer(renderer, opts) {
     renderer.setRenderTarget(prevTarget);
     renderer.autoClear = prevAutoClear;
     renderer.setClearColor(prevClear, prevClearAlpha);
+  }
+}
+
+// ── 3D Text (text3d.js) ─────────────────────────────────────────────────────
+// A text layer drawn as real extruded letters. The 2D text code lays the letters
+// out and animates them exactly as before (layerMesh.js), and hands this pass a
+// RUN: per letter its font, character, colour, alpha and a plate-space matrix
+// (the Text Animators' real 3D transform, Text on Path pose included). Here every
+// letter is a mesh of shared glyph geometry (text3dGlyphs.js), placed on the layer
+// by the compositor quad's own world transform — the promotePlateMesh contract —
+// lit by the Rig (shared world: shadows on the set) or its own studio light, and
+// filmed through the project camera like a model.
+
+const text3dInstances = new Map();
+
+// Light without a Rig: the model's own three directionals at preset strengths,
+// plus an environment for reflections.
+// Studio matches a model's own default light (key 1, fill 0.45, rim 0.35), so a
+// red letter beside a red model reads as the same red.
+const TEXT3D_LIGHTING = {
+  studio: { env: 'studio_small_03_1k', key: 1, fill: 0.45, rim: 0.5 },
+  soft: { env: 'studio_small_03_1k', key: 0.55, fill: 0.6, rim: 0.2 },
+  dramatic: { env: 'dikhololo_night_1k', key: 2, fill: 0.06, rim: 1.3 },
+};
+
+// Plastic's lacquer stays light: clearcoat reflects the environment on top of the
+// colour, and a heavy coat washes a toy red to pink (more so on WebGL).
+const TEXT3D_FINISH = {
+  plastic: { roughness: 0.32, metalness: 0, clearcoat: 0.3, clearcoatRoughness: 0.2, opacity: 1 },
+  matte: { roughness: 0.85, metalness: 0, clearcoat: 0, clearcoatRoughness: 0, opacity: 1 },
+  metal: { roughness: 0.22, metalness: 1, clearcoat: 0, clearcoatRoughness: 0, opacity: 1 },
+  glass: { roughness: 0.05, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03, opacity: 0.55 },
+};
+
+function makeText3dEntry(itemId) {
+  const scene = new THREE.Scene();
+  const outer = new THREE.Group();
+  // Plate px (x right, y DOWN, z AWAY) → the layer's local frame (y UP, z toward
+  // the viewer), centred on the plate. Set per frame from the run's plate size.
+  const plate = new THREE.Group();
+  plate.matrixAutoUpdate = false;
+  outer.add(plate);
+  scene.add(outer);
+  return {
+    itemId, scene, outer, plate, lightRig: makeLightRig(scene),
+    meshes: [], hdr: null, ldr: null, camera: null, envKey: null,
+  };
+}
+
+const _t3dFace = new THREE.Color();
+const _t3dSide = new THREE.Color();
+const cssFirstColour = (css) => {
+  const m = String(css || '').match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/i);
+  return m ? m[0] : (css || '#ffffff');
+};
+
+function syncText3dLetters(entry, run) {
+  const s = run.settings;
+  const finish = TEXT3D_FINISH[s.material] || TEXT3D_FINISH.plastic;
+  const depth = Math.max(0, s.depth) / 100;
+  const bevel = Math.max(0, s.bevel) / 100;
+  const palette = Array.isArray(s.palette) && s.palette.length ? s.palette : null;
+  let n = 0;
+  for (const g of run.glyphs) {
+    const built = glyphGeometry(g.font, g.ch, depth, bevel, s.bevelSegments, g.fv || 0);
+    if (!built) continue;
+    let mesh = entry.meshes[n];
+    if (!mesh) {
+      mesh = new THREE.Mesh(built.geometry, [new THREE.MeshPhysicalMaterial(), new THREE.MeshPhysicalMaterial()]);
+      mesh.matrixAutoUpdate = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      entry.plate.add(mesh);
+      entry.meshes.push(mesh);
+    }
+    if (mesh.geometry !== built.geometry) mesh.geometry = built.geometry;
+    mesh.visible = true;
+    const m = g.m;
+    mesh.matrix.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+    _t3dFace.set(s.faceColor || (palette ? palette[g.index % palette.length] : cssFirstColour(g.color)));
+    if (s.sideColor) _t3dSide.set(s.sideColor);
+    else _t3dSide.copy(_t3dFace).multiplyScalar(1 - Math.min(0.95, Math.max(0, s.sideShade / 100)));
+    const opacity = Math.max(0, Math.min(1, (g.alpha ?? 1) * finish.opacity));
+    const [cap, side] = mesh.material;
+    for (const [mat, col] of [[cap, _t3dFace], [side, _t3dSide]]) {
+      mat.color.copy(col);
+      mat.roughness = finish.roughness;
+      mat.metalness = finish.metalness;
+      mat.clearcoat = finish.clearcoat;
+      mat.clearcoatRoughness = finish.clearcoatRoughness;
+      const transparent = opacity < 0.999;
+      if (mat.transparent !== transparent) { mat.transparent = transparent; mat.needsUpdate = true; }
+      mat.opacity = opacity;
+      mat.depthWrite = !transparent;
+    }
+    n += 1;
+  }
+  for (let i = n; i < entry.meshes.length; i += 1) entry.meshes[i].visible = false;
+  return n;
+}
+
+/**
+ * Film one 3D Text layer. `opts` is renderPlateLayer's (item, transform, pose, rig,
+ * W, H, width, height, near, far, frameToken) plus `run` = { plateW, plateH,
+ * settings, glyphs: [{ font, ch, color, alpha, index, m }] }. Returns the
+ * full-frame texture (premultiplied), its depth and view distance — the same
+ * contract as renderModelLayer.
+ */
+export function renderText3dLayer(renderer, opts) {
+  const { item, run, pose, W, H, width, height } = opts;
+  const none = { texture: null, depthTexture: null, viewDistance: null };
+  if (!item?.id || !run || !renderer) return none;
+  ensureShadowType(renderer);
+  let entry = text3dInstances.get(item.id);
+  if (!entry) { entry = makeText3dEntry(item.id); text3dInstances.set(item.id, entry); }
+  ensureTargets(entry, Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+
+  const prevTarget = renderer.getRenderTarget();
+  const prevAutoClear = renderer.autoClear;
+  const prevClear = new THREE.Color();
+  renderer.getClearColor(prevClear);
+  const prevClearAlpha = renderer.getClearAlpha();
+  try {
+    renderer.autoClear = false;
+    const s = run.settings;
+    const rig = opts.rig ? normalizeRig(opts.rig) : null;
+    const world = rig ? ensureSharedWorld() : null;
+    const passLayer = joinWorld(world, `t:${item.id}`, entry.outer, entry.scene);
+    const scene = world ? world.scene : entry.scene;
+    const look = TEXT3D_LIGHTING[s.light] || TEXT3D_LIGHTING.studio;
+    if (world) {
+      const envUrl = resolveEnvUrl(rig.env);
+      const shared = envUrl ? environmentForUrl(renderer, envUrl) : null;
+      if (shared?.status === 'ready' && (world.envKey !== envUrl || scene.environment !== shared.texture)) {
+        scene.environment = shared.texture;
+        world.envKey = envUrl;
+      } else if (world.envKey !== envUrl || !envUrl) {
+        scene.environment = null;
+        world.envKey = envUrl;
+      }
+      scene.environmentIntensity = rig.env.intensity;
+    } else {
+      const env = environmentFor(renderer, look.env);
+      if (env.status === 'ready' && (entry.envKey !== look.env || scene.environment !== env.texture)) {
+        scene.environment = env.texture;
+        entry.envKey = look.env;
+      } else if (entry.envKey !== look.env) {
+        scene.environment = null;
+        entry.envKey = look.env;
+      }
+      scene.environmentIntensity = Number.isFinite(s.envIntensity) ? s.envIntensity : 1;
+    }
+    syncLightsToScene(world ? world.lightRig : entry.lightRig,
+      rig ? rig.lights : legacyRigLights({ key: look.key, fill: look.fill, rim: look.rim }));
+
+    const count = syncText3dLetters(entry, run);
+    if (!count) return none;
+    if (world) setShadowFlags(entry.outer, true, true, true);
+
+    // The layer, placed by the compositor quad's world transform. The quad's scale
+    // carries the plate's width over the comp's (wide nowrap text); taken out here
+    // so letters keep their proportions — 1 plate px = 1 world px × the layer zoom.
+    const t = opts.transform || {};
+    const p = t.position || {};
+    const q = t.quaternion || {};
+    const sc = t.scale || {};
+    const plateW = Math.max(1, Number(run.plateW) || W);
+    const plateH = Math.max(1, Number(run.plateH) || H);
+    const zx = (Number.isFinite(sc.x) && sc.x !== 0 ? sc.x : 1) * (W / plateW);
+    const zy = (Number.isFinite(sc.y) && sc.y !== 0 ? sc.y : 1) * (H / plateH);
+    entry.outer.position.set(Number(p.x) || 0, Number(p.y) || 0, Number(p.z) || 0);
+    if ([q.x, q.y, q.z, q.w].every(Number.isFinite)) entry.outer.quaternion.set(q.x, q.y, q.z, q.w);
+    else entry.outer.quaternion.identity();
+    entry.outer.scale.set(zx, zy, (Math.abs(zx) + Math.abs(zy)) / 2);
+    entry.plate.matrix.set(1, 0, 0, -plateW / 2, 0, -1, 0, plateH / 2, 0, 0, -1, 0, 0, 0, 0, 1);
+    scene.updateMatrixWorld(true);
+
+    const proxy = pose ? cameraProxyFromPose(pose, W, H) : null;
+    const cam = entry.camera || (entry.camera = new THREE.PerspectiveCamera(28, 1, 1, 100000));
+    const D = proxyDistance(W, H);
+    if (proxy) {
+      cam.position.copy(proxy.position);
+      cam.quaternion.copy(proxy.quaternion);
+      cam.fov = proxy.fov;
+    } else {
+      cam.position.set(0, 0, D);
+      cam.quaternion.identity();
+      cam.fov = 28;
+    }
+    cam.aspect = W / H;
+    cam.layers.set(passLayer);
+    cam.near = Number.isFinite(opts.near) && opts.near > 0 ? opts.near : Math.max(1, D * 0.001);
+    cam.far = Number.isFinite(opts.far) && opts.far > cam.near ? opts.far : D * 20;
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+
+    _box.setFromObject(entry.plate);
+    _box.getCenter(_center);
+    _viewCenter.copy(_center).applyMatrix4(cam.matrixWorldInverse);
+    const viewDistance = -_viewCenter.z;
+    const viewRange = boxViewRange(_box, cam);
+
+    const sh = world ? prepareWorldShadows(world, rig, opts.frameToken ?? 0, H, pcssActive, cam) : null;
+    renderer.setRenderTarget(entry.hdr);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, true, true);
+    if (world) withWorldShadows(renderer, sh, world, scene, cam, () => renderer.render(scene, cam));
+    else renderer.render(scene, cam);
+
+    const { toneMesh: tm, toneScene: ts, toneCamera: tc } = ensureTonePass();
+    tm.material.uniforms.uTexture.value = entry.hdr.texture;
+    tm.material.uniforms.uResolution.value.set(entry.ldr.width, entry.ldr.height);
+    tm.material.uniforms.uExposure.value = 1;
+    if (tm.material.uniforms.uScreenMaskOn) tm.material.uniforms.uScreenMaskOn.value = 0;
+    renderer.setRenderTarget(entry.ldr);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, true, true);
+    renderer.render(ts, tc);
+    return { texture: entry.ldr.texture, depthTexture: entry.hdr.depthTexture, viewDistance, viewRange, error: null };
+  } finally {
+    renderer.setRenderTarget(prevTarget);
+    renderer.autoClear = prevAutoClear;
+    renderer.setClearColor(prevClear, prevClearAlpha);
+  }
+}
+
+function disposeText3dInstance(entry) {
+  if (!entry) return;
+  entry.outer.userData.__disposed = true;
+  entry.outer.removeFromParent();
+  releaseWorldLayer(sharedWorld, `t:${entry.itemId}`);
+  // Geometry is shared through the glyph cache; only this layer's materials go.
+  for (const mesh of entry.meshes) for (const m of mesh.material) m.dispose();
+  entry.hdr?.dispose();
+  entry.ldr?.dispose();
+}
+
+export function disposeText3dLayer(itemId) {
+  const entry = text3dInstances.get(itemId);
+  if (!entry) return;
+  disposeText3dInstance(entry);
+  text3dInstances.delete(itemId);
+}
+
+export function disposeAllText3dLayers() {
+  for (const entry of text3dInstances.values()) disposeText3dInstance(entry);
+  text3dInstances.clear();
+  clearGlyphGeometries();
+}
+
+export function pruneText3dLayers(keepIds) {
+  const keep = keepIds instanceof Set ? keepIds : new Set(keepIds || []);
+  for (const id of [...text3dInstances.keys()]) {
+    if (!keep.has(id)) disposeText3dLayer(id);
   }
 }
 

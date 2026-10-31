@@ -385,7 +385,7 @@ export function polygonArea(pts) {
 
 /* ── 3 · simplify ────────────────────────────────────────────────────────── */
 
-function smoothClosed(pts, radius) {
+export function smoothClosed(pts, radius) {
   if (radius <= 0 || pts.length < 8) return pts;
   const n = pts.length;
   const out = new Array(n);
@@ -464,7 +464,7 @@ function rdpClosedIndices(pts, eps) {
   return a.slice(0, -1).concat(b.slice(0, -1));
 }
 
-function rdpClosed(pts, eps) {
+export function rdpClosed(pts, eps) {
   return rdpClosedIndices(pts, eps).map((i) => pts[i]);
 }
 

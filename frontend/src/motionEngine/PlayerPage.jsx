@@ -457,8 +457,11 @@ function Timeline({ rows, duration, playing, currentTime, onSeek, onSelect, sele
                   key={l.id}
                   type="button"
                   data-layer={l.id}
-                  className={`glm-layer t-${l.type}${l.appOnly ? ' is-app-only' : ''}${l.locked ? ' is-locked' : ''}${selected === l.id ? ' is-on' : ''}${moving?.id === l.id ? ' is-moving' : ''}`}
-                  style={{ left: `${(l.start / D) * 100}%`, width: `${((l.end - l.start) / D) * 100}%` }}
+                  className={`glm-layer t-${l.type}${l.appOnly ? ' is-app-only' : ''}${l.locked ? ' is-locked' : ''}${selected === l.id ? ' is-on' : ''}${moving?.id === l.id ? ' is-moving' : ''}${l.overlapIn > 0 && l.transition ? ' has-xin' : ''}`}
+                  // a cross transition INTO this layer: its name starts after the transition's band (as in GreenLight
+                  // Dash's timeline) — a padding in % of the row, the layer's containing block
+                  style={{ left: `${(l.start / D) * 100}%`, width: `${((l.end - l.start) / D) * 100}%`,
+                    ...(l.overlapIn > 0 && l.transition ? { paddingLeft: `calc(${(l.overlapIn / D) * 100}% + 6px)` } : null) }}
                   aria-pressed={selected === l.id}
                   onPointerDown={(e) => onLayerDown(e, l, 'move')}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(l); } }}
@@ -477,7 +480,8 @@ function Timeline({ rows, duration, playing, currentTime, onSeek, onSelect, sele
                   style={{ left: `${(l.start / D) * 100}%`, width: `${(l.overlapIn / D) * 100}%` }}
                   onPointerDown={(e) => { e.stopPropagation(); }}
                   onClick={() => onTransition(l)}
-                  title={`${l.transition} · ${seconds(l.overlapIn)} · click to change`}>
+                  title={`${l.transition} · ${seconds(l.overlapIn)} · click to change`}
+                  aria-label={`${l.transition}, ${seconds(l.overlapIn)}: change the transition`}>
                   <span>{l.transition}</span>
                 </button>
               ) : (l.touchingPrev && !l.transition && !l.locked && l.type !== 'model3d' ? (

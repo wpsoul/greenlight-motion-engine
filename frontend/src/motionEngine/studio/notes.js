@@ -1,7 +1,10 @@
 /* global RV */   // window globals the studio parts share (studio/index.js)
 /* Notes mode of the review lab. One note owns multiple frame/range attachments, each on a source.
    Drawings use the app's sketchEngine; persistence is local IndexedDB. The top switch (review.js)
-   opens and closes this mode. No terminal, MCP, artifact comment, or review-server writes. */
+   opens and closes this mode. No terminal, MCP, artifact comment, or review-server writes.
+   The note and comment boxes have a mic (voice.js). */
+import { micButton } from './voice.js';
+
 export function install(STUDIO) {
   const $=s=>document.querySelector(s), E=window.LabNoteEngine, api=()=>window.GreenLightMotion?.page;
   const size=window.GL_LAB_PROJECT.videoSize, iw=size.w, ih=size.h;
@@ -102,7 +105,8 @@ export function install(STUDIO) {
     const ownRange=S.rangeOf&&findShot(S.rangeOf);
     if(S.range&&!ownRange?.note){if(ownRange)composer.append(el('p','mn-hint','This attachment\'s range: drag the edges on the ruler, or type them.'));composer.append(rangeRow());}
     const tray=el('div','mn-tray');const live=liveTile();if(live)tray.append(live);S.draft.shots.forEach((shot,i)=>{const tile=el('div','mn-shot');const view=btn(`View attachment ${i+1}`,()=>navigateShot(shot),null,'mn-shot-view');view.textContent='';const img=el('img');img.src=shot.thumb;img.alt=shot.kind==='range'?'Range frame strip':'Annotated frame';view.append(img,el('span','',`${multi()?(shot.src||'A')+' · ':''}${shot.kind==='range'?'↔ ':''}${fmt(shot.t)}${shot.end!=null?'–'+fmt(shot.end):''}`));const remove=btn(`Remove attachment ${i+1}`,()=>{S.draft.shots.splice(i,1);renderPanel();schedule();},'close','mn-remove');tile.append(view,remove);tray.append(tile);});composer.append(tray);
-    const text=el('textarea','mn-note-text');text.placeholder='Tell the agent what should change…';text.setAttribute('aria-label','Note text');text.value=S.draft.text;text.rows=4;text.oninput=()=>{S.draft.text=text.value;schedule();};composer.append(text);
+    const text=el('textarea','mn-note-text');text.placeholder='Tell the agent what should change…';text.setAttribute('aria-label','Note text');text.value=S.draft.text;text.rows=4;text.oninput=()=>{S.draft.text=text.value;schedule();};
+    const field=el('div','mn-voice');field.append(text);const mic=micButton(text,{key:'mn-draft',onError:message,className:'mn-mic'});if(mic)field.append(mic);composer.append(field);
     const controls=el('div','mn-actions');controls.append(btn(S.draft.editId?'Update note':'Save note',saveNote,'check','mn-button primary'));if(S.draft.editId)controls.append(btn('Cancel edit',()=>{S.draft={text:'',shots:[],editId:null};release();renderPanel();schedule();},null,'mn-button'));controls.append(el('small','mn-local','Saved locally'));composer.append(controls);scroll.append(composer);
     const list=el('section','mn-list');const title=el('div','mn-section-title');title.append(el('b','',`Notes ${S.notes.length}`));title.append(btn('Export notes',exportNotes,'save'));list.append(title);
     if(solvedNote){const bar=el('div','mn-undo');bar.append(el('span','',`Note #${solvedNote.n} solved and removed`),btn('Undo',undoSolved,null,'mn-undo-b'));list.append(bar);}
@@ -120,7 +124,8 @@ export function install(STUDIO) {
       box.oninput=()=>{replyDraft[note.id]=box.value;grow();};box.onfocus=()=>seen(note);
       box.onkeydown=e=>{e.stopPropagation();if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();comment(note,box.value);}else if(e.key==='Escape')box.blur();};
       const send=btn('Send comment (Enter)',()=>comment(note,box.value),'send','mn-btn mn-send');
-      reply.append(box,send);card.append(reply);
+      const rmic=micButton(box,{key:`mn-reply-${note.id}`,onError:message,className:'mn-mic mn-mic-reply'});
+      reply.append(box,...(rmic?[rmic]:[]),send);card.append(reply);
       const acts=el('div','mn-note-acts');const solvedB=btn('Solved',()=>solve(note),'check','mn-solved');solvedB.append(document.createTextNode('Solved'));solvedB.title='Fixed: remove this note';acts.append(solvedB);card.append(acts);
       list.append(card);requestAnimationFrame(grow);
     });

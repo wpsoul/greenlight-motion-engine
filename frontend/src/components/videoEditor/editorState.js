@@ -24,7 +24,7 @@ import { sanitizeKeyframeFxMap, hasAnyKeyframeFx } from "./keyframeFx";
 import { sanitizeBezier, sanitizeEaseSlice } from "./easingCurves";
 import { AUDIO_FADE_CURVES } from "./audioFade";
 import { GIF_LOOP_MODES, GIF_LOOP_MODE_DEFAULT, GIF_SPEED_DEFAULT, GIF_SPEED_MIN, GIF_SPEED_MAX } from "./animatedImage";
-import { sanitizeObjectMotionPath } from "./objectMotionPath";
+import { sanitizeObjectMotionPath, MOTION_PATH_KF_KEY, coerceMotionPathValue } from './objectMotionPath';
 import { getAdjustmentEffect, makeEid, parseEffectKfKey, effectParamKfMeta, sanitizeEffectLut, sanitizeEffectGradient, sanitizeEffectCurves, sanitizeEffectEasing, isLocalEffectId } from "./adjustmentEffects";
 import { sanitizeObjectTrack } from "./objectTracking";
 import { RUNNING_GLOW_LAYER_EFFECT_ID, GLOW_DEFAULTS, GLOW_NUMBER_FIELDS, GLOW_ENUM_FIELDS, GLOW_COLOR_FIELDS } from "./runningGlow";
@@ -33,6 +33,8 @@ import { DEPTH_MAP_LAYER_EFFECT_ID, DEPTH_MAP_MAX_DATA, DM_DEFAULTS, DM_ENUM_FIE
 import { DEPTH_SCAN_LAYER_EFFECT_ID, SCN_DEFAULTS, SCN_NUMBER_FIELDS, SCN_ENUM_FIELDS, SCN_COLOR_FIELDS, SCN_GRADIENT_FIELDS } from "./depthScanLayer";
 import { FRESNEL_RIM_LAYER_EFFECT_ID, FR_DEFAULTS, FR_NUMBER_FIELDS, FR_ENUM_FIELDS, FR_COLOR_FIELDS } from "./fresnelRimLayer";
 import { MOTION_BLUR_LAYER_EFFECT_ID, MBLUR_DEFAULTS, MBLUR_NUMBER_FIELDS, MBLUR_ENUM_FIELDS } from "./motionBlurLayer";
+import { POSTERIZE_TIME_EFFECT_ID, PT_DEFAULTS, PT_NUMBER_FIELDS } from './posterizeTime';
+import { sanitizeText3d } from './text3d';
 import { MOTION_TRAIL_LAYER_EFFECT_ID, TRAIL_DEFAULTS, TRAIL_NUMBER_FIELDS, TRAIL_ENUM_FIELDS, TRAIL_COLOR_FIELDS } from "./motionTrailLayer";
 import { AUTOFILL_LAYER_EFFECT_ID, AF_DEFAULTS, AF_NUMBER_FIELDS, AF_ENUM_FIELDS, AF_COLOR_FIELDS, AF_GRADIENT_FIELDS, sanitizeAutoFillPoints, sanitizeAutoFillPoints3d } from "./autoFillLayer";
 import { RIG_LAYER_EFFECT_ID, RIG_DEFAULTS, RIG_NUMBER_FIELDS, RIG_ENUM_FIELDS, RIG_PIN_CHANNELS, RIG_KF_CHAN_META, sanitizeRigPins, sanitizeRigChains, parseRigKfKey } from "./rigDeform";
@@ -48,6 +50,8 @@ import { BEND_LAYER_EFFECT_ID, BN_DEFAULTS, BN_NUMBER_FIELDS } from "./bendLayer
 import { MESH_WARP_LAYER_EFFECT_ID, MW_DEFAULTS, MW_ENUM_FIELDS, MW_POINT_FIELDS, getMeshWarpEffect, mwActiveKeys } from "./meshWarp";
 import { BEZIER_WARP_LAYER_EFFECT_ID, BW_DEFAULTS, BW_NUMBER_FIELDS } from "./bezierWarp";
 import { sanitizeCameraRig, sanitizeCameraMoveMode } from "./cameraRig";
+import { sanitizeSmartZoom, syncSmartZoomCameraSpans } from "./smartZoomCamera";
+import { sanitizeRecordingCursor } from "./recordingCursor";
 import { sanitizeRig, sanitizeShadowPlate, rigKfKeysFor, buildRigKfPropsFor, isRigTrackKey, isRigColorTrackKey, RIG_MEDIA_TYPE, RIG_CHANNEL_KIND, pinRigChannelUnderCamera } from "./rig3d";
 import { PARTICLE_MEDIA_TYPE, PARTICLE_CLIP_DURATION_SECONDS, sanitizeParticleSystem, particleProxKfField } from "../../sim/particles/schema.js";
 import { DEFAULT_MOTION_BLUR_SHUTTER, sanitizeMotionBlurShutter } from "./motionBlurLevels";
@@ -55,6 +59,7 @@ import { DEFAULT_TEXTURE_QUALITY, sanitizeTextureQuality } from "./rasterDensity
 import { DEFAULT_PREVIEW_FPS, sanitizePreviewFps } from "./previewDeviceTier.js";
 import { sanitizeColorTokens } from "../colorTokens";
 import { getTimelineLayout, getTimelineEndTime, sanitizeSpeedPoints } from "./speedUtils";
+import { sanitizePhotoSlot, sanitizePhotoSlotSettings } from "./photoSlots";
 import { SPEED_KF_KEY, SPEED_KF_PROP, deriveSpeedPoints } from "./speedKeyframes";
 import { sanitizeParentingField, repairParentingReferences } from "./keyframeParenting";
 import { sanitizeTrackMatteField, repairTrackMatteReferences } from "./trackMatte";
@@ -412,6 +417,14 @@ export function sanitizePropertyKeyframes(propertyKeyframes, effects = [], item 
       }
     }
   }
+  // An animated motion path: snapshots of the path's points (3D world pixels) —
+  // its own coercer for the same reason as the outline tracks above, and kept
+  // only while the layer still has a path to animate.
+  if (Array.isArray(item?.motionPath?.points) && item.motionPath.points.length >= 2) {
+    const keys = cleanTrack(propertyKeyframes[MOTION_PATH_KF_KEY], coerceMotionPathValue)
+      ?.filter((key) => key.value);
+    if (keys?.length) result[MOTION_PATH_KF_KEY] = keys;
+  }
   return result;
 }
 
@@ -655,6 +668,8 @@ export function sanitizeClip(clip) {
     base.recordingMeta = {
       version: 1,
       fps: Number.isFinite(rm.fps) ? rm.fps : 60,
+      // A native macOS take has no cursor in the picture: the editor draws it (absent = the cursor is in the video).
+      ...(rm.cursorInVideo === false ? { cursorInVideo: false } : {}),
       durationSec: num(rm.durationSec),
       screen:
         rm.screen && typeof rm.screen === 'object'
@@ -675,6 +690,10 @@ export function sanitizeClip(clip) {
           : null
       ),
     };
+  }
+  // The screen recording's full cursor path (a .glcursor media file beside the video; Smart Zoom's drawn cursor).
+  if (typeof clip.recordingTrackUrl === 'string' && /^(\/media\/|https?:\/\/)/.test(clip.recordingTrackUrl)) {
+    base.recordingTrackUrl = clip.recordingTrackUrl.slice(0, 1000);
   }
   // AI Fill: an unapplied zone's spacer clip persists (the empty gap is saved);
   // keep its zone tag so the zone stays manipulable after reload.
@@ -878,6 +897,18 @@ export function sanitizeLayerEffectChain(list) {
       }
       out.push({
         id: MOTION_BLUR_LAYER_EFFECT_ID,
+        eid: typeof raw.eid === 'string' && raw.eid ? raw.eid : makeEid(),
+        enabled: raw.enabled !== false,
+        params,
+      });
+      seen.add(raw.id);
+    } else if (raw.id === POSTERIZE_TIME_EFFECT_ID) {
+      const params = {};
+      for (const f of PT_NUMBER_FIELDS) {
+        params[f.key] = sanitizeNumber(raw.params?.[f.key], PT_DEFAULTS[f.key], { min: f.min, max: f.max });
+      }
+      out.push({
+        id: POSTERIZE_TIME_EFFECT_ID,
         eid: typeof raw.eid === 'string' && raw.eid ? raw.eid : makeEid(),
         enabled: raw.enabled !== false,
         params,
@@ -1808,6 +1839,8 @@ export function sanitizeTimelineItem(item) {
     panX: sanitizeNumber(item.panX, 0),
     panY: sanitizeNumber(item.panY, 0),
     panZ: sanitizeNumber(item.panZ, 0, { min: -3000, max: 3000 }),
+    // A photo slot mark (photoSlots.js): people may replace this picture with their own photo. Omitted when not a slot.
+    ...(() => { const slot = item.photoSlot ? sanitizePhotoSlot(item.photoSlot) : null; return slot ? { photoSlot: slot } : {}; })(),
     motionPathT: sanitizeNumber(item.motionPathT, 0, { min: 0, max: 100 }),
     // The path and its offsets travel together: with no path the offsets have
     // nothing to displace, so they are not worth storing on every other layer.
@@ -2018,6 +2051,9 @@ export function sanitizeTimelineItem(item) {
     textPathTrimEnd: sanitizeNumber(item.textPathTrimEnd, 100, { min: 0, max: 100 }),
     textPathOffsetY: sanitizeNumber(item.textPathOffsetY, 0, { min: -500, max: 500 }),
     textPathRotate: item.textPathRotate !== false,
+    // Corners (textPathCorners.js): 'smooth' turns letters with the curve; 'sharp' keeps each letter wholly on
+    // one side of a bend — upright to that side — and moves it across when its centre passes the bend.
+    textPathCorners: item.textPathCorners === 'sharp' ? 'sharp' : 'smooth',
     // Inline counters — {{{COUNTER:a-b}}} tokens in textContent (textCounter.js).
     // Percent fields (cascade, blur) are stored as the panel shows them.
     textCounterStyle: COUNTER_STYLES.includes(item.textCounterStyle) ? item.textCounterStyle : COUNTER_DEFAULTS.textCounterStyle,
@@ -2185,9 +2221,14 @@ export function sanitizeTimelineItem(item) {
     // camera is in. Both attach only to items that carry them.
     ...sanitizeCameraRig(item),
     ...(item.cameraMoveMode ? { cameraMoveMode: sanitizeCameraMoveMode(item.cameraMoveMode) } : {}),
+    // Smart Zoom: the screen recording this camera follows and its Motion preset (smartZoomCamera.js).
+    ...sanitizeSmartZoom(item),
+    ...sanitizeRecordingCursor(item),
     // Flat scene-shadow participation for text / shape / image / video plates.
     // The sanitizer also migrates and drops the removed `layer3d` block.
     ...sanitizeShadowPlate(item),
+    // 3D Text (text3d.js): extruded letters for a text layer. Stored only when set.
+    ...(sanitizeText3d(item.text3d) ? { text3d: sanitizeText3d(item.text3d) } : {}),
     // Grid layers: the layout rule (mode, spacing, fit, orientation, reveal).
     ...sanitizeGridConfig(item),
     // Particle Solver layers: seed, solver box, emitter, forces and look.
@@ -2286,7 +2327,8 @@ export function createDefaultChannel(name = 'Channel 1') {
 export function pinSingletonChannels(channels) {
   // Camera to the top FIRST, then the rig immediately under wherever it landed —
   // the rig's slot is defined relative to the camera, so the order here matters.
-  return pinRigChannelUnderCamera(pinCameraChannelTop(channels), isCameraChannel);
+  // Then every Smart Zoom camera is stretched over its recording's pieces, so it follows the recording's edits.
+  return syncSmartZoomCameraSpans(pinRigChannelUnderCamera(pinCameraChannelTop(channels), isCameraChannel));
 }
 
 // Every channel kind that survives a save. Add new kinds HERE and nowhere else —
@@ -2554,6 +2596,8 @@ export function normalizeEditorState(rawState) {
     colorTokens: sanitizeColorTokens(parsedState.colorTokens),
     // {{{VAR:name}}} values for text layers (textPlaceholders.js). Read at draw time.
     textVariables: sanitizeTextVariables(parsedState.textVariables),
+    // The photo slots' series name and fewer-photos rule (photoSlots.js); the slots themselves are marks on layers.
+    photoSlotSettings: sanitizePhotoSlotSettings(parsedState.photoSlotSettings),
     // A bare colour string (agents/API callers write `"background": "#3366cc"`)
     // is coerced to a solid config instead of being silently dropped — dropping
     // it renders a black stage with no error anywhere.

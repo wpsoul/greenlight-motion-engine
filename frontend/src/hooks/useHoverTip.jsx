@@ -22,6 +22,7 @@ export function useHoverTip() {
   const tipRef = useRef(null);
   const nameRef = useRef(null);
   const sizeRef = useRef(null);
+  const sizeRowRef = useRef(null);
   const metaRef = useRef(null);
   const lengthRef = useRef(null);
 
@@ -34,6 +35,8 @@ export function useHoverTip() {
     // The length rides in its own clock-marked span, hidden when unknown.
     if (lengthRef.current) lengthRef.current.textContent = length || "";
     if (metaRef.current) metaRef.current.hidden = !length;
+    // a name-only tip (a menu button, a file name) has no second line at all
+    if (sizeRowRef.current) sizeRowRef.current.hidden = !size && !length;
     // Clamp horizontally so a tooltip over an edge item stays fully on screen.
     const margin = 132;
     const cx = Math.max(margin, Math.min(r.left + r.width / 2, window.innerWidth - margin));
@@ -49,7 +52,7 @@ export function useHoverTip() {
   const portal = createPortal(
     <div className="media-hover-tip" ref={tipRef} role="tooltip" aria-hidden="true">
       <span className="media-hover-tip-name" ref={nameRef} />
-      <span className="media-hover-tip-size">
+      <span className="media-hover-tip-size" ref={sizeRowRef}>
         <span ref={sizeRef} />
         <span className="media-hover-tip-meta" ref={metaRef} hidden>
           <i className="media-hover-tip-dot" />

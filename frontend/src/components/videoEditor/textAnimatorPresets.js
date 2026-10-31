@@ -92,6 +92,34 @@ const factory = function (T) {
     GLIDE_TEXT,
     glideThrough('glide-continuous', 'Glide Continuous', 'Smooth Glide',
       'Letters type in under a chasing blue band as the word keeps gliding through the whole layer, slow in the middle, then slides off to the left'),
+    // Smart Overshoot = the owner's "Glow Select — text preset" project (board Vibe Motion,
+    // 2026-10-27), third in the list on request. Built on a 54 px layer, so its lengths are
+    // px / 54 em, to 4 places (exact on 54 px, and the skill's × size / 100 rule agrees on
+    // any size). Words rise out of a blur and overshoot into place, glowing hot green and
+    // cooling to white behind the reveal, while the whole line slides back to centre; a soft
+    // glow stays and one key word stays lit green. The project picked by index (word 3); here
+    // the Range is in %, so other text gets the same share: words 60–85 % is exactly that
+    // word on the 5-word sample and still finds a word near the end of a 2- to 8-word line.
+    // The selection box that grew over the end is gone (owner, 2026-10-29): with no keyframe
+    // left, the plate stops repainting once the last word lands.
+    { id: 'smart-overshoot', name: 'Smart Overshoot', cat: 'sweep', sides: 'in', anchor: 'start', sample: 'Just the best stablecoin strategies',
+      tile: 'Smart overshoot',
+      labLayer: { size: 54, weight: 400, stage: '#0c0e0d' },
+      description: 'Words spring in out of a hot green glow and overshoot into place as the line recentres, and a key word stays lit',
+      animators: [
+        { name: 'Recenter', range: kIn('words', 'all', { stagger: 0, duration: 1.8, curve: 'Power3 Out' }),
+          effects: [['position', { x: em(4.6296), y: 0 }]] },
+        { name: 'Spring in', range: kIn('words', 'word', { stagger: 0.15, duration: 1.1, curve: 'Overshoot' }),
+          effects: [['position', { x: em(1.2963), y: em(1.5741) }], ['scale', { scale: 78 }]] },
+        { name: 'Focus in', range: kIn('words', 'auto', { stagger: 0.15, duration: 0.38, curve: 'Power2 Out' }),
+          effects: [['opacity', { opacity: 0 }], ['blur', { amount: em(0.2593) }]] },
+        { name: 'Hot glow', range: kIn('words', 'auto', { stagger: 0.15, duration: 0.65, curve: 'Sine Smooth' }),
+          effects: [['fill', { color: '#6dff86' }], ['glow', { color: '#3dff6a', size: em(0.6296), strength: 230 }]] },
+        { name: 'Soft glow', range: { basedOn: 'chars' },
+          effects: [['glow', { color: '#b8ffc6', size: em(0.2222), strength: 30 }]] },
+        { name: 'Key word', range: { basedOn: 'words', start: 60, end: 85, smooth: 0 },
+          effects: [['fill', { color: '#6dff86' }], ['stroke', { color: '#6dff86', width: em(0.0241) }],
+            ['glow', { color: '#3dff6a', size: em(0.2963), strength: 60 }]] }] },
     glideThrough('glide-soft-stop', 'Glide Soft Stop', 'Glide Easing Stop',
       'The same typing and band, but the word glides through the whole layer and all but stops in the middle, then slides off to the left'),
     // The other ten: two animators each — the letters arrive one by one, fading in on the way

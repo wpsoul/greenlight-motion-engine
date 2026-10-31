@@ -36,8 +36,8 @@ export const KF_PROPS = [
   { label: 'motionPathOffsetZ', displayLabel: 'Path Offset Z', group: 'Transform', placeholder: '0', unit: 'px', type: 'number', min: -10000, max: 10000, step: 5 },
   { label: 'letterSpacing', group: 'Transform', placeholder: '0', unit: 'px', type: 'number', min: -80, max: 200, step: 1 },
   // Text on Path (text layers with textPathEnabled). Progress reuses motionPathT
-  // above; these animate the glyph distribution itself — keyed trims give a
-  // write-on/write-off along the curve. No-ops elsewhere, like letterSpacing.
+  // above; these animate the glyph distribution itself — keyed trims move the
+  // window the run is laid out in (letters are not hidden past it). No-ops elsewhere, like letterSpacing.
   { label: 'textPathSpread', displayLabel: 'Text Path Spread', group: 'Transform', placeholder: '100', unit: '%', type: 'number', min: 10, max: 400, step: 1 },
   { label: 'textPathSpacing', displayLabel: 'Text Path Spacing', group: 'Transform', placeholder: '0', unit: 'px', type: 'number', min: -200, max: 500, step: 1 },
   { label: 'textPathTrimStart', displayLabel: 'Text Path Trim Start', group: 'Transform', placeholder: '0', unit: '%', type: 'number', min: 0, max: 100, step: 0.5 },
@@ -155,6 +155,9 @@ export const KF_PROPS = [
   { label: 'frWindow', displayLabel: 'Rim Depth Window', group: 'Effects', placeholder: '14', unit: '%', type: 'number', min: 1, max: 60, step: 0.5 },
   { label: 'frBody', displayLabel: 'Rim Body Light', group: 'Effects', placeholder: '100', unit: '%', type: 'number', min: 0, max: 100, step: 1 },
   { label: 'frAmount', displayLabel: 'Rim Amount', group: 'Effects', placeholder: '100', unit: '%', type: 'number', min: 0, max: 100, step: 1 },
+  // Posterize Time (per-layer clock — posterizeTime.js). The rate is integrated,
+  // so a keyed ramp speeds the steps up smoothly.
+  { label: 'ptFps', displayLabel: 'Posterize Frame Rate', group: 'Effects', placeholder: '12', unit: 'fps', type: 'number', min: 1, max: 60, step: 1 },
   // Motion Blur (per-layer, transform-velocity driven — motionBlurLayer.js).
   { label: 'mblurShutter', group: 'Effects', placeholder: '180', unit: 'deg', type: 'number', min: 0, max: 720, step: 5 },
   { label: 'mblurAmount', group: 'Effects', placeholder: '100', unit: '%', type: 'number', min: 0, max: 100, step: 1 },

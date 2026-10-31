@@ -69,6 +69,8 @@ export const PRS_KF_PROPS = [
   // only displace the position the path just claimed.
   'motionPathT',
   'motionPathOffsetX', 'motionPathOffsetY', 'motionPathOffsetZ',
+  // The animated path itself (objectMotionPath.js MOTION_PATH_KF_KEY), same reason.
+  'motionPathPoints',
 ];
 
 const PRS_KF_PROP_SET = new Set(PRS_KF_PROPS);

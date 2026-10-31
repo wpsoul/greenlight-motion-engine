@@ -57,6 +57,11 @@ and check every version against them.
 - Vary two or three kinds of transition across a video: one kind everywhere looks like a template, a new one at
   every cut looks random.
 - Camera moves are slow and small unless they are the point. Fast motion looks best at 60 fps with motion blur.
+- A real 3D camera earns its place on one or two moments, not every scene: a zoom onto the one thing a scene is about
+  (a number, the button a screen recording clicks; 1.3–2×, then back out), or a slow orbit or push that shows depth.
+- Depth needs layers at different distances: a soft shape or picture far behind, the words at the front. Depth of
+  field reads only then; keep the words sharp.
+- Keep an orbit in front of flat layers (within about ±70°): text turned further goes edge-on, then mirrored.
 
 ## Sound
 

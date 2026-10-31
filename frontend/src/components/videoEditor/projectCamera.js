@@ -21,6 +21,7 @@ import { TransitionEasing } from './types';
 import { evalCameraRig } from './cameraRig';
 import { getItemKeyframeValues } from './gsapTransitions';
 import { buildParentIndex, resolveItemPrs } from './keyframeParenting';
+import { SMART_ZOOM_MODE, applySmartZoom, smartZoomFrame } from './smartZoomCamera';
 
 // The comp plane exactly fills the frame at this distance — the same constant
 // Player builds its PerspectiveCamera from.
@@ -147,6 +148,11 @@ export const CAMERA_MOVE_DRIVEN_PROPS = [
  */
 export function presetNeedsFreeCamera(item, propertyKeyframes, base = null) {
   const mode = item?.cameraMoveMode;
+  // Smart Zoom drives zoom and pan (and nothing else), so a preset that animates those would render as nothing.
+  if (mode === SMART_ZOOM_MODE) {
+    return ['camZoom', 'camX', 'camY'].some((prop) => (Array.isArray(propertyKeyframes?.[prop]) && propertyKeyframes[prop].length)
+      || (Number.isFinite(Number(base?.[prop])) && Math.abs(Number(base[prop]) - CAMERA_NEUTRAL[prop]) > 1e-4));
+  }
   const drives = mode === 'rig' || (mode === 'path' && cameraPathIsLive(item?.cameraPath));
   if (!drives) return false;
   for (const prop of CAMERA_MOVE_DRIVEN_PROPS) {
@@ -662,7 +668,7 @@ export function getCameraPose(item, progress, frame = null) {
   // read. It also counts as a move in its own right: at 0% progress every value can
   // still look neutral, and returning null there would park the camera at origin
   // for the first frame of the travel.
-  if (applyCameraRig(item, values, frame) || applyCameraPath(item, values, frame)) any = true;
+  if (applyCameraRig(item, values, frame) || applyCameraPath(item, values, frame) || applySmartZoom(item, values, frame)) any = true;
   return any ? values : null;
 }
 
@@ -710,6 +716,11 @@ export function resolveCameraPose(channels, clipsMap, layoutFor, time, frame = n
           return layerWorldPoint(channels, clipsMap, layoutFor, time, id, frame, targetIndex);
         },
       };
+    }
+    // Smart Zoom follows a screen recording's clicks: it needs the recording's items on the timeline (trims, splits,
+    // speed) and the absolute time, both only known here.
+    if (item?.cameraMoveMode === SMART_ZOOM_MODE) {
+      poseFrame = { ...(poseFrame || {}), smartZoom: smartZoomFrame(item, channels, clipsMap, layoutFor, time) };
     }
     return getCameraPose(item, Math.max(0, Math.min(1, progress)), poseFrame);
   }

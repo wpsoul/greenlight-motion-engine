@@ -224,6 +224,8 @@ If you need to build the editor state by hand instead of using `/from-clips`, th
 
 **Preview source.** `"previewOriginal": true` on a clip makes the editor preview play the full-res original instead of its `proxyUrl` — sharper when scale/crop keyframes zoom in, at a heavier decode cost. Preview-only: every render path already uses the original.
 
+**Screen recordings.** A recording clip carries `recordingMeta` (its clicks and a light cursor path, in seconds of the file) and may carry `recordingTrackUrl` (the full-rate `.glcursor` beside it) and `recordingMeta.cursorInVideo: false` (no cursor in its picture: the editor draws one). Its camera is a Smart Zoom item, and its item's `recordingCursor` sets the drawn cursor's look. Both are in [video-camera.md](video-camera.md) ("Smart Zoom" and "Drawn cursor").
+
 **Layer scale is three fields.** `zoom` is the uniform scale (0.1–20, default 1), and `scaleX` / `scaleY` (same range, both default 1) are per-axis multipliers on top of it — so a layer's drawn width is `zoom × scaleX` and its height `zoom × scaleY`. Use `zoom` alone for an ordinary resize; reach for the other two only to stretch or squash one axis (a wide title bar, a squash-and-stretch bounce). All three are the panel's Transform → Scale row (X / Y / XY) and all three inherit through layer parenting. Every one of them also has a keyframe track (`scale`, `scaleX`, `scaleY` — see [video-keyframes.md](video-keyframes.md)), which multiplies the base field rather than replacing it. Projects written before these existed load unchanged: a missing `scaleX`/`scaleY` is 1.
 
 **Layer grade — the static `filter*` fields.** Every visual item carries a CSS-style grade applied to the layer before it composites: `filterBlur` (px, 0–10, default 0), `filterBrightness` / `filterContrast` / `filterSaturation` (%, 0–200, default 100), `filterHueRotate` (deg, 0–360, default 0), `filterGrayscale` / `filterSepia` / `filterInvert` (%, 0–100, default 0; Invert at 100 is a full negative). These are the layer's own base values; the matching keyframe tracks (`blur`, `brightness`, `contrast`, `hue-rotate`, `saturate`, `grayscale`, `sepia`, `invert`) **override** the static field while the track exists rather than multiplying it, so key one or set the other, not both. They are a cheap per-layer grade and independent of the Overlay Effects chain — reach for `effects[]` when you need a real grade (curves, LUT, colour balance).
@@ -254,13 +256,37 @@ Agent rules: when the user asks for "the project's colours", "brand colours" or 
 { "colorTokens": ["#8b5cf6", "#0ea5e9", "rgba(0, 0, 0, 0.6)"] }
 ```
 
+**Photo slots (pictures people may replace).** A picture layer (an item whose clip is `mediaType: "image"`) can carry
+`"photoSlot": { "fill": "cover" | "fit", "focus": [x, y], "takes": "image" | "media", "series": true | false, "note": "…" }`
+— a MARK only: no render path reads it. `fill` = cover the layer's box (edges may be cut) or show all of the photo;
+`focus` = the point (0–1 inside the photo) a Cover crop keeps in view; `takes` = a photo, or a photo or a video;
+`series: true` = one of the project's numbered slots, filled in PLAY order (by start time, not track order), `false` = a
+slot on its own (a logo); `note` (≤ 300 chars) = what belongs there, for an agent. The box is the layer's own frame, so
+moving or resizing the layer moves the slot. Optional `"photoSlotSettings": { "label": "Photos", "ifFewer": "reuse" | "keep" }`
+at the `data` root names the series and says what slots with no photo show when people bring fewer photos than slots
+(omitted while default). The timeline marks slot layers `SLOT n`; the user sets them in Export for agents ▸ Photo slots.
+Agent rules: to let people put their own photo in a picture, add `photoSlot` to its item (`{}` is enough — every field
+has a default); keep the user's existing marks when you rebuild a layer; a slot is never empty — its current picture is
+the example until someone replaces it.
+
 **Project background.** Set `"background": { …backgroundConfig… }` at the `data` root to fill the stage behind every channel — a solid colour, gradient, GLSL shader, pattern, or image. It takes the same `backgroundConfig` object as shape backgrounds; the full schema, the gradient/shader preset ids, and the shader authoring rules live in the **Backgrounds (project & shape)** section below. Omit it (or use `"type": "transparent"`) for a transparent stage. Baked by **`/render-onserver`**; the fast `/render` ignores it. A bare colour string (`"background": "#3366cc"`) is coerced to `{"type": "solid", "solidColor": …}`; prefer the explicit object.
 
 **One live item per channel.** Treat every channel as one timeline track, not as a container of simultaneously composited layers. At any timeline time, a channel may have at most one active item. If two items' visible windows overlap, only one is guaranteed to render (the later-starting item commonly wins) and the save API does not reject the project. For an unsnapped item, its ordinary visible window is `[freeStart, freeStart + (trimEnd - trimStart))`; validate these windows before `PUT`. Put every simultaneously visible image, shape, text block, motion layer, or other visual on a separate channel. This rule also applies inside sequence timelines. Reuse one channel for consecutive, non-overlapping captions or shots only.
 
 **Keep unsnapped items sorted by `freeStart`.** On an `unsnapped` channel the editor treats the item BEFORE a clip in the `items` array as "the clip before it" — cross transitions, the seam button and the layout's overlap all read array neighbours, not time neighbours. The editor re-sorts on every insert, move and paste; an API write does not. After adding or moving items, sort each unsnapped channel's `items` by `freeStart` before `PUT`. An out-of-order array looks fine until the user adds a cross transition: the clip is then snapped against the wrong neighbour and jumps elsewhere on the timeline (e.g. past the end), so it appears to vanish.
 
-**Motion blur (render-only).** Set `"motionBlurEnabled": true` at the `data` root — a project-wide switch, not per layer — to bake cinematic motion blur into full renders. Frames whose motion comes from **keyframed transforms** (incl. camera-layer moves and adjustment-layer pan/zoom) or **speed-ramped video** are rendered as a multi-sample shutter accumulation; still frames are untouched, so cost only grows where motion exists.
+**Motion blur (render-only).** Set `"motionBlurEnabled": true` at the `data` root — a project-wide switch, not per layer — to bake cinematic shutter blur into full renders. The choice is made per output **frame**, not per layer: a frame where motion is detected is rendered as a multi-sample accumulation of the **whole composition** across a shutter window centred on the frame, so every layer that changes inside that window blurs (keyframed layers, text animators, motion layers, transitions, particles), not only the one that triggered it. A frame with no detected motion renders once and stays sharp, so cost only grows where motion exists.
+
+A frame is accumulated when any of these change across its shutter window:
+
+- the camera layer's pose (any camera track), or the frame enters or leaves a camera clip;
+- a keyframed layer's resolved pose: its position, rotation or scale as drawn, from any track that places it (`translateX/Y/Z`, `xPercent`/`yPercent`, `rotate`, `rotateX/Y`, `scale`, `scaleX`/`scaleY`), and a live motion path's `motionPathT`, `motionPathOffsetX/Y/Z` or keyed path shape (adjustment-layer pan/zoom included);
+- the parent of a parented layer, or the tracked point of a `motionFollow` layer;
+- a `video` item with a speed curve (any `speedPoints` value other than 1): every frame of that item, the 1× stretches included;
+- a particle system, or an `html` clip drawn live (the render default): every frame they are on screen;
+- the inner timeline of a `sequence` clip, by the same rules, down to the 4-level nesting limit (parenting and `motionFollow` links inside a sequence are not read).
+
+Nothing else triggers a frame by itself: text animators, MotionFast `motion` layers, 3D model animation, enter/exit and cross transitions, keyed opacity or effect params, and movement inside footage at normal speed. They blur on frames something in the list triggers and are sharp everywhere else.
 
 **Strength** is `"motionBlurShutter"` — a **shutter angle in degrees** alongside `motionBlurEnabled`. Only these four values are meaningful; anything else (missing, non-numeric, an off-table angle) snaps to the nearest level, so `180` is the effective default:
 
@@ -271,7 +297,7 @@ Agent rules: when the user asks for "the project's colours", "brand colours" or 
 | `270` | Strong | 24 | ~24× |
 | `360` | Max | 32 | ~32× |
 
-The angle is how much of each frame interval the exposure covers, so wider = more blur *and* proportionally slower. The field is only written when blur is on, so projects that never enabled it round-trip unchanged. Table lives in `frontend/src/components/videoEditor/motionBlurLevels.js`. Honored by **`/render-onserver`**, **`/render-onserver-job`** and the desktop Download/Render — **ignored by the fast `/render`** and never applied in the editor preview (render-only by design). Worth enabling for projects with fast zooms/pans that would otherwise strobe. Motion inside `sequence` clips counts too (a sequence's own camera clip, its layers' keys, speed ramps and live HTML), down to the 4-level nesting limit; parenting links inside a sequence are not read. Renders get proportionally slower on moving segments (~16× per moving frame).
+The angle is how much of each frame interval the exposure covers, so wider = more blur *and* proportionally slower. The field is only written when blur is on, so projects that never enabled it round-trip unchanged. Table lives in `frontend/src/components/videoEditor/motionBlurLevels.js`. Honored by **`/render-onserver`**, **`/render-onserver-job`** and the desktop Download/Render — **ignored by the fast `/render`** and never applied in the editor preview (render-only by design). Worth enabling for projects with fast zooms/pans that would otherwise strobe. Renders get proportionally slower on accumulated frames (~16× each at the default), and a speed-ramped clip, a particle system or a live html clip makes every frame it covers an accumulated one.
 
 **Renderer.** Every project renders on the engine the app is set to — one app-wide setting, not a project field. Read it with `GET /api/video-editor/engine` (`engine`: `"webgl"`, the default, or `"webgpu"`). Preview and the desktop Download use it; the headless renders (`/render-onserver`, `/render-onserver-job`, `/render-still`) take it as the request's `"renderer"` field, which defaults to `"webgl"`, so pass the engine there to render what the editor shows. It matters wherever shading is written by hand rather than picked from a list: an uploaded Advanced Transition package is authored for one engine and is refused on the other, and a **custom** adjustment/layer effect (`"id": "custom"`) cannot run on WebGPU at all — its body is compiled at runtime, so the effect is skipped with a reason. Building a new template or transition: [custom-builds.md](custom-builds.md).
 
@@ -387,6 +413,9 @@ GET  /api/moodboards/{board_id}/video-projects/{project_id}/glvideo?models=<JSON
   project) or to a chat: the GreenLight Motion connector's `open_video` page reads it in the user's browser, and
   `get_video` / `edit_video` change it there.
 
+- The window's **Photo slots** strip writes each picture's `photoSlot` mark into the project (one undo step, saved before
+  the export), and every slot becomes an `image` field of the template (its clip's `url` + `proxyUrl`); the marks travel
+  inside `project.json` with their layers.
 - `template.fields[]` = `{ key, label, type: text|color|image|number|select|toggle, targets: [{ itemId | clipId | (neither = project), path }] }`
   — e.g. `{ "key": "headline", "label": "Headline", "type": "text", "targets": [{ "itemId": "<item id>", "path": "textContent" }] }`,
   a shape colour `path: "shapeFillColor"`, the background `{ "path": "background.solidColor" }`. Omit `template` to keep
@@ -403,7 +432,7 @@ GET  /api/moodboards/{board_id}/video-projects/{project_id}/glvideo?models=<JSON
 
 ### Interface scenes (built-in animated scenes — "the UI kit")
 
-The editor's **Presets** tab also lists the **Interface scenes** library (called GL Motion before 14.0.25): 275 ready-made animated scenes (controls, cards, charts, checkout, coupons, countdowns, galleries…) in one style, all transparent (they sit over the video). Search and category chips filter them; Light / Dark and an accent recolour them. A card's **HTML clip** button inserts the scene as one standalone transparent HTML page, saved into the board's media (`ui-kit/<id>.html`) and placed as an HTML clip (`mediaType: "html"`) at the scene's own length.
+The editor's **Presets** tab also lists the **Interface scenes** library (called GL Motion before 14.0.25): 172 ready-made animated scenes (controls, cards, charts, checkout, coupons, countdowns, galleries…) in one style, all transparent (they sit over the video). Search and category chips filter them; Light / Dark and an accent recolour them. A card's **HTML clip** button inserts the scene as one standalone transparent HTML page, saved into the board's media (`ui-kit/<id>.html`) and placed as an HTML clip (`mediaType: "html"`) at the scene's own length.
 
 For a **whole film** — a story and its shots with the user's copy and pictures, a scenario card on the board, a voice-over, sound design and a render; with a GLEA delivery the film finished in a Video Editor project (a tutorial's interface as HTML scene clips, other films built with the editor's own layers) and rendered from it — use the `motion-film` workflow on the `greenlight` MCP server ([SKILL.md](../SKILL.md#ai-workflows-the-greenlight-mcp-server)) instead of inserting scenes one by one.
 

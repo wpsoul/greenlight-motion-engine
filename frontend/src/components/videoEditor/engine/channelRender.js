@@ -9,6 +9,8 @@
  * exactly what the old callback listed as dependencies.
  */
 import { collidersOf, PARTICLE_MEDIA_TYPE, proximityDrivesMotion, proximityFeedsPacking } from '../../../sim/particles/schema.js';
+import { posterizedTimeInClip } from '../posterizeTime';
+import { isText3dLayer } from '../text3d';
 import { hasActiveLayerOverlayEffects } from '../adjustmentEffects';
 import { getAdvancedTransitionPreset, resolveAdvancedTransitionOptions } from '../advancedTransitions';
 import { applyMute, applyVolume, parkAudio, startPlayingAudio, syncPlayingAudio } from '../audioDriftSync';
@@ -361,9 +363,15 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   const useVideoA = activeIndex % 2 === 0;
   const activeVideo = useVideoA ? cs.videos.a : cs.videos.b;
   const previousVideo = useVideoA ? cs.videos.b : cs.videos.a;
-  const timeInClip = time - itemLayout.startTime;
+  const realTimeInClip = time - itemLayout.startTime;
+  // Posterize Time (posterizeTime.js) is the layer's own CLOCK: everything the
+  // layer shows samples the held step (keyframes, its video frame, text
+  // animators, a nested sequence, particles). What belongs to the timeline —
+  // which clip is active, cross transitions, sound — stays on the real time.
+  const timeInClip = posterizedTimeInClip(item, realTimeInClip, itemLayout.duration);
+  const layerTime = timeInClip === realTimeInClip ? time : itemLayout.startTime + timeInClip;
   const itemProgress = Math.max(0, Math.min(1, timeInClip / itemLayout.duration));
-  const inOverlap = activeIndex > 0 && itemLayout.overlapIn > 0 && timeInClip <= itemLayout.overlapIn;
+  const inOverlap = activeIndex > 0 && itemLayout.overlapIn > 0 && realTimeInClip <= itemLayout.overlapIn;
   const prevItem = inOverlap ? channel.items[activeIndex - 1] : null;
   const prevLayout = inOverlap ? layout[activeIndex - 1] : null;
   const prevClip = prevItem ? getClip(prevItem.clipId) : null;
@@ -930,6 +938,78 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     return true;
   };
 
+  // 3D Text (text3d.js): the text layer's letters, laid out and animated by
+  // setupMesh into mesh.userData.text3dRun, are filmed as solids in the 3D pass and
+  // the quad takes that full-frame picture — promotePlateMesh's contract.
+  const promoteText3dMesh = (tItem, tClip, mesh, material) => {
+    if (!isText3dLayer(tItem, tClip) || !mesh?.visible) return false;
+    const run = mesh.userData?.text3dRun;
+    if (!run) return false;
+    const mod = engine.model3d;
+    if (!mod) {
+      requestModel3dModule(engine, () => { if (!engine.exporting && !engine.isPlaying) engine.renderFrame(); });
+      return false;
+    }
+    const renderer = engine.renderer;
+    if (!renderer || !mod.renderText3dLayer) return false;
+    const { w: pW, h: pH } = engine.videoSize;
+    const expand = Math.max(0, Number(material.uniforms?.uPlaneExpand?.value) || 0);
+    const expandX = (pW + 2 * expand) / pW;
+    const expandY = (pH + 2 * expand) / pH;
+    const buf = renderer.getDrawingBufferSize(_modelSize);
+    let px = mesh.position.x, py = mesh.position.y, pz = mesh.position.z;
+    let qx = mesh.quaternion.x, qy = mesh.quaternion.y, qz = mesh.quaternion.z, qw = mesh.quaternion.w;
+    let sx = mesh.scale.x, sy = mesh.scale.y;
+    if (!ctx) {
+      mesh.updateWorldMatrix(true, false);
+      mesh.matrixWorld.decompose(_platePos, _plateQuat, _plateScale);
+      px = _platePos.x; py = _platePos.y; pz = _platePos.z;
+      qx = _plateQuat.x; qy = _plateQuat.y; qz = _plateQuat.z; qw = _plateQuat.w;
+      sx = _plateScale.x; sy = _plateScale.y;
+      if (mesh.scale.x < 0) sx = -Math.abs(sx);
+      if (mesh.scale.y < 0) sy = -Math.abs(sy);
+    }
+    const res = mod.renderText3dLayer(renderer, {
+      item: tItem,
+      run,
+      transform: {
+        position: { x: px, y: py, z: pz },
+        quaternion: { x: qx, y: qy, z: qz, w: qw },
+        scale: { x: sx / expandX, y: sy / expandY, z: 1 },
+      },
+      pose: (ctx || channel.cameraLocked || engine.worldActive) ? null : engine.cameraPose,
+      rig: engine.activeRigAt(engine.currentTime),
+      frameToken: engine.frameToken,
+      W: pW,
+      H: pH,
+      width: buf.x || pW,
+      height: buf.y || pH,
+      near: engine.camera?.near,
+      far: engine.camera?.far,
+    });
+    if (!res?.texture) return false;
+    if (res.viewDistance != null) engine.modelDepth.set(channel.id, res.viewDistance);
+    else engine.modelDepth.delete(channel.id);
+    if (res.viewRange) engine.modelDepthRange.set(channel.id, res.viewRange);
+    else engine.modelDepthRange.delete(channel.id);
+    if (res.depthTexture) engine.modelDepthTex.set(channel.id, res.depthTexture);
+    else engine.modelDepthTex.delete(channel.id);
+    engine.modelTransparentDepthTex.delete(channel.id);
+    engine.modelSpillDepth.delete(channel.id);
+    resetMaterialUniforms(material);
+    material.uniforms.uTexture.value = res.texture;
+    material.uniforms.uResolution.value.set(buf.x || pW, buf.y || pH);
+    material.uniforms.uCanvasSize.value.set(pW, pH);
+    material.uniforms.uInputPremultiplied.value = 1;
+    material.userData.textureSource = `__text3d__:${tItem.id}`;
+    applyBlendMode(material, 'normal');
+    mesh.position.set(0, 0, 0);
+    mesh.rotation.set(0, 0, 0);
+    mesh.scale.set(1, 1, 1);
+    mesh.userData.cameraBaked3d = true;
+    return true;
+  };
+
   // Both container kinds pre-render their nested timeline the same way; the grid
   // only differs in the per-cell pose renderSequenceFrame hands its inner channels.
   const resolveSequenceTexture = (seqItem, seqClip, seqTimeInClip, seqProgress, seqParentXform = null) => {
@@ -939,7 +1019,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     // The grid's own editing level is passed through so a Proximity effector can
     // resolve its referenced layers at whatever depth the grid itself sits at.
     return engine.renderSequenceFrame?.(
-      seqClip, seqItem, localTime, (ctx?.depth || 0) + 1, innerRate, time, levelParentIndex,
+      seqClip, seqItem, localTime, (ctx?.depth || 0) + 1, innerRate, seqItem === item ? layerTime : time, levelParentIndex,
       seqParentXform, cs?.rigged ? engine.cameraPose : null,
       // The camera that films this level: the posed project camera for a rigged
       // top-level channel, the neutral one everywhere else (locked channels,
@@ -967,7 +1047,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     const shouldMute = engine.forceMuteAudio || !engine.soundEnabled || !!item.muted || videoVol <= 0
       || !mediaActivation.canUnmute(activeVideo);
     applyMute(activeVideo, shouldMute);
-    const targetVideoVol = Math.max(0, Math.min(1, (videoVol / 100) * audioFadeGainAt(item, timeInClip, itemLayout.duration)));
+    const targetVideoVol = Math.max(0, Math.min(1, (videoVol / 100) * audioFadeGainAt(item, realTimeInClip, itemLayout.duration)));
     applyVolume(activeVideo, targetVideoVol); // WebKit: 0 for the first 300 ms of a start, so the picture starts on the clock (audioDriftSync.js)
     const targetTime = calculateVideoTime(item, timeInClip);
     // The convergence window only matters when another clip actually follows
@@ -991,7 +1071,13 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     if (!htmlHeld) bindHtmlLiveCanvas(activeVideo, liveHtml);
     // During fast export the video element is positioned by the decoder (canvas),
     // not seeked — skip the (slow) <video> seek here.
-    if (!engine.exportActive && !liveHtml) env.syncVideo(activeVideo, clip, targetTime, {
+    // A posterized layer PLAYING keeps its <video> on the real clock — a target that
+    // jumps a whole step at a time would seek on every step and stutter the sound;
+    // the held picture comes from getVideoTexture's hold gate instead. Paused, it
+    // seeks to the held frame like any other.
+    const syncTarget = engine.isPlaying && timeInClip !== realTimeInClip
+      ? calculateVideoTime(item, realTimeInClip) : targetTime;
+    if (!engine.exportActive && !liveHtml) env.syncVideo(activeVideo, clip, syncTarget, {
       // A stabilized layer joins the frame-critical set: its correction is
       // per source frame, so a paused step that leaves the picture on the
       // previous frame shows the wrong warp until the drift crosses the
@@ -1050,7 +1136,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
       resolveSequenceTexture(item, clip, timeInClip, itemProgress, itemParentXform);
       return;
     }
-    const overlapProgress = Math.max(0, Math.min(1, timeInClip / itemLayout.overlapIn));
+    const overlapProgress = Math.max(0, Math.min(1, realTimeInClip / itemLayout.overlapIn));
     const easedProgress = applyGsapEasing(overlapProgress, item.transitionEasing);
 
     const prevSeqTex = resolveSequenceTexture(prevItem, prevClip, prevTimeInClip, prevProgress, poseFor(prevItem));
@@ -1063,9 +1149,9 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     // itself — i.e. no visible cross. Keep the overlap path identical to pre-fix.
     env.setupMesh(cs.prevMesh, cs.prevMaterial, prevItem, prevClip, previousVideo, prevProgress, prevLayout.duration, null, prevSeqTex,
       poseFor(prevItem), resolveFollowInEngine(engine, levelParentIndex, prevItem, time));
-    promotePlateMesh(prevItem, prevClip, cs.prevMesh, cs.prevMaterial);
+    if (!promoteText3dMesh(prevItem, prevClip, cs.prevMesh, cs.prevMaterial)) promotePlateMesh(prevItem, prevClip, cs.prevMesh, cs.prevMaterial);
     env.setupMesh(cs.currMesh, cs.currMaterial, item, clip, activeVideo, itemProgress, itemLayout.duration, null, currSeqTex, itemParentXform, itemFollow);
-    promotePlateMesh(item, clip, cs.currMesh, cs.currMaterial);
+    if (!promoteText3dMesh(item, clip, cs.currMesh, cs.currMaterial)) promotePlateMesh(item, clip, cs.currMesh, cs.currMaterial);
 
     // Correct order: source -> Overlay Effects -> transition. The old compositor
     // rendered both meshes into one channel plate and then applied the incoming
@@ -1309,7 +1395,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     itemParentXform,
     itemFollow
   );
-  promotePlateMesh(item, clip, cs.currMesh, cs.currMaterial);
+  if (!promoteText3dMesh(item, clip, cs.currMesh, cs.currMaterial)) promotePlateMesh(item, clip, cs.currMesh, cs.currMaterial);
 
   // Layer in/out transitions
   const inType = item.transitionInType || LayerTransitionType.NONE;
@@ -1335,7 +1421,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
       item,
       clip,
       entry: itemLayout,
-      time,
+      time: layerTime,
       baseZ: 0.01,
       refClipOf,
     });

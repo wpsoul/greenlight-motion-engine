@@ -9,6 +9,9 @@ import { preloadVideoPlate } from "./videoPlate";
 import { preloadAnimatedImage } from "./animatedImage";
 import { getTimelineLayout } from "./speedUtils";
 import { RIG_MEDIA_TYPE } from "./rig3d";
+import { deriveTextFontLoadRequest } from "./engine/projectDerive";
+import { ensureFontsLoaded } from "../../render-shims/FontFamilySelect";
+import { loadRecordingCursorTrack } from "./recordingCursor";
 
 export function nextPaint() {
   return new Promise((resolve) => {
@@ -32,7 +35,9 @@ export function model3dPrimeTimes(channels, clips, from = 0, to = Infinity) {
     const layout = getTimelineLayout(ch.items, { unsnapped: ch.unsnapped });
     ch.items.forEach((item, i) => {
       const at = layout[i];
-      if (!at || !ids.has(item.clipId) || at.endTime <= from || at.startTime >= to) return;
+      // 3D Text layers draw through the same lazily loaded pass (and its HDR).
+      const text3d = item?.text3d?.enabled === true && (clips || []).some((c) => c?.id === item.clipId && c.mediaType === "text");
+      if (!at || (!ids.has(item.clipId) && !text3d) || at.endTime <= from || at.startTime >= to) return;
       times.add(Math.max(from, at.startTime));
     });
   }
@@ -138,10 +143,33 @@ export async function waitForMediaReady({ channels, clips, getPlayer, range = nu
     // A rig draws through the same lazily-loaded module (and loads an HDR
     // environment on its first frame) even with no model in the set.
     if (clip.mediaType === RIG_MEDIA_TYPE) { hasModel = true; continue; }
+    // A cursor-free screen recording draws its cursor from the full-rate track beside it: frame one needs it.
+    if (clip.mediaType === "video" && clip.recordingMeta?.cursorInVideo === false && clip.recordingTrackUrl) {
+      warmups.push(Promise.race([loadRecordingCursorTrack(clip.recordingTrackUrl), new Promise((resolve) => setTimeout(resolve, 15000))]));
+    }
     const url = clip.mediaType === "video" ? (clip.url || clip.proxyUrl) : (clip.proxyUrl || clip.url);
     if (!url || seen.has(url)) continue;
     seen.add(url);
     warmups.push(warmMediaUrl(url, clip.mediaType));
+  }
+  // The text layers' web fonts. The Player requests them from an effect AFTER mount,
+  // and document.fonts.ready below only covers loads that already started — so a
+  // still / the first export frames came out in the fallback face whenever the
+  // Google stylesheet had not arrived yet. Same request as the Player's (shared
+  // stylesheet cache); when it lands the Player bumps fontLoadVersion → repaint.
+  const fontRequest = deriveTextFontLoadRequest({
+    channels: channels || [],
+    clipsMap: new Map((clips || []).filter(Boolean).map((c) => [c.id, c])),
+  });
+  if (fontRequest.families.length > 0) {
+    warmups.push(Promise.race([
+      ensureFontsLoaded(fontRequest.families, {
+        weights: fontRequest.weights.length > 0 ? fontRequest.weights : [400, 700],
+        size: 72,
+        sampleText: "Typography",
+      }).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]));
   }
   // Fresnel Rim on a picture draws through a pass module loaded on first use;
   // an export must not open on frames that rendered it plain.
@@ -174,6 +202,10 @@ export async function waitForMediaReady({ channels, clips, getPlayer, range = nu
       }
     })());
   }
+  // 3D Text letters are filmed by the model pass: it, and the environment it
+  // loads on first use, must be primed like a model before frame one.
+  if (!hasModel && (channels || []).some((ch) => (ch?.items || []).some((item) => item?.text3d?.enabled === true
+    && (clips || []).some((c) => c?.id === item.clipId && c.mediaType === "text")))) hasModel = true;
   await Promise.all(warmups);
   try {
     // Cap fonts.ready — in a headless render a never-completing @font-face load

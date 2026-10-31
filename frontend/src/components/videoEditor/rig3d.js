@@ -21,6 +21,8 @@
  *      count change recompiles every material in the shared world scene.
  */
 
+import { isText3dLayer } from './text3d.js';
+
 // ── Timeline identity ───────────────────────────────────────────────────────
 // Mirrors CAMERA_MEDIA_TYPE / CAMERA_CHANNEL_KIND in projectCamera.js. Unlike the
 // camera, a rig clip DRAWS (the cyclorama), so it is not a SYNTHETIC_MEDIA_TYPE.
@@ -629,7 +631,7 @@ export function isDepthPlate(item, clip) {
 
 /** Models and opted-in flat plates are both rendered in the shared scene. */
 export function isWorld3dLayer(item, clip) {
-  return clip?.mediaType === 'model3d' || isShadowPlate(item, clip);
+  return clip?.mediaType === 'model3d' || isShadowPlate(item, clip) || isText3dLayer(item, clip);
 }
 
 /** True when the project camera has already been rendered into this clip's
@@ -645,6 +647,8 @@ export function isWorld3dLayer(item, clip) {
 export function isCameraBaked3dPlate(clip, item = null) {
   return clip?.mediaType === 'model3d'
     || clip?.mediaType === RIG_MEDIA_TYPE
+    // 3D Text (text3d.js): its letters are filmed in the 3D pass like a model.
+    || isText3dLayer(item, clip)
     || (supportsShadowPlate(clip) && item?.shadowPlate?.receiveShadow === true);
 }
 

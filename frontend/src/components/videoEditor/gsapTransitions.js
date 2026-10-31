@@ -2,13 +2,14 @@ import * as THREE from 'three';
 import { TransitionType, LayerTransitionType, TransitionEasing, directionalTransition } from './types';
 import { KF_PROP_LABELS, isColorTrackKey, hasAnyTrack } from './keyframeProps';
 import { isCssGradient, parseGradient, buildGradient } from '../../utils/cssGradient';
-import { isPathTrackKey, decodeShapePathValue, interpolateShapePaths } from './shapePath';
+import { isPathTrackKey, decodePathTrackValue, interpolatePathTrackValues } from './shapePath';
 import { bezierEase } from './motionTemplates/mtl';
 import { sanitizeBezier, sanitizeEaseSlice, sliceEase } from './easingCurves';
 import { advancedTransitionEdgeMirror, resolveAdvancedTransitionOptions } from './advancedTransitions';
 import { getTimelineDuration } from './speedUtils';
 import { applyKeyframeFxToValues, hasAnyKeyframeFx, setKeyframeTrackSampler } from './keyframeFx';
 import { getGsapEase, playedEase } from './appEases';
+import { setPosterizeRateIntegrator } from './posterizeTime';
 
 // The app's named curves and getGsapEase (name → GSAP-style ease string) live in
 // appEases.js, shared with the easing picker and flipbooks; re-exported for callers here.
@@ -1759,10 +1760,13 @@ export function evaluatePropertyTrack(track, pct, isColor = false) {
  * layer of every frame, and these are the only non-scalar tracks in the editor.
  * Returns an array of unit-space points, or undefined when the track is unusable.
  */
-export function evaluatePathTrack(track, pct) {
+export function evaluatePathTrack(track, pct, prop = null) {
   if (!Array.isArray(track) || track.length === 0) return undefined;
   const sorted = [...track].sort((a, b) => a.position - b.position);
-  const read = (key) => decodeShapePathValue(key?.value) || undefined;
+  // `prop` picks the codec: a motion path is 3D world pixels, shape and mask
+  // outlines are 2D unit-box points (the default, for the callers that only
+  // ever see those).
+  const read = (key) => decodePathTrackValue(prop, key?.value) || undefined;
   if (sorted.length === 1 || pct <= sorted[0].position) return read(sorted[0]);
   if (pct >= sorted[sorted.length - 1].position) return read(sorted[sorted.length - 1]);
 
@@ -1782,7 +1786,7 @@ export function evaluatePathTrack(track, pct) {
   const range = high.position - low.position;
   const linearT = range > 0 ? (pct - low.position) / range : 0;
   const easeFn = resolveKeyEase(low);
-  return interpolateShapePaths(a, b, easeFn(linearT));
+  return interpolatePathTrackValues(prop, a, b, easeFn(linearT));
 }
 
 // Property-mode equivalent of interpolateKeyframes: returns the same flat
@@ -1801,7 +1805,7 @@ export function interpolatePropertyKeyframes(propertyKeyframes, progress, transf
     // Hottest line in the layer-mask feature: this runs per track, per layer, per
     // frame, so isPathTrackKey is a cheap string compare plus one anchored regex.
     const v = isPathTrackKey(prop)
-      ? evaluatePathTrack(track, pct)
+      ? evaluatePathTrack(track, pct, prop)
       : evaluatePropertyTrack(track, pct, isColorTrackKey(prop));
     if (v !== undefined) {
       values[prop] = v;
@@ -1890,6 +1894,10 @@ export function integratePathRate(item, rateKey, staticValue, localTime, duratio
   const i = Math.min(Math.floor(f), entry.steps - 1);
   return entry.cum[i] + (entry.cum[i + 1] - entry.cum[i]) * (f - i);
 }
+
+// Posterize Time integrates its keyed Frame Rate the same way (posterizeTime.js
+// is dependency-free, so the integrator is handed over here).
+setPosterizeRateIntegrator(integratePathRate);
 
 // Peak keyframed scale for an item (1 when scale is never keyframed) — used
 // to size render intermediates / supersampling.

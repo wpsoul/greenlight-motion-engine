@@ -9,6 +9,9 @@
 ## Contents
 
 - [Camera layers (`mediaType: "camera"`) — a virtual camera over the whole stack](video-camera.md#camera-layers-mediatype-camera--a-virtual-camera-over-the-whole-stack)
+- [A sequence's own camera](video-camera.md#a-sequences-own-camera)
+- [Smart Zoom — the camera's Zoom mode](video-camera.md#smart-zoom--the-cameras-zoom-mode)
+- [Drawn cursor](video-camera.md#drawn-cursor--a-screen-recording-with-no-cursor-in-its-picture)
 - [Camera presets (save & load reusable camera moves)](video-camera.md#camera-presets-save--load-reusable-camera-moves)
 - [Camera Rig — a parametric camera move](video-camera.md#camera-rig--a-parametric-camera-move)
 
@@ -18,7 +21,7 @@ A camera clip draws nothing. While the playhead is inside it, it poses a virtual
 
 Rules:
 
-- The camera lives on a channel marked `"kind": "camera"`. **A project may have at most one camera channel, and it must be LAST in the `channels` array** (channel order is z-order; last renders highest). The editor re-pins it on every write and on load, so a project authored with the camera elsewhere is silently reordered — emit it last to avoid surprising diffs. Put several camera clips on it to chain moves; the clip under the playhead wins, and outside every camera clip the camera is neutral.
+- The camera lives on a channel marked `"kind": "camera"`. **A timeline may have at most one camera channel, and it must be LAST in its `channels` array** (the project's, and each sequence's for its own camera — see below) (channel order is z-order; last renders highest). The editor re-pins it on every write and on load, so a project authored with the camera elsewhere is silently reordered — emit it last to avoid surprising diffs. Put several camera clips on it to chain moves; the clip under the playhead wins, and outside every camera clip the camera is neutral.
 - Camera clips are synthetic (no `url`) and are keyframed with their own property registry, using the ordinary `propertyKeyframes` shape (positions 0–100 % of the clip).
 - Any channel can opt out with `"cameraLocked": true` — it renders exactly as if there were no camera (watermarks, fixed captions).
 - A camera-locked layer is a 2D layer, as in After Effects: it composites in STACK order and never depth-tests against 3D. Above a model layer in the stack it draws over the model (a flash, a title at the comp plane needs no pulling toward the camera); at the very bottom of the stack (a full-frame backdrop) it stays behind everything, the Scene Rig's cyclorama included. 3D layers on either side of a locked layer still occlude each other by depth.
@@ -105,9 +108,106 @@ A camera item can ride a saved 3D bezier spline. It uses the same world-pixel po
 
 Animating `camDolly` and `camZoom` in opposite directions is the vertigo effect.
 
-**Depth of field** is physical and per layer: each layer's circle of confusion comes from its own distance to the camera (`aperture · |focusDistance − layerDistance| / layerDistance · blurLevel/100`), so a rack focus is just keyframed `camFocusDistance`. All the DOF fields above may be set either as a **base value on the camera item** (`item.camAperture = 40`) or as a keyframe track in `propertyKeyframes` — tracks win at the playhead. `camAperture: 0` or `camBlurLevel: 0` renders byte-identically to DOF off. There are no per-layer `dof*` fields — a project still carrying them animates nothing. Rendered by **`/render-onserver`** and the desktop render; the fast `/render` ignores camera layers along with everything else non-trivial.
+**Depth of field** is physical and per layer: each layer's circle of confusion comes from its own distance to the camera (`aperture · |focusDistance − layerDistance| / layerDistance · blurLevel/100`), so a rack focus is just keyframed `camFocusDistance`. Both distances are **view depth from the camera**, so a camera that moves carries the sharp plane with it: under a dolly the subject at depth `z` (its `panZ`) sits at `perspectiveDistance − camDolly − z` (`perspectiveDistance = (H/2)/tan(14°)`, ≈ 2166 on a 1080-tall frame). To keep a subject sharp through a move, key `camFocusDistance` on the dolly's own keys with that value; under a rig, with the subject's depth along the rig's view at a few points of the move (the scene script does both for `dof.focus`). All the DOF fields above may be set either as a **base value on the camera item** (`item.camAperture = 40`) or as a keyframe track in `propertyKeyframes` — tracks win at the playhead. `camAperture: 0` or `camBlurLevel: 0` renders byte-identically to DOF off. There are no per-layer `dof*` fields — a project still carrying them animates nothing. Rendered by **`/render-onserver`** and the desktop render; the fast `/render` ignores camera layers along with everything else non-trivial.
 
-**Screen-recording auto-zoom emits one of these** (a clip named `Auto-zoom` on the camera channel), so an agent asked to "make the zoom less aggressive" edits `camZoom` keys on that clip rather than hunting for an adjustment layer.
+**Screen recordings get a camera clip on the camera channel.** A new recording gets a **Smart Zoom** camera, a clip named `Smart Zoom`; see the Smart Zoom section below. Projects made before it carry a clip named `Auto-zoom` with baked `camZoom`/`camX`/`camY` keys. So for "make the zoom less aggressive", change the Smart Zoom preset, or edit `camZoom` keys on an `Auto-zoom` clip. Never hunt for an adjustment layer.
+
+### A sequence's own camera
+
+A sequence (`mediaType: "sequence"`) can carry its own camera: a camera clip on a `"kind": "camera"` channel, LAST in
+`sequence.channels`, timed in the sequence's own seconds. It films that sequence's layers exactly as the project camera
+films the top level — its move, its rig, Smart Zoom, depth of field per layer, and `cameraLocked` channels inside the
+sequence stay put. The project camera, if any, then films the sequence as a whole. Each scene of a film can so have its
+own camera while a cross transition still blends the whole scenes. A GreenLight Motion scene script's real camera
+(a scene's `camera` with `move`, `rig`, `zooms`, `keyframes` or `dof`) is built this way, with the scene's backdrop
+channel camera-locked so a zoom or an orbit never shows its edge.
+
+### Smart Zoom — the camera's Zoom mode
+
+The Movement tab **Zoom** zooms the camera in over **zoom ranges** on the camera layer. They are automatic from a
+screen recording's clicks, or added by hand. Nothing is baked into keyframes:
+
+```jsonc
+"cameraMoveMode": "smartZoom",            // the Zoom tab (the stored id keeps its first name)
+"smartZoom": {
+  "clipId": "<the recording's CLIP id>",  // null: no recording, the ranges are placed by hand
+  "preset": "studio",                     // studio|calm|precise|lively|follow
+  "ranges": [                             // optional. Absent = automatic, from the recording's clicks
+    { "id": "r1", "startMs": 2700, "endMs": 5580, "mode": "follow" },
+    { "id": "z2", "startMs": 9000, "endMs": 11400, "mode": "fixed", "point": { "x": 0.3, "y": 0.7 }, "zoom": 2 }
+  ]
+}
+```
+
+- **Ranges:**
+  - `startMs`/`endMs` are in the **recording's own time** (source ms, so trims and moves keep a zoom on its moment).
+    With no recording they are the camera clip's own time.
+  - `zoom` is 1–4; absent = the preset's (Studio 1.45).
+  - `mode: "follow"` aims at the clicks inside the range. `mode: "fixed"` centres the view exactly on `point` (0..1 of
+    the frame).
+  - `disabled: true` keeps a range but skips it.
+  - Writing `ranges` replaces the automatic list. Copy the automatic ones first (ids `r1`, `r2`…) to keep them.
+- **In the editor:**
+  - **Add Zoom** (a timeline toolbar toggle, shown while a camera is in Zoom): with it ON, hovering the camera layer
+    shows a ghost zoom with a + and a click adds one there; a block drags to move it. With it OFF (the default) the
+    camera layer drags, trims and selects like any clip, and only the blocks answer: a click picks one.
+  - Either way, dragging a block's end resizes it and × removes it.
+  - With a block picked, dragging the preview moves the zoomed view and scroll or pinch zooms; both make the range
+    fixed. Delete removes it.
+  - The panel has the Feel (preset), the picked zoom's value, Follow the clicks again, and Back to automatic zooms.
+
+- **How it decides:**
+  - It reads the recording clip's `recordingMeta` (its clicks and cursor track).
+  - It zooms in from 0.3 s before a click until 2.5 s after the last one, and moves part of the way toward each group of clicks.
+  - Every move is a spring, so the camera never stops and restarts between clicks.
+- **It follows the recording's items on the timeline.** Trims, splits, moves and speed changes re-aim it on their own. Outside the recording's items, the camera rests at zoom 1, centred. It only acts inside its own camera clip's span.
+- **Presets** (`smartZoom.js` `PRESETS`; an unknown id reads as `studio`):
+
+  | Preset | Look |
+  |---|---|
+  | `studio` | Default, like Screen Studio: 1.45×, aims part-way |
+  | `calm` | 1.35×, slow; the clicked spot stays put |
+  | `precise` | 1.6×, clicks near the middle |
+  | `lively` | 1.7×, quick |
+  | `follow` | 1.5×, follows the cursor, not only clicks |
+
+  The recorder's setup panel picks one before the take. Its **No zoom** choice makes no camera at all.
+- **Precedence:** it drives `camZoom`, `camX` and `camY`, so keys on those three render as nothing. `camRoll`, `camDolly`, tilt and depth of field compose as usual. A motion preset that animates zoom or pan flips the mode to `"free"`.
+- **Changing it:**
+  - Patch `smartZoom.preset` on the live project to change the look, or `smartZoom.ranges` to place zooms.
+  - Set `"cameraMoveMode": "free"` to drive the camera by hand. `smartZoom` stays on the item, so setting the mode
+    back (the Zoom tab) restores it.
+  - A recording clip without `recordingMeta` (no Input Monitoring) has no automatic zooms, but ranges you add still
+    work.
+
+### Drawn cursor — a screen recording with no cursor in its picture
+
+The macOS recorder (Full screen / Area) and the agent template (`CURSOR=drawn`, its default) record the screen
+**without** the cursor. The editor draws a smooth one back onto the recording's own picture, so effects, masks,
+mockups, transitions and the camera treat it like a recorded cursor. Three fields make it:
+
+```jsonc
+// the recording CLIP
+"recordingMeta": { /* clicks + a light path */ "cursorInVideo": false },
+"recordingTrackUrl": "/media/<board folder>/screen_….glcursor",   // the hand's full path + cursor shapes, beside the video
+// its timeline ITEM (absent = drawn with the Studio look)
+"recordingCursor": { "enabled": true, "preset": "studio" }
+```
+
+- **`recordingCursor`** fields; any set field overrides the preset's:
+  - `enabled`: false hides the cursor.
+  - `preset`: `studio`, `calm`, `precise`, `lively` or `follow`. The same ids as Smart Zoom; each sets a cursor look.
+  - `size`: 0.25–6, a multiple of the real cursor. Studio is 1.5.
+  - `smoothing`: `off`, `spring`, `zerolag` or `spline`.
+  - `clickEffect`: `press`, `ring` or `none`.
+  - `hideIdleMs`: fade after this long still; 0 = never.
+  - `tilt`: 0–40.
+  - `motionBlur`: 0–2; 0 = none.
+- **Only for `recordingMeta.cursorInVideo === false`.** A recording that has the cursor in its picture (Windows,
+  Linux, Window capture, older takes) ignores `recordingCursor`; the cursor it has can't be removed.
+- The cursor lands exactly on each click, presses on mouseDown and takes the real shape (hand over links, I-beam
+  over text) from the track. A missing or failed `.glcursor` falls back to the light path in `recordingMeta`.
+- To change it, edit the live project: GET, set the item's `recordingCursor`, PUT with `expected_version`.
 
 ### Camera presets (save & load reusable camera moves)
 
@@ -149,7 +249,7 @@ An entry may set `sparse: true`, which drops the usual "seed every motion prop" 
 
 ### Camera Rig — a parametric camera move
 
-A camera item's `cameraMoveMode` picks one of three exclusive modes: `"free"` (position/rotation keyframes, the default), `"path"` (the hand-drawn motion path), `"rig"` (`item.cameraRig`). **A rig writes no path**, so switching modes never destroys a drawn curve.
+A camera item's `cameraMoveMode` picks one of four exclusive modes: `"free"` (position/rotation keyframes, the default), `"path"` (the hand-drawn motion path), `"rig"` (`item.cameraRig`) and `"smartZoom"` (the Movement tab **Zoom**: zoom ranges, from a screen recording's clicks or placed by hand — see Smart Zoom above). **A rig writes no path**, so switching modes never destroys a drawn curve.
 
 ```jsonc
 "cameraMoveMode": "rig",
@@ -203,6 +303,8 @@ Parameter ranges (`CAMERA_RIG_PARAM_META` / `CAMERA_RIG_DEFAULTS`, `cameraRig.js
 Keys use the same shape as every other track: `position` is 0–100 % of the camera clip, and `easing` is a named easing value. Progress tracks (`camPathT`, a layer's `motionPathT`) take `"Linear"` — constant speed along the move, which is what the editor itself writes; an eased progress (`"Smooth"`, `"AE Smooth"`) makes the camera crawl at both ends, so use one only when that slow start and landing is the intent. A key without a numeric `position` is dropped when the project loads, which leaves the rig frozen exactly as if no track had been sent.
 
 **`aim` picks what the camera faces.** `"center"` (the default, also when the key is absent) aims at the point the rig is built around — the comp centre, or the followed layer for `follow`. `"path"` faces the direction of travel (orient along path). It suits moves that travel toward or past the subject (`pushIn`, `dolly`, `crane`, `truck`); on an `orbit` or `spiral` it looks along the circle, roughly 90° away from the subject. A rig that does not move (zero `sweep`/`distance`, a `handheld` with `amplitude` 0) keeps the centre aim. `aim` is a choice about the shot's framing, not part of a preset: keep the current value when emitting a preset over an existing rig, as with `targets`.
+
+**Flat layers have a front.** Text, shapes, pictures and video are flat cards: an orbit that swings more than about 75° off the front (`startAngle` + `sweep` past ±75°, with `startAngle: 0` = straight ahead) turns them edge-on, and past 90° the camera sees their backs and they read mirrored. Keep orbits of flat layers within about ±70° (`heroOrbit`, `slowReveal`); `turntable`'s full circle is for 3D models.
 
 **`tilt` moves the AIM POINT, not the camera's own rotation**, so the subject stays framed as the rig travels. With `"aim": "path"` the same lift tips the gaze above or below the direction of travel. `handheld` jitter is a pure function of `seed` and progress — never wall-clock — so preview and export match frame for frame.
 

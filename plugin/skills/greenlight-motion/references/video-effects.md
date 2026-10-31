@@ -26,6 +26,7 @@
   - [3D Depth entry](#3d-depth-entry)
   - [Depth Scan entry](#depth-scan-entry)
   - [Motion Blur entry](#motion-blur-entry)
+  - [Posterize Time entry](#posterize-time-entry)
   - [Motion Trail entry](#motion-trail-entry)
   - [Grow Fill entry](#grow-fill-entry)
   - [Rig (Puppet) entry](#rig-puppet-entry)
@@ -843,6 +844,23 @@ Rim light from the subject's SHAPE. Authored from the DEPTH EFFECTS section.
 - `mblurSamples` is used verbatim at render quality (halved during interactive playback only).
 - Keyframe with `propertyKeyframes.mblurShutter`, `propertyKeyframes.mblurAmount`, and (velocity mode) `propertyKeyframes.mblurMaxBlur` / `propertyKeyframes.mblurFalloff`. `mblurSamples` is not keyframable — an animated tap count steps the kernel per integer.
 - It cannot see motion INSIDE the clip's pixels (a person walking through a static video stays sharp) and does nothing on `model3d` layers.
+
+### Posterize Time entry
+
+```json
+{ "id": "posterizeTime", "eid": "layer-posterize", "enabled": true, "params": { "ptFps": 12 } }
+```
+
+- The layer updates only `ptFps` times a second (1–60) while the project plays at full rate — the stop-motion /
+  "on twos" look. It is the layer's CLOCK, not a pixel pass: its video or GIF frame, every keyframe (transform,
+  effect params, masks, the motion path and Path Progress), text animators, a nested sequence's whole inner
+  timeline, models and particles all hold on each step. Preview (paused and playing), `/render-still` and every
+  export agree.
+- **Not posterized:** the layer's sound, the timeline itself (which clip is active, cross transitions), layers
+  parented to it or following it, and a camera clip.
+- Keyframe the rate with `propertyKeyframes.ptFps`. The rate is INTEGRATED, so a ramp from 6 to 24 speeds the steps
+  up smoothly and time never steps backwards.
+- Costs nothing per frame beyond reading the time; a layer without it pays one array scan.
 
 ### Motion Trail entry
 

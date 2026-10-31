@@ -432,6 +432,11 @@ class LivePage {
       if (fromPaint) this.painted = this.stepped;
       this.revision += 1;
     } catch (err) {
+      // Nothing of the page painted yet: the no-paint fallback ran before the browser's first paint of it — a
+      // window that is not painting (covered, minimized, in the background) or a busy frame. Not a failure: the
+      // canvas keeps what it has and the pump asks for the paint again. As a failure it left a clip with no bake
+      // showing nothing for as long as it stayed on screen.
+      if (err?.name === 'InvalidStateError' && /paint record/i.test(err.message || '')) return;
       this.failed = err?.message || String(err);
       console.warn('[html-live] draw failed, falling back to the bake:', this.url, this.failed);
       return;

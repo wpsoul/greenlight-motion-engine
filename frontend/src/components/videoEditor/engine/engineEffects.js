@@ -6,6 +6,7 @@
  * preview's videos until they can paint. Each returns its cleanup, like the effect it came from; the Player's effects
  * call them on their old dependency lists, and a React-free driver calls them when the same things change.
  */
+import { isText3dLayer } from '../text3d';
 import { ensureFontsLoaded } from '../../../render-shims/FontFamilySelect';
 import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 import { getAdjustmentEffect, loadLocalEffectPackages, onEffectRegistryChanged } from '../adjustmentEffects';
@@ -151,12 +152,14 @@ export function pruneModelLayers(engine, env) {
   if (!mod?.pruneModelLayers && !mod?.prunePlateLayers) return;
   const liveModels = new Set();
   const livePlates = new Set();
+  const liveText3d = new Set();
   const walk = (chs, cmap, depth) => {
     if (depth > SEQUENCE_MAX_DEPTH) return;
     for (const ch of chs || []) {
       for (const item of ch.items || []) {
         const clip = cmap.get(item.clipId);
         if (clip?.mediaType === 'model3d') liveModels.add(item.id);
+        else if (isText3dLayer(item, clip)) liveText3d.add(item.id);
         else if (isShadowPlate(item, clip)) livePlates.add(item.id);
         if (isContainerClip(clip)) {
           const innerMap = new Map((clip.sequence.clips || []).map((c) => [c.id, c]));
@@ -168,6 +171,7 @@ export function pruneModelLayers(engine, env) {
   walk(env.channels, env.clipsMap, 0);
   mod.pruneModelLayers?.(liveModels);
   mod.prunePlateLayers?.(livePlates);
+  mod.pruneText3dLayers?.(liveText3d);
 }
 
 export function followCurrentTime(engine, env) {

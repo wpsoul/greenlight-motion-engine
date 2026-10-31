@@ -15,7 +15,7 @@
 // pull every later clip of a snapped track earlier in the preview than the timeline.
 
 export const HTML_MEDIA_TYPE = 'html';
-export const HTML_BAKE_ENGINE = 'hb1';
+export const HTML_BAKE_ENGINE = 'hb2';
 export const HTML_CLIP_DURATION_SECONDS = 5;
 
 export const isHtmlClip = (clip) => !!clip && clip.mediaType === HTML_MEDIA_TYPE;

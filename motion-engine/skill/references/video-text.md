@@ -11,6 +11,7 @@
 - [Text caption layers](video-text.md#text-caption-layers)
 - [How a text layer is structured](video-text.md#how-a-text-layer-is-structured)
 - [Text item fields (defaults from `sanitizeTimelineItem`)](video-text.md#text-item-fields-defaults-from-sanitizetimelineitem)
+- [3D Text — real extruded letters (`text3d`)](video-text.md#3d-text--real-extruded-letters-text3d)
 - [Dynamic text placeholders (counter, timer, word cycle, scramble, variables, markers, timecode)](video-text.md#dynamic-text-placeholders)
 - [Advanced Animations — effects over a moving range of characters, words or lines](video-text.md#advanced-animations--effects-over-a-moving-range-of-characters-words-or-lines)
 - [Worked example — add a bottom caption to an existing project](video-text.md#worked-example--add-a-bottom-caption-to-an-existing-project)
@@ -89,6 +90,39 @@ Field groups for the look around the text (the motion itself is `textAnimators`)
   "textRandomItalicEnabled": true, "textRandomItalicMode": "mix", "textRandomItalicShare": 30
 }
 ```
+
+### 3D Text — real extruded letters (`text3d`)
+
+A text layer can draw every letter as a real 3D solid: depth, rounded (bevelled) edges, a finish, light and
+reflections, filmed by the project camera like a 3D model. Everything else stays the text layer's own — font,
+size, wrapping, colours and the randomizer, Advanced Animations (Text Animators), Text on Path, keyframes and the
+layer transform. **Rotate 3D in a Text Animator turns the letters for real**, showing their sides.
+
+```json
+"text3d": {
+  "enabled": true,
+  "depth": 30,          // extrusion, % of the font size (0–200)
+  "bevel": 18,          // roundness: bevel size, % of the font size (0–40; capped per glyph by its stroke)
+  "bevelSegments": 5,   // smoothness of the rounded edge (1–10)
+  "faceColor": null,    // "#rrggbb" for every letter's face; null = the letter's own colour
+  "sideColor": null,    // "#rrggbb" for the sides; null = the face colour darkened by sideShade
+  "sideShade": 35,      // % darker for the derived side colour
+  "palette": ["#e8392f", "#2f6fe8", "#f5c518", "#2fb04a"], // optional: colours cycled per letter (toy look)
+  "material": "plastic",// plastic | matte | metal | glass
+  "light": "studio",    // studio | soft | dramatic — only without a 3D Rig in the project
+  "envIntensity": 1     // reflections strength (0–3), only without a Rig
+}
+```
+
+- **Lighting.** With a Scene Rig (3D Rig layer) the letters join its shared world: its lights and environment light
+  them and they cast and receive its shadows. Without one, `light` picks a studio set and `envIntensity` the
+  reflections.
+- **Fonts.** Each letter is traced from the font the layer really draws with, so Google, uploaded and system fonts
+  and any weight work. The face is the 2D glyph's exact outline; the bevel swells the sides outward.
+- **Not in 3D:** the caption bar, outline stroke, text shadow and glow, blur and decorations are 2D paint and are not
+  drawn on 3D letters. A Text Animator's opacity and colour apply; its blur, glow, shadow and stroke do not.
+- **Cost:** a glyph's geometry is built once per font, character, depth and bevel and shared; each frame poses the
+  letters and renders one 3D pass. `depth`, `bevel` and `bevelSegments` are not keyframable (they rebuild geometry).
 
 ### Dynamic text placeholders
 
@@ -185,7 +219,8 @@ Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid
 | `delay` | −60…600 s (0) | In: after the layer starts. Out: before it ends. Voice: after the word is spoken (negative = before). |
 | `stagger` | 0…10 s (0.06) | Time: between one unit's turn and the next. |
 | `duration` | 0…20 s (0.6) | How long each unit takes (0 = instant). For `active`/`stay` it is the fade-in. |
-| `curve` | the app's easing names (`Ease Out`) | Each unit's own easing: `Linear`, `Ease In/Out`, `Smooth`, `Power1–4 In/Out/Smooth`, `Sine/Cubic/Expo/Circ/Back In/Out/Smooth`, `Bounce Out`, `Elastic`, `Overshoot`, `Smooth Overshoot`, `Impulse`, `Swing`, `Anticipate`, `Natural`, `Slow Down`, `AE In/Smooth/Out`. Back, Bounce, Elastic and the Overshoots land each unit past its rest and settle (transforms follow the overshoot, colours clamp). `Anticipate` is an exit: the unit winds back the other way (to −0.38 of the move at 58 %), then snaps through in the last frames. |
+| `curve` | the app's easing names (`Ease Out`) | Each unit's own easing: `Linear`, `Ease In/Out`, `Smooth`, `Power1–4 In/Out/Smooth`, `Sine/Cubic/Expo/Circ/Back In/Out/Smooth`, `Bounce Out`, `Elastic`, `Overshoot`, `Smooth Overshoot`, `Impulse`, `Swing`, `Anticipate`, `Natural`, `Slow Down`, `AE In/Smooth/Out`. Back, Bounce, Elastic and the Overshoots land each unit past its rest and settle (transforms follow the overshoot, colours clamp). `Anticipate` is an exit: the unit winds back the other way (to −0.38 of the move at 58 %), then snaps through in the last frames. `Custom` plays `bezier`. |
+| `bezier` | `[x1, y1, x2, y2]` or null (null) | The `Custom` curve's handles, the same shape as a keyframe's `bezier` (x 0…1, y −3…4; past 0…1 = overshoot). Write it together with `"curve": "Custom"`: a `Custom` without it plays `Ease Out`, and any named `curve` drops it. |
 | `hold` | 0…600 s (0) | `active`: how long a unit stays lit; 0 = until the next unit's turn (voice: until the next word starts). |
 | `fadeOut` | 0…20 s (0) | `active`: fade back down after `hold`. |
 | `keepLast` | bool (false) | `active`: the last unit stays lit. |

@@ -163,10 +163,14 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
   const paintGlyph = (c, M, u, i, st) => {
     c.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
     const g = glyphFor(st, u.ch);
-    c.filter = st.blur > 0.05 ? `blur(${(st.blur * dpr).toFixed(2)}px)` : 'none';
+    const unitBlur = st.blur > 0.05 ? +(st.blur * dpr).toFixed(2) : 0;
+    c.filter = unitBlur ? `blur(${unitBlur}px)` : 'none';
+    // The unit's Blur goes into the shadow's own (σ = B/2 and r add in quadrature), never
+    // a filter over a draw that reaches the glyph parked OFF px away — as in the Player.
     const shadowOnly = (col, blur, ox, oy) => {
       c.save();
-      c.shadowColor = col; c.shadowBlur = blur;
+      if (unitBlur) c.filter = 'none';
+      c.shadowColor = col; c.shadowBlur = unitBlur ? Math.hypot(blur, 2 * unitBlur) : blur;
       c.shadowOffsetX = M[0] * OFF + ox; c.shadowOffsetY = M[1] * OFF + oy;
       c.globalAlpha = st.alpha; c.fillStyle = '#000';
       c.fillText(g, -OFF, by);

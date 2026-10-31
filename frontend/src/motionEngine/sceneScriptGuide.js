@@ -2,7 +2,7 @@
 // the chat's intro, files and review loop around these sections) and the npm package's skill/references/scene-script.md
 // (motion-engine/scripts/prepare.mjs: the CLI's way around them). `host` is 'chat' or 'cli': where the reader finds a
 // reference (a tool or a file) and where pictures come from.
-import { FORMATS, CROSS_TRANSITIONS, SHADERS, CAMERAS, presetCatalog } from './sceneScript.js';
+import { FORMATS, CROSS_TRANSITIONS, SHADERS, CAMERAS, presetCatalog, cameraCatalog } from './sceneScript.js';
 // bundled as text (motion-engine/scripts/build-script.mjs)
 import DESIGN from '../../../skills/greenlight-dash/references/video-design.md';
 
@@ -34,8 +34,10 @@ export function scriptFormatGuide(host = 'chat') {
         { "type": "pill", "w": 560, "h": 116, "color": "accent", "start": 0.15 },
         { "type": "text", "text": "Opening day: 2 for 1", "role": "body", "color": "#1b120d", "start": 0.3, "enter": "pop-overshoot", "sound": "data-1" } ] },
     { "name": "Close", "duration": 2.4, "transition": "Gradient Glow Stack", "background": { "shader": "silk", "look": "sunset" },
+      "camera": { "move": "cm-quiet-push", "dof": { "focus": "street", "aperture": 50 } },
       "elements": [
-        { "type": "text", "text": "12 Elm Street", "role": "headline", "textAnimation": "word-swing" },
+        { "type": "circle", "w": 420, "color": "#fff3e0", "opacity": 0.3, "at": [330, -60], "z": -700 },
+        { "id": "street", "type": "text", "text": "12 Elm Street", "role": "headline", "textAnimation": "word-swing" },
         { "type": "text", "text": "OPEN 7 – 7", "role": "label", "at": [0, 130], "start": 0.8, "letterSpacing": 6 } ] }
   ]
 }
@@ -49,15 +51,33 @@ export function scriptFormatGuide(host = 'chat') {
 - **line**: from \`at\` to \`to\`, \`width\`, drawn on (\`draw\`: false to skip).
 - **image · video**: \`src\` (${host === 'chat' ? "a link or the user's file — below" : "a file in the folder's assets/ as `asset:<name>`, or an https link"}) or, for an image, \`svg\` (SVG markup you write); \`w\` or \`h\`
   (px; the other follows the file's shape) or \`fit\` cover | contain
-  (default: a video covers the frame, a picture sits at 70 % of contain), \`rotate\` (deg), \`opacity\` (0–1). A video also takes
+  (default: a video covers the frame, a picture sits at 70 % of contain), \`rotate\` (deg). A video also takes
   \`startAt\` (s into the file) and \`volume\` (0–100, default muted). No entrance unless you set \`enter\`.
 - **Keyframes on any element** — your own motion: \`"keyframes": { "x": [[0, -400], [0.8, 0, "Smooth Glide"]], "scale": [[0, 0.9], [2, 1.05]] }\`
   — tracks x, y (px offsets from \`at\`), scale, rotate (deg), opacity (0–1); each key [seconds into the element, value, easing of the
   segment after it — Smooth Glide, AE Smooth, Expo Out, Back Out, Elastic, Linear …]. They replace an entrance's keys on the same track.
 - **Every element**: \`start\` / \`end\` (s within its scene; default: staggered 0.12 s, to the scene's end), \`enter\` / \`exit\` (keyframe presets, \`direction\` up | down | left | right
-  for directional ones), \`effects\`: [{ "id", "params"? }], \`sound\` (played at its start), \`id\`, \`label\` (its name in the page's options).
-- **Scene**: \`duration\` (s), \`transition\` into it (default Cross Fade, 0.6 s; \`transitionDuration\`), \`camera\` ${CAMERAS.join(' | ')} (default push-in),
+  for directional ones), \`effects\`: [{ "id", "params"? }], \`sound\` (played at its start), \`id\`, \`label\` (its name in the page's options), \`opacity\` (0–1),
+  \`z\` (px of depth, + toward the viewer, default 0: a real camera's dolly, orbit and depth of field separate layers by it), \`locked\`: true
+  (the scene's camera doesn't move it: a logo, a caption). Keyframes also take a \`z\` track.
+- **Scene**: \`duration\` (s), \`transition\` into it (default Cross Fade, 0.6 s; \`transitionDuration\`), \`camera\` (below; default push-in),
   \`background\` (overrides style), \`sounds\`: [{ "sfx", "at" }]. Script-level \`sound\`: auto (default: a whoosh on each transition and on the first headline) | none.
+- **camera** — a quick move of the whole scene: ${CAMERAS.join(' | ')}. Or a REAL camera that films the scene's elements in 3D (the
+  Video Editor's own camera layer; the scene's backdrop stays put, so its edge never shows). One of:
+  - \`{ "move": id }\` — a camera move from the catalogue (or just \`"camera": "cm-quiet-push"\`), spread over the scene;
+  - \`{ "rig": id }\` or \`{ "rig": { "preset"?: id, "type"?, …fields } }\` — an orbit, crane, push-in, truck, spiral, handheld or follow move
+    (\`"camera": "heroOrbit"\` works too). A \`follow\` rig rides elements: \`"targets": [element ids]\`. Layers are flat: keep an orbit within about
+    ±70° of the front (heroOrbit, slowReveal) or they turn edge-on and read mirrored;
+  - \`{ "zooms": [{ "start", "end", "at"?, "zoom"? }], "feel"? }\` — zoom in on spots and back out, like a screen recording's Smart Zoom: \`at\` as for
+    elements (the spot to frame, clamped so the view stays inside the frame), \`zoom\` 1.05–4 (default the feel's, about 1.45), each zoom at least
+    0.4 s and none overlapping; \`feel\` studio | calm | precise | lively | follow (the spring). Put a screen recording in as a video element (or the
+    scene's video background) and zoom on what it shows;
+  - \`{ "keyframes": { zoom | x | y | roll | dolly | tiltX | tiltY | focusZ: [[seconds, value, easing?], …] } }\` — your own move: zoom (×, 1 = none),
+    x / y (px the camera pans right / down), roll / tilt (deg), dolly (px toward the scene: it changes perspective, so layers at different \`z\` part).
+    With a \`move\` they replace its track; a rig drives x, y, roll, dolly and tilt itself and zooms drive zoom, x and y, so key only the others there.
+  - plus \`"dof": { "focus": element id | "focusZ": px, "aperture"?: 40, "blur"?: 100 }\` (or \`true\`) — depth of field: what sits at another \`z\` blurs;
+    the focus stays on its subject while the camera dollies or rides a rig. \`focusZ\` keys are a rack focus (measured from where the camera starts).
+  - \`start\` / \`end\` (s in the scene; default the whole scene; outside them the camera rests). Keys and zooms count seconds into the camera.
 - **background**: a colour, a CSS gradient, { "shader": id, "look"? } — shaders: ${SHADERS.join(', ')} (looks: ${refOf(host, 'video-backgrounds')}) — or { "image": src } / { "video": src } (covers the frame; b-roll behind the scene).
 - **music** (script level): \`"music": { "src": file, "volume": 80, "fadeIn": 0.3, "fadeOut": 1.2, "startAt": 0 }\` — one track under the video.
 
@@ -73,6 +93,7 @@ export function designGuide() {
 /** "## Catalogues": text animations, entrances, exits, transitions, effects, sounds (caps = schema/capabilities.json). */
 export function catalogueGuide(caps, host = 'chat') {
   const cat = presetCatalog();
+  const cam = cameraCatalog();
   const star = (line, ids) => (ids.some((id) => line.startsWith(`\`${id}\``)) ? `★ ${line}` : line);
   const sounds = {};
   for (const [id, sd] of Object.entries(caps?.sounds?.library || {})) if (sd.category !== 'Voice Clips & Memes') (sounds[sd.category] ||= []).push(`${id} (${sd.duration}s)`);
@@ -86,6 +107,12 @@ export function catalogueGuide(caps, host = 'chat') {
 **Exits** (\`exit\`): ${cat.exit.join(' · ')}
 
 **Transitions** (★ = preferred): ${CROSS_TRANSITIONS.map((t) => (PREFERRED.transitions.includes(t) ? `★ ${t}` : t)).join(' · ')}
+
+**Camera moves** (\`camera.move\`; spread over the camera's length): ${cam.moves.join(' · ')}
+
+**Camera rigs** (\`camera.rig\`; the fields you can override: type ${cam.rigTypes.join(' | ')}, aim ${cam.rigAims.join(' | ')}, ${cam.rigFields.join(', ')}): ${cam.rigs.join(' · ')}
+
+**Zoom feels** (\`camera.feel\`): ${cam.feels.join(' · ')}. Full camera layers (paths, Smart Zoom on a recording's clicks, the drawn cursor): ${refOf(host, 'video-camera')}.
 
 **Overlay effects** (\`effects\`): ${fx(caps?.effects?.overlay)}
 

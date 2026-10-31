@@ -2172,7 +2172,7 @@ export default function PreviewTransformOverlay({
             const uv = frameToLayerUv(layer, p.x, p.y);
             if (samPick.tool === 'points') {
               // Alt marks what to LEAVE OUT (SAM's background point, label 0).
-              if (inside(uv)) onSamPick?.(layer.item.id, { type: 'point', u: uv.u, v: uv.v, label: event.altKey ? 0 : 1 });
+              if (inside(uv)) onSamPick?.(layer.item.id, { type: 'point', u: uv.u, v: uv.v, label: event.altKey ? 0 : 1, lw: layer.width, lh: layer.height });
               return;
             }
             const a = clampUv(uv);
@@ -2192,7 +2192,8 @@ export default function PreviewTransformOverlay({
             const v0 = Math.min(band.a.v, band.b.v); const v1 = Math.max(band.a.v, band.b.v);
             // A click rather than a drag is not a box.
             if (u1 - u0 < 0.01 || v1 - v0 < 0.01) return;
-            onSamPick?.(layer.item.id, { type: 'box', u0, v0, u1, v1 });
+            // The quad's size travels with the box: SAM 2 maps layer uv onto a video's picture with it.
+            onSamPick?.(layer.item.id, { type: 'box', u0, v0, u1, v1, lw: layer.width, lh: layer.height });
           }}
           onPointerCancel={() => setSamBand(null)}
         />
