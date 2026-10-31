@@ -105,19 +105,30 @@ export function install(STUDIO) {
       name.replaceWith(input);input.focus();input.select();};
     return row;
   }
-  // the Edit timeline's channel rows: a type glyph, the name, Hide (Mute: the layer stays, it doesn't draw) and Remove;
-  // the engine's bars (same order as its layers) carry their layer's id, so a hidden layer's bar reads dimmed
+  // the Edit timeline's channel rows: ONE label per row, as the engine draws them. A row is a channel, and a channel can
+  // hold several clips one after another (a scene script's scenes, joined by cross transitions; a clip with no prevId
+  // starts a row). The label is the picked clip's (else the row's first): its glyph and name, Hide (Mute: the clip stays,
+  // it doesn't draw) for the whole row, and Remove only on a row of one clip (the toolbar's Delete removes a picked one).
+  // The engine's bars (same order as its layers) carry their layer's id, so a hidden layer's bar reads dimmed
   let gutterSig='';
   function renderGutter(layers){
     const box=$('.glm-tlwrap .lab-track-labels');if(!box)return;
     const bars=[...document.querySelectorAll('.glm-rows .glm-layer')];bars.forEach((b,i)=>{const l=layers[i];if(!l)return;b.dataset.rvId=l.id;b.classList.toggle('rv-hidden',muted[l.id]!=null);});
-    const sig=JSON.stringify([layers.map(l=>[l.id,l.type,nameOf(l)]),muted]);if(sig===gutterSig)return;gutterSig=sig;box.replaceChildren();
-    layers.forEach(l=>{const row=document.createElement('div');row.className='lab-track-label'+(muted[l.id]!=null?' is-muted':'');row.dataset.id=l.id;
+    const rows=[];layers.forEach(l=>{if(!l.prevId||!rows.length)rows.push([l]);else rows[rows.length-1].push(l);});
+    const picked=api().selected();
+    const sig=JSON.stringify([rows.map(r=>r.map(l=>[l.id,l.type,nameOf(l)])),muted,picked]);if(sig===gutterSig)return;gutterSig=sig;box.replaceChildren();
+    rows.forEach(clips=>{const l=clips.find(c=>c.id===picked)||clips[0];const one=clips.length===1;const off=clips.every(c=>muted[c.id]!=null);
+      const row=document.createElement('div');row.className='lab-track-label'+(off?' is-muted':'');row.dataset.id=l.id;
+      if(!one)row.title=clips.map(nameOf).join(' · ');
       const g=document.createElement('span');g.className='rv-gl-glyph';g.innerHTML=svg(GLYPHS[l.type]||GLYPHS.layer);
       const n=document.createElement('span');n.className='rv-gl-name';n.textContent=nameOf(l);
-      const hide=document.createElement('button');hide.type='button';hide.className='rv-gl-btn'+(muted[l.id]!=null?' on':'');hide.dataset.act='hide';hide.title=muted[l.id]!=null?'Show the layer':'Hide the layer';hide.innerHTML=svg(muted[l.id]!=null?ACT.hide:ACT.show,12,1.8);hide.onclick=e=>{e.stopPropagation();toggleMute(l.id);};
-      const del=document.createElement('button');del.type='button';del.className='rv-gl-btn rv-gl-del';del.dataset.act='remove';del.title='Remove the layer';del.innerHTML=svg(ACT.del,12,1.8);del.onclick=e=>{e.stopPropagation();remove(l.id);};
-      row.append(g,n,hide,del);row.onclick=()=>{selMarker=null;api().pause();options();api().select(l.id);navSig='';renderNav(true);};box.append(row);});
+      const hide=document.createElement('button');hide.type='button';hide.className='rv-gl-btn'+(off?' on':'');hide.dataset.act='hide';
+      hide.title=one?(off?'Show the layer':'Hide the layer'):(off?'Show the row':'Hide the row');hide.innerHTML=svg(off?ACT.hide:ACT.show,12,1.8);
+      hide.onclick=e=>{e.stopPropagation();clips.forEach(c=>{if((muted[c.id]!=null)===off)toggleMute(c.id);});};
+      row.append(g,n,hide);
+      if(one){const del=document.createElement('button');del.type='button';del.className='rv-gl-btn rv-gl-del';del.dataset.act='remove';del.title='Remove the layer';del.innerHTML=svg(ACT.del,12,1.8);del.onclick=e=>{e.stopPropagation();remove(l.id);};row.append(del);}
+      else{const keep=document.createElement('span');keep.className='rv-gl-btn';keep.style.visibility='hidden';keep.setAttribute('aria-hidden','true');keep.innerHTML=svg(ACT.del,12,1.8);row.append(keep);}   // the eyes stay in one column
+      row.onclick=()=>{selMarker=null;api().pause();options();api().select(l.id);navSig='';renderNav(true);};box.append(row);});
   }
   function syncGutter(){gutterSig='';renderGutter(api().layers());}
   window.LabNav={names:()=>({...names}),sort:()=>sortMode};

@@ -304,6 +304,19 @@ export function particleProxParamValue(prox, key) {
 }
 
 /**
+ * The value an UN-keyed parameter holds in the solver's per-step table, which exists once any `px:` track does
+ * (particleProxTrack.js). Range / Falloff / Depth as stored (or their default); an `fx` amount the block does not
+ * carry is NOT driven, so 0, exactly as the static block reads it (proximity.js proxMotionAmounts). Never the panel's
+ * default for a property nobody added: that turned on with the first `px:` track, and Freeze's 100 % stopped every
+ * particle dead.
+ */
+export function particleProxUnkeyedValue(prox, key) {
+  const f = PROX_KF_FIELD_BY_KEY.get(key);
+  if (f?.where === 'fx') { const v = prox?.fx?.[key]; return Number.isFinite(v) ? v : 0; }
+  return particleProxParamValue(prox, key);
+}
+
+/**
  * Which parameters this block can actually offer a track for. The field trio is
  * always animatable once a source exists; an `fx` amount only once that property
  * has been added, because a track on a property nothing drives does nothing and

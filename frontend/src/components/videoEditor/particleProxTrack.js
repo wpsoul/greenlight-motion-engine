@@ -38,7 +38,7 @@ import { PROX_POSE_STRIDE, PROX_PARAM_KEYS, PROX_PARAM_STRIDE, makeProxPose } fr
 import { collidersOf } from '../../sim/particles/schema.js';
 import {
   PARTICLE_MAX_PROX_SOURCES, PARTICLE_PROX_MOTION_KEYS,
-  particleProxKfField, particleProxParamValue,
+  particleProxKfField, particleProxUnkeyedValue,
 } from '../../sim/particles/schema.js';
 import { ensureProxFields } from './particleProxField';
 import { proxAnimatedParams, proxKfKey } from './particleProxKf';
@@ -264,7 +264,7 @@ export function proxTrackFor({ system, item, index, layout, W, H }) {
     prsSignature(index, item.id),
     // The base values the un-keyed slots repeat; a static edit to Range must
     // rebuild the table even when nothing on this layer is animated.
-    PROX_PARAM_META.map((p) => particleProxParamValue(P, p.key)).join(','),
+    PROX_PARAM_META.map((p) => particleProxUnkeyedValue(P, p.key)).join(','),
     keyedParams.map((p) => `${p.key}=${JSON.stringify(item.propertyKeyframes?.[p.trackKey] || 0)}`).join(';'),
     item.propertyKeyframeFx ? JSON.stringify(item.propertyKeyframeFx) : '',
     ...sources.map((sx) => [
@@ -290,7 +290,7 @@ export function proxTrackFor({ system, item, index, layout, W, H }) {
   const pdata = keyedParams.length ? new Float32Array(n * PROX_PARAM_STRIDE) : null;
   // The base row, written once and copied into every step before the animated
   // slots overwrite theirs.
-  const baseRow = pdata ? PROX_PARAM_META.map((p) => particleProxParamValue(P, p.key)) : null;
+  const baseRow = pdata ? PROX_PARAM_META.map((p) => particleProxUnkeyedValue(P, p.key)) : null;
   let pmotion = false;
   const boxInv = new Float32Array(12);
   const mS = new Float32Array(12);
