@@ -1,6 +1,8 @@
 > **GreenLight Motion Engine:** this is the GreenLight Dash Video Editor's project format, which the engine reads as is.
-> Ignore the `/api/...` routes and the app UI described here: in the engine you edit `project.json` and run
-> `npx greenlight-motion build`. MotionFast templates (`mediaType: "motion"`) stay in GreenLight Dash.
+> Ignore the `/api/...` routes and the app UI described here: in the engine you edit `project.json` (or `apply`) and run
+> `npx greenlight-motion build`; what `GET /api/video-editor/capabilities` returns there is `npx greenlight-motion schema <topic>`
+> here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
+> stay in GreenLight Dash.
 
 # GreenLight Dash — Video Editor Layer Effects and Overlay Effects
 
@@ -565,7 +567,7 @@ On a `model3d` item, these Overlay Effects have a REAL 3D version that renders i
 
 ### Installed effects (`local:<id>`)
 
-Effect packages an agent built or the user imported ([custom-effects skill](../../custom-effects/SKILL.md))
+Effect packages an agent built or the user imported (custom-effects skill (GreenLight Dash only))
 apply exactly like the registry effects above, in the same `effects` list and both scopes:
 
 ```json

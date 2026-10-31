@@ -112,6 +112,20 @@ function pluginEntries(keys, kind) {
   }));
 }
 
+// Font files the page carries (anywhere in assets/ but a plugin's own folder), answered as the editor's custom fonts:
+// each one is the family of its file name, so a text layer set to "Manrope" draws with assets/Manrope.ttf — offline,
+// and the font loader asks Google Fonts only for families no file provides.
+const FONT_FILE = /\.(ttf|otf|woff2?)$/i;
+async function fontEntries(keys) {
+  const files = keys.filter((k) => k.startsWith('asset:') && !k.startsWith('asset:plugins/') && FONT_FILE.test(k));
+  const rows = await Promise.all(files.map(async (k) => ({
+    id: k,
+    family: decodeURIComponent(k.slice('asset:'.length).split('/').pop()).replace(FONT_FILE, ''),
+    url: await activeResolver?.url?.(k),
+  })));
+  return rows.filter((f) => typeof f.url === 'string' && f.family);
+}
+
 // A package's own writes back to "the install": its proof and its metadata, kept for the CLI.
 function recordPluginWrite(path, body) {
   const m = path.match(/^\/api\/(effects|advanced-transitions)\/local\/([^/]+)\/(status|metadata|thumbnail)$/);
@@ -168,6 +182,7 @@ export function installFetchLayer() {
       } else if (recordPluginWrite(path, init && init.body)) {
         return json(200, { ok: true });
       }
+      if ((method === 'GET' || method === 'HEAD') && path === '/api/fonts') return json(200, { fonts: await fontEntries(activeResolver?.keys?.() || []) });
       const list = method === 'GET' || method === 'HEAD' ? API_LISTS[path] : null;
       return list ? json(200, list) : json(404, { detail: 'Not available in the GreenLight Motion Engine' });
     }

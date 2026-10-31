@@ -52,11 +52,17 @@ matte, masks, particles, 3D) goes on from `project.json`: SKILL.md, "Beyond the 
 ```
 
 - **format** 16:9 · 9:16 · 1:1 · 4:5 (16:9 = 1920×1080, 9:16 = 1080×1920, 1:1 = 1080×1080, 4:5 = 1080×1350). Sizes and positions are in those pixels.
+- **style**: `background`, `colors` { text, accent, muted }, `font`: a Google Fonts family (the page loads it from Google Fonts while online) or any font whose file you put in assets/ named after it (`Manrope.ttf`, .otf, .woff, .woff2: used offline).
 - **at**: `center` `top` `bottom` `left` `right` `top-left` … or `[x, y]` px from the centre (+y is down). Keep text inside the middle 80 %.
 - **text**: `role` headline | subhead | body | label sets size and weight (override with `size`, `weight`); `color` text | accent | muted | #hex |
   a CSS gradient; `width` (px, wraps), `align`, `uppercase`, `letterSpacing`, `lineHeight`. A headline gets `glide-text` unless you set `textAnimation`.
+  The text box is CENTRED on `at`: without `width` it is as wide as its words but stays inside the frame (off-centre text wraps
+  sooner); for a left-aligned column give `width` and `"align": "left"` and put `at` at the column's centre.
 - **rect · pill · circle**: `w`, `h`, `color` (or a CSS gradient), `radius`, `border` {width, color}, `shadow`: true. They enter with `pop-overshoot` unless you set `enter`.
 - **line**: from `at` to `to`, `width`, drawn on (`draw`: false to skip).
+- **ring**: a circle drawn as a stroke from the top, clockwise (a timer, a status or focus ring): `w` (diameter), `width` (stroke),
+  `color`, `sweep` (degrees, 360 = full), drawn on (`draw`: false to skip), `drain`: true empties it again by the element's
+  end (a countdown), `ghost` (0–100: a faint full track under it).
 - **image · video**: `src` (a file in the folder's assets/ as `asset:<name>`, or an https link) or, for an image, `svg` (SVG markup you write); `w` or `h`
   (px; the other follows the file's shape) or `fit` cover | contain
   (default: a video covers the frame, a picture sits at 70 % of contain), `rotate` (deg). A video also takes
@@ -68,8 +74,12 @@ matte, masks, particles, 3D) goes on from `project.json`: SKILL.md, "Beyond the 
   for directional ones), `effects`: [{ "id", "params"? }], `sound` (played at its start), `id`, `label` (its name in the page's options), `opacity` (0–1),
   `z` (px of depth, + toward the viewer, default 0: a real camera's dolly, orbit and depth of field separate layers by it), `locked`: true
   (the scene's camera doesn't move it: a logo, a caption). Keyframes also take a `z` track.
-- **Scene**: `duration` (s), `transition` into it (default Cross Fade, 0.6 s; `transitionDuration`), `camera` (below; default push-in),
-  `background` (overrides style), `sounds`: [{ "sfx", "at" }]. Script-level `sound`: auto (default: a whoosh on each transition and on the first headline) | none.
+- **Scene**: `duration` (s), `transition` into it (default Cross Fade, 0.6 s; `transitionDuration`), `transitionOptions` (the
+  transition's own settings, e.g. Circular Wipe's `point` { x, y } (% of the frame from its top-left: 50, 50 is the centre) and `feather`; every option: `npx greenlight-motion schema transitions`.
+  A transition's vivid colours, such as Circular Wipe's beam, take the accent unless you set them), `camera` (below; default push-in),
+  `background` (overrides style), `sounds`: [{ "sfx", "at" }]. Script-level `sound`: auto (default: a whoosh on each transition and
+  on the first headline, from the GreenLight sound library, which the CLI downloads into assets/sounds/ when it builds) | none (nothing from the library: when
+  nothing may be downloaded, use `music` with a file you made).
   **A transition overlaps the scenes on both sides**, so the video lasts the scenes' durations added up MINUS every
   transition: five 3 s scenes with the default 0.6 s transitions run 15 − 4 × 0.6 = 12.6 s. To hit a length, add the
   transitions back to the scenes (`script` prints the total).
@@ -91,6 +101,7 @@ matte, masks, particles, 3D) goes on from `project.json`: SKILL.md, "Beyond the 
   - `start` / `end` (s in the scene; default the whole scene; outside them the camera rests). Keys and zooms count seconds into the camera.
 - **background**: a colour, a CSS gradient, { "shader": id, "look"? } — shaders: silk, glowblobs, waves, plasma, mesh, fire, spacetravel, glitters, blueplanet, auroraridge, emberpool, neonvignette, electricvignette, spectrumdrift, emberfacet, silkdrift, eclipseprism, glassreeds, staticfringe, ripplefold, nightaurora, pixelbeams, petalgrid, amberblinds, icehalo, windowhaze (looks: references/video-backgrounds.md) — or { "image": src } / { "video": src } (covers the frame; b-roll behind the scene).
 - **music** (script level): `"music": { "src": file, "volume": 80, "fadeIn": 0.3, "fadeOut": 1.2, "startAt": 0 }` — one track under the video.
+  The file must exist when you run `script` (it reads its length): write a sound you make in code before the first run.
 
 ## What makes it look made, not generated
 

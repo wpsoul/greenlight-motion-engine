@@ -314,6 +314,12 @@ async function check() {
     for (const p of await page.evaluate(async (proj) => window.GreenLightMotion.checkSoundCues(await window.GreenLightMotion.normalize(proj)), project)) {
       problems.push({ code: 'sound', detail: p, fix: 'fix project.sounds (npx greenlight-motion schema sounds lists the library)' });
     }
+    // a track matte's source is hidden only while a layer that uses it is on screen; outside that it draws as itself
+    for (const g of await page.evaluate((proj) => window.GreenLightMotion.matteGaps(proj), project)) {
+      problems.push({ code: 'matte-source', ref: g.source,
+        detail: `"${g.source}" shows on screen from ${g.from} s to ${g.to} s, when no layer that uses it as a track matte (${g.consumers.join(', ')}) is on screen`,
+        fix: `start and end "${g.source}" with the layer it cuts: the engine hides a matte source only while a layer that uses it is on screen` });
+    }
     if (!(duration > 0)) problems.push({ code: 'empty', detail: 'the project has no length', fix: 'add layers to channels[].items with clips that have a duration' });
     const blank = [];
     for (const t of parseTimes(duration).slice(0, 4)) {
@@ -571,6 +577,8 @@ function schema() {
   switch (topic) {
     case 'format': {
       const refs = path.join(PKG, 'skill', 'references');
+      const essentials = readFileSync(path.join(PKG, 'skill', 'SKILL.md'), 'utf8').split('## The project format — essentials')[1]?.split('\n## ')[0];
+      if (essentials) show(`# The project format — essentials${essentials.trimEnd()}\n`);
       show(`The project format is the GreenLight Dash Video Editor's. Read:
   ${path.join(PKG, 'skill', 'SKILL.md')}            how to work, and the essentials
   ${refs}/            one file per topic: ${existsSync(refs) ? readdirSync(refs).map((f) => f.replace('.md', '')).join(', ') : '(missing)'}

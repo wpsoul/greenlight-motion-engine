@@ -1,6 +1,8 @@
 > **GreenLight Motion Engine:** this is the GreenLight Dash Video Editor's project format, which the engine reads as is.
-> Ignore the `/api/...` routes and the app UI described here: in the engine you edit `project.json` and run
-> `npx greenlight-motion build`. MotionFast templates (`mediaType: "motion"`) stay in GreenLight Dash.
+> Ignore the `/api/...` routes and the app UI described here: in the engine you edit `project.json` (or `apply`) and run
+> `npx greenlight-motion build`; what `GET /api/video-editor/capabilities` returns there is `npx greenlight-motion schema <topic>`
+> here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
+> stay in GreenLight Dash.
 
 # GreenLight Dash — Motion paths, text on path and motion follow
 
@@ -153,7 +155,7 @@ points, and Follow Path and Text on Path both ride the snapshot at the current f
 
 ### Motion-track follow (`motionTracks` + `motionFollow`)
 
-A video layer the user has motion-tracked in the editor carries the result on the item as `motionTracks: []` — each track `{ id, name, mode, refTime, region, sourceFps, sourceAspect, segments, samples }`, where `samples` rows are `[tSourceSeconds, cx, cy, scale, rotDeg, confidence]` in the clip's **source** seconds, normalised to the source frame (so a track survives trims, splits and speed changes). **The editor's own analysis has no endpoint** — it runs on decoded frames inside the app. Treat a track the USER made as read-only: preserve it verbatim when copying items, and never hand-edit its samples. An agent can, however, compute tracking data itself (OpenCV in Python) and write a NEW track into the project — the sample layout, the coordinate spaces and a worked recipe are in [tracking-data.md](tracking-data.md).
+A video layer the user has motion-tracked in the editor carries the result on the item as `motionTracks: []` — each track `{ id, name, mode, refTime, region, sourceFps, sourceAspect, segments, samples }`, where `samples` rows are `[tSourceSeconds, cx, cy, scale, rotDeg, confidence]` in the clip's **source** seconds, normalised to the source frame (so a track survives trims, splits and speed changes). **The editor's own analysis has no endpoint** — it runs on decoded frames inside the app. Treat a track the USER made as read-only: preserve it verbatim when copying items, and never hand-edit its samples. An agent can, however, compute tracking data itself (OpenCV in Python) and write a NEW track into the project — the sample layout, the coordinate spaces and a worked recipe are in tracking-data.md (GreenLight Dash only).
 
 Tracks arrive from either of the editor's two analyses, and both land in the same array with the same shape: **Motion Tracking** (the user drew a box around one detail) and **Camera Tracking** (the whole frame is solved, the user picks tracking points off the result, and each null they create writes one track here). A camera-tracked null is an ordinary shape layer — a 20 px `ellipse` at `opacity: 0` — whose `motionFollow` pins it to its track, so nothing about following, rendering or copying is special-cased for it. There is nothing to distinguish the two kinds after the fact, and nothing that should be.
 

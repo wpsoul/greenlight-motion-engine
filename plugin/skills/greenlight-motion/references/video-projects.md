@@ -1,6 +1,8 @@
 > **GreenLight Motion Engine:** this is the GreenLight Dash Video Editor's project format, which the engine reads as is.
-> Ignore the `/api/...` routes and the app UI described here: in the engine you edit `project.json` and run
-> `npx greenlight-motion build`. MotionFast templates (`mediaType: "motion"`) stay in GreenLight Dash.
+> Ignore the `/api/...` routes and the app UI described here: in the engine you edit `project.json` (or `apply`) and run
+> `npx greenlight-motion build`; what `GET /api/video-editor/capabilities` returns there is `npx greenlight-motion schema <topic>`
+> here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
+> stay in GreenLight Dash.
 
 # GreenLight Dash — Video projects and timeline basics
 
@@ -10,8 +12,8 @@
 
 | Task | Reference |
 | --- | --- |
-| Full export, render jobs, still frames, AI Fill | [video-rendering.md](video-rendering.md) |
-| AI Reframe / Beats / Sound Design, saved analysis, speed curves and smoothing | [video-analysis.md](video-analysis.md) |
+| Full export, render jobs, still frames, AI Fill | video-rendering.md (GreenLight Dash only) |
+| AI Reframe / Beats / Sound Design, saved analysis, speed curves and smoothing | video-analysis.md (GreenLight Dash only) |
 | Keyframe tracks, easing, custom expressions | [video-keyframes.md](video-keyframes.md) |
 | Object motion paths, point reduction, text on path, motion follow | [video-paths.md](video-paths.md) |
 | Cross transitions, layer entrances/exits, Custom lanes | [video-transitions.md](video-transitions.md) |
@@ -19,27 +21,27 @@
 | Background fills and GLSL shaders | [video-backgrounds.md](video-backgrounds.md) |
 | Shape paths, strokes and vector provenance | [video-shapes.md](video-shapes.md) |
 | Grid Builder layouts | [video-grid.md](video-grid.md) |
-| Using MotionFast templates and device mockup clips | [video-motion.md](video-motion.md) |
-| HTML pages as timeline layers (html clips) and their bakes | [video-html-clips.md](video-html-clips.md) |
+| Using MotionFast templates and device mockup clips | video-motion.md (GreenLight Dash only) |
+| HTML pages as timeline layers (html clips) and their bakes | video-html-clips.md (GreenLight Dash only) |
 | Overlay Effects and Layer Effects, including Running Glow and Depth | [video-effects.md](video-effects.md) |
 | 3D models, Scene Rig, lighting and shadow plates | [video-3d.md](video-3d.md) |
 | Camera layer, Camera Rig, camera paths and presets | [video-camera.md](video-camera.md) |
 | Particles, packing, proximity, fluid and smoke | [video-particles.md](video-particles.md) |
-| Writing motion tracks, roto masks or solved cameras | [tracking-data.md](tracking-data.md) |
-| You are making one version of a project for Variants (your copy, the scope, `ready`) | [video-variants.md](video-variants.md) |
-| AI Viral Edits (kinetic words around a layer's subject) and sequences with an Essential panel (`clip.essential`) | the `viral-edits` workflow on the `greenlight` MCP server ([SKILL.md](../SKILL.md#ai-workflows-the-greenlight-mcp-server)); `essential` below |
+| Writing motion tracks, roto masks or solved cameras | tracking-data.md (GreenLight Dash only) |
+| You are making one version of a project for Variants (your copy, the scope, `ready`) | video-variants.md (GreenLight Dash only) |
+| AI Viral Edits (kinetic words around a layer's subject) and sequences with an Essential panel (`clip.essential`) | the `viral-edits` workflow on the `greenlight` MCP server (SKILL.md (GreenLight Dash only)); `essential` below |
 
 In this file: Editing and verification · Text animation pace · Video Projects (list, get, card, create, update, collaborative boards, refresh revision, activate, delete, build from clips) · Editor `data` shape · Sequence clips · Video presets (and project export / import bundles, GreenLight Motion pages) · Interface scenes.
 
-Use `GET /api/video-editor/capabilities` for the installed build's effect and transition ids, fields, ranges and render support. Read the relevant subtree instead of copying a catalog into the prompt. For custom MotionFast authoring, use [the authoring skill](../../motionfast-templates/SKILL.md).
+Use `GET /api/video-editor/capabilities` for the installed build's effect and transition ids, fields, ranges and render support. Read the relevant subtree instead of copying a catalog into the prompt. For custom MotionFast authoring, use the authoring skill (GreenLight Dash only).
 
 ## Editing and verification
 
 1. GET the project and retain its top-level `version` separately from `data.version` (the editor schema version).
 2. Modify only the requested fields, preserving unrelated clips, channels, items, assets and metadata. Keep every simultaneously visible layer on its own channel.
 3. PUT the full updated `data` with `expected_version` from that GET. Resolve a 409 by fetching and reapplying the intended edit; never force a stale snapshot through.
-4. GET again to verify the saved structure. For visible changes, use a composited still or a short full render from [video-rendering.md](video-rendering.md) to check the result: a successful save alone does not prove an effect or track renders.
-5. Keep all media used by the project, including nested sequences and effect assets, even when it has no canvas card. Follow [media cleanup](media.md#clean-up-helper--intermediate-media-do-this-at-the-end-of-a-task).
+4. GET again to verify the saved structure. For visible changes, use a composited still or a short full render from video-rendering.md (GreenLight Dash only) to check the result: a successful save alone does not prove an effect or track renders.
+5. Keep all media used by the project, including nested sequences and effect assets, even when it has no canvas card. Follow media cleanup (GreenLight Dash only).
 
 ## Text animation pace
 
@@ -83,7 +85,7 @@ GET /api/moodboards/{board_id}/video-projects/{project_id}/card
 → { "id", "board_id", "board_name", "name", "version", "updated_at", "summary", "preview" }   404 once removed
 ```
 
-The project without its payload, plus its board's name: what a `video-project` canvas card shows ([elements.md](elements.md#video-editor-project-cards-a-video-project-on-any-board)). Use it to check that a board/project pair exists before making a card.
+The project without its payload, plus its board's name: what a `video-project` canvas card shows (elements.md (GreenLight Dash only)). Use it to check that a board/project pair exists before making a card.
 
 ### Create video project
 
@@ -205,7 +207,7 @@ Use this to assemble the workflow's per-step videos into a project in one call w
 
 ### Editor `data` shape (for `POST/PUT video-projects`)
 
-Video-editor `mediaType` values include `video`, `image`, `audio`, `text`, `shape`, `adjustment`, `sequence` (compound clip — see [Sequence clips](#sequence-clips-mediatype-sequence)), `grid` (Grid Builder — a container that lays its members out by a rule; see [video-grid.md](video-grid.md)), `motion` (native MotionFast animated template — see [video-motion.md](video-motion.md)), `model3d` (a live 3D model rendered in its own pass — see [video-3d.md](video-3d.md); its clip `url` must be a `model-preset:` or `model-primitive:` sentinel or a real asset URL, **never empty**), `particles` (a seeded particle simulation in a Solver Box, filmed by the project camera — see [video-particles.md](video-particles.md); the whole system lives on the ITEM as `particleSystem`), `camera` (virtual camera over the whole stack — see [video-camera.md](video-camera.md)), and `null` (a transform with no picture, never drawn in any render: the parent other layers hang off — see [Layer parenting and null layers](video-keyframes.md#layer-parenting-and-null-layers-keyframeparenting); clip `url` is `""`; item `nullColor` (default `#ff3b30`) and `nullSize` (marker diameter in composition px, 2–2000, default 24) style only the editor's preview marker). The fast `/render` only accepts `video` and `image`; **`/render-onserver`** (full headless render) bakes in the richer timeline types — `text`, `shape`, `sequence`, `audio`, `motion`, `model3d`, `particles`, keyframes, filters — exactly like the desktop editor. A **device mockup** is not its own `mediaType` — it is a rendered `video` clip that optionally carries a `mockupConfig` for re-editing (see [video-motion.md](video-motion.md)).
+Video-editor `mediaType` values include `video`, `image`, `audio`, `text`, `shape`, `adjustment`, `sequence` (compound clip — see [Sequence clips](#sequence-clips-mediatype-sequence)), `grid` (Grid Builder — a container that lays its members out by a rule; see [video-grid.md](video-grid.md)), `motion` (native MotionFast animated template — see video-motion.md (GreenLight Dash only)), `model3d` (a live 3D model rendered in its own pass — see [video-3d.md](video-3d.md); its clip `url` must be a `model-preset:` or `model-primitive:` sentinel or a real asset URL, **never empty**), `particles` (a seeded particle simulation in a Solver Box, filmed by the project camera — see [video-particles.md](video-particles.md); the whole system lives on the ITEM as `particleSystem`), `camera` (virtual camera over the whole stack — see [video-camera.md](video-camera.md)), and `null` (a transform with no picture, never drawn in any render: the parent other layers hang off — see [Layer parenting and null layers](video-keyframes.md#layer-parenting-and-null-layers-keyframeparenting); clip `url` is `""`; item `nullColor` (default `#ff3b30`) and `nullSize` (marker diameter in composition px, 2–2000, default 24) style only the editor's preview marker). The fast `/render` only accepts `video` and `image`; **`/render-onserver`** (full headless render) bakes in the richer timeline types — `text`, `shape`, `sequence`, `audio`, `motion`, `model3d`, `particles`, keyframes, filters — exactly like the desktop editor. A **device mockup** is not its own `mediaType` — it is a rendered `video` clip that optionally carries a `mockupConfig` for re-editing (see video-motion.md (GreenLight Dash only)).
 
 If you need to build the editor state by hand instead of using `/from-clips`, the canonical schema is the `sanitizeClip` / `sanitizeTimelineItem` / `buildPersistedState` functions in `frontend/src/components/videoEditor/VideoEditor.jsx`. Minimum viable shape:
 
@@ -271,7 +273,7 @@ the example until someone replaces it.
 
 **Project background.** Set `"background": { …backgroundConfig… }` at the `data` root to fill the stage behind every channel — a solid colour, gradient, GLSL shader, pattern, or image. It takes the same `backgroundConfig` object as shape backgrounds; the full schema, the gradient/shader preset ids, and the shader authoring rules live in the **Backgrounds (project & shape)** section below. Omit it (or use `"type": "transparent"`) for a transparent stage. Baked by **`/render-onserver`**; the fast `/render` ignores it. A bare colour string (`"background": "#3366cc"`) is coerced to `{"type": "solid", "solidColor": …}`; prefer the explicit object.
 
-**One live item per channel.** Treat every channel as one timeline track, not as a container of simultaneously composited layers. At any timeline time, a channel may have at most one active item. If two items' visible windows overlap, only one is guaranteed to render (the later-starting item commonly wins) and the save API does not reject the project. For an unsnapped item, its ordinary visible window is `[freeStart, freeStart + (trimEnd - trimStart))`; validate these windows before `PUT`. Put every simultaneously visible image, shape, text block, motion layer, or other visual on a separate channel. This rule also applies inside sequence timelines. Reuse one channel for consecutive, non-overlapping captions or shots only.
+**One live item per channel.** Treat every channel as one timeline track, not as a container of simultaneously composited layers. At any timeline time, a channel may have at most one active item. If two items' visible windows overlap, only one is guaranteed to render (the later-starting item commonly wins) and the save API does not reject the project. For an unsnapped item, its ordinary visible window is `freeStart, freeStart + (trimEnd - trimStart))`; validate these windows before `PUT`. Put every simultaneously visible image, shape, text block, motion layer, or other visual on a separate channel. This rule also applies inside sequence timelines. Reuse one channel for consecutive, non-overlapping captions or shots only.
 
 **Keep unsnapped items sorted by `freeStart`.** On an `unsnapped` channel the editor treats the item BEFORE a clip in the `items` array as "the clip before it" — cross transitions, the seam button and the layout's overlap all read array neighbours, not time neighbours. The editor re-sorts on every insert, move and paste; an API write does not. After adding or moving items, sort each unsnapped channel's `items` by `freeStart` before `PUT`. An out-of-order array looks fine until the user adds a cross transition: the clip is then snapped against the wrong neighbour and jumps elsewhere on the timeline (e.g. past the end), so it appears to vanish.
 
@@ -299,7 +301,7 @@ Nothing else triggers a frame by itself: text animators, MotionFast `motion` lay
 
 The angle is how much of each frame interval the exposure covers, so wider = more blur *and* proportionally slower. The field is only written when blur is on, so projects that never enabled it round-trip unchanged. Table lives in `frontend/src/components/videoEditor/motionBlurLevels.js`. Honored by **`/render-onserver`**, **`/render-onserver-job`** and the desktop Download/Render — **ignored by the fast `/render`** and never applied in the editor preview (render-only by design). Worth enabling for projects with fast zooms/pans that would otherwise strobe. Renders get proportionally slower on accumulated frames (~16× each at the default), and a speed-ramped clip, a particle system or a live html clip makes every frame it covers an accumulated one.
 
-**Renderer.** Every project renders on the engine the app is set to — one app-wide setting, not a project field. Read it with `GET /api/video-editor/engine` (`engine`: `"webgl"`, the default, or `"webgpu"`). Preview and the desktop Download use it; the headless renders (`/render-onserver`, `/render-onserver-job`, `/render-still`) take it as the request's `"renderer"` field, which defaults to `"webgl"`, so pass the engine there to render what the editor shows. It matters wherever shading is written by hand rather than picked from a list: an uploaded Advanced Transition package is authored for one engine and is refused on the other, and a **custom** adjustment/layer effect (`"id": "custom"`) cannot run on WebGPU at all — its body is compiled at runtime, so the effect is skipped with a reason. Building a new template or transition: [custom-builds.md](custom-builds.md).
+**Renderer.** Every project renders on the engine the app is set to — one app-wide setting, not a project field. Read it with `GET /api/video-editor/engine` (`engine`: `"webgl"`, the default, or `"webgpu"`). Preview and the desktop Download use it; the headless renders (`/render-onserver`, `/render-onserver-job`, `/render-still`) take it as the request's `"renderer"` field, which defaults to `"webgl"`, so pass the engine there to render what the editor shows. It matters wherever shading is written by hand rather than picked from a list: an uploaded Advanced Transition package is authored for one engine and is refused on the other, and a **custom** adjustment/layer effect (`"id": "custom"`) cannot run on WebGPU at all — its body is compiled at runtime, so the effect is skipped with a reason. Building a new template or transition: [custom-builds.md (GreenLight Dash only).
 
 **Sound & audio fades.** Clips with audio (`video` and `audio` media types) honor per-item `volume` (0–100 %, default 100; 0 also writes `muted: true`) and an intro/outro fade: `audioFadeIn` / `audioFadeOut` (seconds of the item's **placed** span; 0/absent = off; only stored when > 0) plus one `audioFadeCurve` for both ends (`"linear" | "smooth" | "exponential"`; only stored when it differs from the `"smooth"` default). The envelope multiplies onto `volume`; on a clip shorter than its two fades they overlap and multiply into a bump that never reaches full level. Fades span the item's placed bounds, so a partial (`rangeStart`/`rangeEnd`) render keeps the same shape. Applied identically in preview and the WebCodecs export paths (desktop Download and `/render-onserver`); the fast `/render` ignores dedicated audio clips entirely.
 
@@ -342,7 +344,7 @@ Rules:
     - To change such an edit, rebuild it with the `viral-edits` workflow (its build step rebuilds in place). Edit its inner layers by hand only for a one-word change the user asked for.
   - **A HyperFrames scene** (made by Convert to scenes): `"essential": { "kind": "hyperframes-scene", "v": 1, "recipe": { "url", "sceneId", "label", "clipValues", "compositionVariables", "sceneVariables", "sceneDefaults", "values", "sceneValues" } }`.
     - Its Essential panel sets per-scene values. A change rewrites only the `gl-vars` of the html pages inside the sequence; the layers, keys and camera stay.
-    - To change the values, call `…/html-clips/{item_id}/hyperframes-scene-values` ([hyperframes.md](hyperframes.md#per-scene-values-after-convert-to-scenes)). Do not edit the pages' urls by hand.
+    - To change the values, call `…/html-clips/{item_id}/hyperframes-scene-values` (hyperframes.md (GreenLight Dash only)). Do not edit the pages' urls by hand.
   - When you write the project, keep `essential` exactly as it is. Without it, the edit can no longer be rebuilt.
   - The editor drops an `essential` sequence clip from `clips` once no item uses it.
 - **Rendering:** `/render-onserver` bakes sequences in fully; the fast `/render` rejects them with 400. Adjustment layers inside a sequence composite (grade + effects chain + layer mask alike). Known nested limits: the project's global Depth of Field doesn't composite inside a sequence (a sequence's own camera clip's depth of field does: AI Viral Edits use it), and inner audio only exports when the sequence item plays at flat 1× speed.
@@ -434,6 +436,6 @@ GET  /api/moodboards/{board_id}/video-projects/{project_id}/glvideo?models=<JSON
 
 The editor's **Presets** tab also lists the **Interface scenes** library (called GL Motion before 14.0.25): 172 ready-made animated scenes (controls, cards, charts, checkout, coupons, countdowns, galleries…) in one style, all transparent (they sit over the video). Search and category chips filter them; Light / Dark and an accent recolour them. A card's **HTML clip** button inserts the scene as one standalone transparent HTML page, saved into the board's media (`ui-kit/<id>.html`) and placed as an HTML clip (`mediaType: "html"`) at the scene's own length.
 
-For a **whole film** — a story and its shots with the user's copy and pictures, a scenario card on the board, a voice-over, sound design and a render; with a GLEA delivery the film finished in a Video Editor project (a tutorial's interface as HTML scene clips, other films built with the editor's own layers) and rendered from it — use the `motion-film` workflow on the `greenlight` MCP server ([SKILL.md](../SKILL.md#ai-workflows-the-greenlight-mcp-server)) instead of inserting scenes one by one.
+For a **whole film** — a story and its shots with the user's copy and pictures, a scenario card on the board, a voice-over, sound design and a render; with a GLEA delivery the film finished in a Video Editor project (a tutorial's interface as HTML scene clips, other films built with the editor's own layers) and rendered from it — use the `motion-film` workflow on the `greenlight` MCP server (SKILL.md (GreenLight Dash only)) instead of inserting scenes one by one.
 
 The library is the app's own, at `$GL_MOTION_KIT_DIR` in GLAI and GLEA terminals (its engine and scenes; `registry.json` beside them lists every scene with its editable texts and photo slots). To make one scene's page without the UI: `node -e "const fs=require('fs'),path=require('path'),vm=require('vm');const D=process.env.GL_MOTION_KIT_DIR,src=(f)=>fs.readFileSync(path.join(D,f),'utf8');globalThis.window=globalThis;const run=(f)=>{if(window.UIK)UIK.__loadingFile=f;vm.runInThisContext(src(f),{filename:f});};['easings.js','engine.js','catalog.js'].forEach(run);UIK.FILES.forEach(run);run('html-export.js');const el=UIK.elements.find((e)=>e.id==='odometer');console.log(UIK.toHTML(el,{theme:'light',sources:{easings:src('easings.js'),engine:src('engine.js'),files:[src(el.file)]}}));" > odometer.html`, then upload it and place it as an HTML clip.

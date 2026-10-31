@@ -18,7 +18,7 @@ You never write UI or animation code. If something is not in the format, it is n
 ## Setup (once per machine)
 
 ```
-npx greenlight-motion@0.2.1 doctor
+npx greenlight-motion@0.2.2 doctor
 ```
 
 It checks Node 18+, Chrome or Edge, WebGPU and H.264 encoding, and prints a fix for anything missing. Do not install
@@ -39,7 +39,7 @@ animation presets (the same converter the GreenLight Motion connector uses in Cl
 keyframes rarely look as good. The format, the design rules and the catalogues: `skill/references/scene-script.md`.
 
 ```
-npx greenlight-motion@0.2.1 script <folder> --from scenes.json   # or write <folder>/script.json, then: script <folder>
+npx greenlight-motion@0.2.2 script <folder> --from scenes.json   # or write <folder>/script.json, then: script <folder>
 ```
 
 Then `check` and `stills` (below), fix the SCRIPT and run `script` again — it rewrites `project.json`. A scene's
@@ -70,16 +70,26 @@ Build it with `apply` on the project `script` wrote (the item ids are the script
 Keep the build repeatable: put your edits in a file you `apply` again after each `script` run (`script --force`, then
 `apply`), so the script and the hand-made layers never drift apart.
 
+What the engine does there, so you don't learn it from a broken frame:
+- **A shader on a shape** draws in that shape's own buffer: `iResolution` is the shape's size (times `shaderScale`), not
+  the frame's, and `iTime` counts from the layer's own start, so layers whose shaders must stay in step need the same
+  start. Its settings are not keyframe tracks: change it over time inside the code, from `iTime`.
+- **A track matte's source** is hidden only while a layer that uses it is on screen; outside that time it draws as an
+  ordinary layer. Give it the same start and end as the layer it cuts (`check` reports one that shows).
+- **Fonts**: a text layer's family loads from Google Fonts while the page is online, unless a font file in `assets/`
+  carries that name (`assets/Manrope.ttf` is the family "Manrope"; .ttf, .otf, .woff, .woff2): that file is used,
+  offline. `trace` reads layers inside a script's scenes too (`--items` takes their ids).
+
 ## Workflow
 
-1. `npx greenlight-motion@0.2.1 init <folder>` — starts from a working example (title, subtitle, accent line, four
+1. `npx greenlight-motion@0.2.2 init <folder>` — starts from a working example (title, subtitle, accent line, four
    options). `--from file.json` starts from a project you have (for example one exported from GreenLight Dash).
 2. Edit `<folder>/project.json` — for changes to an EXISTING project prefer `apply` (below): it checks every edit and
    applies all or nothing. Put pictures, video, sound and fonts in `<folder>/assets/` and refer to them as
    `"asset:<file>"` (e.g. `"url": "asset:product.png"`).
-3. `npx greenlight-motion@0.2.1 check <folder>` — fix everything it lists (missing files, template mistakes, blank
+3. `npx greenlight-motion@0.2.2 check <folder>` — fix everything it lists (missing files, template mistakes, blank
    frames, page errors). `--json` for machine output.
-4. `npx greenlight-motion@0.2.1 stills <folder>` — renders frames and **a labelled contact sheet**. Open and look at
+4. `npx greenlight-motion@0.2.2 stills <folder>` — renders frames and **a labelled contact sheet**. Open and look at
    it before you go on: layout, readability, timing. Fix and repeat. `--at 0.5,1.2,3` for exact times.
 5. Hand it over: tell the user to open `<folder>/index.html` (Chrome or Edge), or `pack` it into one file, or
    `render` the MP4 yourself (`--fps 60 --motion-blur` for fast motion).
@@ -144,7 +154,7 @@ editor's own normalizer), so write only what you mean.
 Full references (generated from the editor's own docs; ignore the `/api/` routes they mention):
 `skill/references/` — video-design, scene-script, video-projects, video-text, video-text-kinetic, video-text-presets, video-shapes, video-keyframes,
 video-camera, video-3d, video-effects, video-transitions, video-particles, video-paths, video-backgrounds, video-grid.
-Machine-readable lists: `npx greenlight-motion@0.2.1 schema effects | transitions | easings | paths | expressions`.
+Machine-readable lists: `npx greenlight-motion@0.2.2 schema effects | transitions | easings | paths | expressions`.
 
 ## Template
 
@@ -191,7 +201,7 @@ an absolute moment; `align` `sync` (default) / `start` / `end`; `offset` seconds
 
 The library is 77 hand-picked sounds in categories (whooshes and swooshes, transitions, clicks, pop-ups and
 notifications, data blips, typing and writing, foley, bubbles, impacts and bass drops, camera, gears, voice clips).
-`npx greenlight-motion@0.2.1 schema sounds` lists every one with its `category`, `use` (what it is for), `duration`
+`npx greenlight-motion@0.2.2 schema sounds` lists every one with its `category`, `use` (what it is for), `duration`
 and `sync`. Pick by `category` and `use`, then by name.
 
 - **Where the files come from:** the GreenLight sound CDN. `build` downloads each sound a cue uses into
@@ -207,7 +217,7 @@ The page has **Notes**: the user marks what should change right on the frame (a 
 and writes a note for each mark. Every note carries the moment (seconds and frame), the mark in composition pixels
 and the layers under it (item ids in project.json), so you change exactly that and nothing else.
 
-- **They review on this computer:** run `npx greenlight-motion@0.2.1 review <folder>` and give them the URL it prints
+- **They review on this computer:** run `npx greenlight-motion@0.2.2 review <folder>` and give them the URL it prints
   (it keeps running; `--open` opens their browser, only when they ask). Their notes land in `<folder>/review/`: read
   `review/NOTES.md`, look at the `at-<t>s.png` pictures (the marks are numbered), make the changes (`apply`), `build`
   again and tell them to reload the page.
@@ -236,11 +246,11 @@ that fails (`plugin`); look at `stills` for the look. A package that carries its
 
 The same project opens in GreenLight Dash (the desktop editor this engine comes from) for full editing: the page's
 edit note offers **Open in GreenLight Dash** (it imports the folder as a new project on the open board; a page with
-changes saves a `.glvideo`). `npx greenlight-motion@0.2.1 pack <folder> --glvideo` writes that file yourself: ONE
+changes saves a `.glvideo`). `npx greenlight-motion@0.2.2 pack <folder> --glvideo` writes that file yourself: ONE
 `.glvideo` (the project + its files) that opens in GreenLight Dash on a double-click, or dropped on its board. Hand it
 over when the user wants to keep editing in the app. A
 GreenLight Dash project comes the other way through the app's **Export for agents** — a ready folder like the one
-`init` makes, with the options the author ticked. `npx greenlight-motion@0.2.1 init <folder> --from <its project.json>`
+`init` makes, with the options the author ticked. `npx greenlight-motion@0.2.2 init <folder> --from <its project.json>`
 starts from one too. Never tell the user they must install it: the page plays, changes options and renders on its own.
 
 ## Files

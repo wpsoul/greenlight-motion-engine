@@ -22,6 +22,7 @@ import { CAMERA_KF_LABELS, cameraMoveHash, perspectiveDistance } from '../compon
 import { ZOOM_MIN, ZOOM_MAX, ZOOM_RANGE_MIN_MS, sanitizeZoomRanges } from '../components/videoEditor/smartZoomCamera.js';
 import { PRESETS as ZOOM_FEELS } from '../components/videoEditor/smartZoom.js';
 import { svgDataUrl } from './mediaProbe.js';
+import GOOGLE_FONT_CATALOG from '../render-shims/googleFontCatalog.js';
 
 export const FORMATS = { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080], '4:5': [1080, 1350] };
 export const CROSS_TRANSITIONS = ['None', 'Cross Fade', 'Push', 'Parallax', 'Wipe', 'Zoom In', 'Zoom Out', 'Advanced Zoom', 'Advanced Movement',
@@ -78,9 +79,12 @@ const contrast = (a, b) => {
   const la = luminance(a), lb = luminance(b);
   return la == null || lb == null ? 21 : (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 };
-// the transitions that fill the frame edge a travelling scene leaves behind with a MIRRORED copy of it (right for
-// footage, but on type it shows the words backwards): a script's scenes leave that edge empty
-const EDGE_FILLED = new Set(['Advanced Zoom', 'Advanced Movement']);
+// Advanced Movement fills the frame edge a scene leaves behind as it travels with a MIRRORED copy of it (right for
+// footage, but on type it shows the words backwards): a script's scenes leave that edge empty. Advanced Zoom keeps its
+// mirror: a zooming scene left empty shows its own shrunken frame as a rectangle.
+const EDGE_FILLED = new Set(['Advanced Movement']);
+// every Google Fonts family (the editor's own catalogue): a font the page can load by name while online
+const GOOGLE_FAMILIES = new Set(GOOGLE_FONT_CATALOG.split('\n').map((l) => l.split('|')[0].trim().toLowerCase()).filter(Boolean));
 const KF_IN = new Map(kfpVariants(KEYFRAME_PRESETS, 'in').map((p) => [p.id, p]));
 const KF_OUT = new Map(kfpVariants(KEYFRAME_PRESETS, 'out').map((p) => [p.id, p]));
 const ROLES = { headline: [0.11, 800], subhead: [0.05, 500], body: [0.036, 400], label: [0.028, 600] };
@@ -133,7 +137,12 @@ export function compileScript(script, caps, files = new Map()) {
   const style = S.style || {};
   const colors = { text: '#f4f4f2', accent: '#33EFAB', muted: '#9aa3a0', ...(style.colors || {}) };
   const font = typeof style.font === 'string' && style.font.trim() ? `${style.font}, ${FONT}` : FONT;
-  if (style.font) warnings.push(`font "${style.font}" shows only where it is installed (the viewer's computer); the system font stands in elsewhere`);
+  if (style.font) {
+    const family = String(style.font).split(',')[0].trim().replace(/^['"]|['"]$/g, '');
+    warnings.push(GOOGLE_FAMILIES.has(family.toLowerCase())
+      ? `font "${family}": a Google Fonts family, so the page loads it from fonts.googleapis.com while it is online. For a video that needs nothing online, put its file in assets/ named "${family}.ttf" (or .otf / .woff / .woff2): a font file there is used under its file name`
+      : `font "${family}" is not a Google Fonts family: put its file in assets/ named "${family}.ttf" (or .otf / .woff / .woff2), a font file there is used under its file name; without it the system font stands in`);
+  }
   const paint = (c, fallback) => (c && colors[c] ? colors[c] : (typeof c === 'string' && c.trim() ? c : fallback));
   const effectsById = new Map([...(caps?.effects?.overlay || []).map((e) => [e.id, 'overlay']), ...(caps?.effects?.layer || []).map((e) => [e.id, 'layer'])]);
   const sounds = new Set(Object.keys(caps?.sounds?.library || {}));
@@ -400,7 +409,11 @@ export function compileScript(script, caps, files = new Map()) {
         const role = ROLES[el?.role] ? el.role : (ei === 0 ? 'headline' : 'subhead');
         const size = clamp(num(el?.size, Math.round(ROLES[role][0] * Math.min(W, H) * (W > H ? 1 : 1.25))), 8, 600);
         const weight = clamp(num(el?.weight, ROLES[role][1]), 100, 900);
-        const width = clamp(num(el?.width, Math.min(W * 0.86, Math.max(...t.split('\n').map((l) => l.length)) * size * 0.62 + size)), 40, W);
+        // a text box is centred on its `at`: without a width it is as wide as the words need, but never past the frame's
+        // edge (5 % margin), so a line placed off centre wraps instead of running off
+        const room = Math.max(size * 2, W - 2 * (Math.abs(x) + W * 0.05));
+        const width = clamp(el?.width != null ? num(el.width, room) : Math.min(W * 0.86, room, Math.max(...t.split('\n').map((l) => l.length)) * size * 0.62 + size), 40, W);
+        if (el?.width != null && Math.abs(x) + width / 2 > W / 2 + 1) warnings.push(`${ew}: its text box (${Math.round(width)} px wide, centred on x ${x}) runs past the frame's edge — a text box is centred on its "at"; with "align": "left" keep at.x − width / 2 inside the frame`);
         const color = paint(el?.color || (role === 'headline' ? 'text' : role === 'label' ? 'accent' : 'muted'), colors.text);
         item = add('text', id, start, end, { textContent: t, textFontFamily: font, textFontSize: size, textFontWeight: weight, textColor: color,
           textAlign: el?.align || 'center', textWidthUnit: 'px', textWidthPx: Math.round(width), textLineHeight: num(el?.lineHeight, 1.15),
@@ -453,6 +466,24 @@ export function compileScript(script, caps, files = new Map()) {
           ...(el?.border ? { borderWidth: num(el.border.width, 2), borderColor: paint(el.border.color, colors.text), borderStyle: 'solid' } : {}),
           ...(el?.shadow ? { shadows: [{ x: 0, y: 12, blur: 40, spread: 0, color: 'rgba(0,0,0,0.35)', inset: false }] } : {}), ...pos });
         if (!el?.color || el.color === 'accent') accentTargets.push({ itemId: id, path: 'shapeFillColor' });
+      } else if (type === 'ring') {
+        // a circle drawn as a stroke (a timer, a status ring, a focus ring): one open path round from the top, clockwise,
+        // drawn on like a line; `sweep` < 360 leaves an arc, `drain` empties it again by the element's end
+        const d = clamp(num(el?.w, 200), 8, W * 4);
+        const sweep = clamp(num(el?.sweep, 360), 1, 360);
+        const q = 0.2761;   // a quarter arc's handle in the ±0.5 box (the Circle preset)
+        const pts = [[0, -0.5, -q, 0, q, 0], [0.5, 0, 0, -q, 0, q], [0, 0.5, q, 0, -q, 0], [-0.5, 0, 0, q, 0, -q], [0, -0.5, -q, 0, 0, 0]]
+          .map(([px, py, ix, iy, ox, oy], i) => ({ x: px, y: py, hIn: i ? { x: ix, y: iy } : { x: 0, y: 0 }, hOut: { x: ox, y: oy }, manual: true }));
+        const full = r3((sweep / 360) * 100);
+        item = add('shape', id, start, end, { shapeType: 'line', shapeSizeUnit: 'px', shapeWidthPx: d, shapeHeightPx: d, shapeFillColor: paint(el?.color || 'accent', colors.accent),
+          shapePath: { points: pts, closed: false }, lineWidth: num(el?.width, 8), lineCap: 'round', ...(full < 100 ? { lineTrimEnd: full } : {}),
+          ...(el?.ghost ? { lineGhost: clamp(num(el.ghost, 20), 0, 100) } : {}), ...pos });
+        const kf = {};
+        const drawn = el?.draw !== false ? r3(Math.min(100, (0.9 / (end - start)) * 100)) : 0;
+        if (drawn) kf.lineTrimEnd = [{ position: 0, value: '0', easing: 'AE Out' }, { position: drawn, value: String(full), easing: 'Linear' }];
+        if (el?.drain) kf.lineTrimStart = [{ position: drawn, value: '0', easing: 'Linear' }, { position: 100, value: String(full), easing: 'Linear' }];
+        if (Object.keys(kf).length) item.propertyKeyframes = kf;
+        if (!el?.color || el.color === 'accent') accentTargets.push({ itemId: id, path: 'shapeFillColor' });
       } else if (type === 'line') {
         const [x2, y2] = Array.isArray(el?.to) ? [num(el.to[0], 0), num(el.to[1], 0)] : [x + 300, y];
         const cx = (x + x2) / 2; const cy = (y + y2) / 2; const L = Math.max(4, Math.abs(x2 - x), Math.abs(y2 - y));
@@ -466,7 +497,7 @@ export function compileScript(script, caps, files = new Map()) {
         item = media(el, ew, id, start, end, pos);
         if (!item) return;
       } else {
-        problems.push(`${ew}: type must be text, rect, pill, circle, line, image or video`);
+        problems.push(`${ew}: type must be text, rect, pill, circle, ring, line, image or video`);
         return;
       }
       if (el?.opacity != null) item.opacity = r3(clamp(num(el.opacity, 1), 0, 1) * 100);   // the item's opacity is 0–100 (its keyframe track 0–1)
@@ -524,7 +555,26 @@ export function compileScript(script, caps, files = new Map()) {
       else if (tr !== 'None') {
         const prev = num(scenes[si - 1]?.duration, 3);
         sceneItem.transition = tr;
-        if (EDGE_FILLED.has(tr)) sceneItem.transitionOptions = { edgeMode: 'none' };
+        const tc = Object.values(caps?.transitions?.cross || {}).flat().find((t) => t?.value === tr) || null;
+        const opts = EDGE_FILLED.has(tr) ? { edgeMode: 'none' } : {};
+        // the transition's own vivid colours (Circular Wipe's beam, Gradient Glow Stack's glows, Gradient Map's ramp) take
+        // the video's accent and follow the Accent option, as a text preset's do; white flashes and rulers stay
+        const own = [];
+        for (const f of tc?.optionFields || []) {
+          if (f.type === 'color' && vivid(tc.optionDefaults?.[f.key])) { opts[f.key] = colors.accent; own.push(f.key); }
+        }
+        const set = sc?.transitionOptions;
+        if (set != null && (typeof set !== 'object' || Array.isArray(set))) problems.push(`${where}: transitionOptions must be an object of the transition's options`);
+        else if (set) {
+          const known = new Set((tc?.optionFields || []).map((f) => f.key).filter(Boolean));
+          for (const [k, v] of Object.entries(set)) {
+            if (tc && !known.has(k)) { warnings.push(`${where}: "${tr}" has no option "${k}"${near(k, [...known])} — it is ignored`); continue; }
+            opts[k] = v;
+            if (own.includes(k)) own.splice(own.indexOf(k), 1);
+          }
+        }
+        for (const k of own) accentTargets.push({ itemId: sceneId, path: `transitionOptions.${k}` });
+        if (Object.keys(opts).length) sceneItem.transitionOptions = opts;
         sceneItem.transitionDuration = r3(clamp(num(sc?.transitionDuration, 0.6), 0.2, Math.min(prev, D) / 2));
         total -= sceneItem.transitionDuration;
         if ((S.sound ?? 'auto') === 'auto') project.sounds.push({ sfx: soundOk('soft-swoosh', where) ? 'soft-swoosh' : 'standard-swoosh', on: project.channels[0].items.at(-1).id, at: 'end' });
