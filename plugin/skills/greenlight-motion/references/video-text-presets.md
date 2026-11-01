@@ -87,7 +87,7 @@ Type on Shape has no preferred preset: pick by the shape the text needs.
 
 ```json
 { "aid": "a9", "name": "Out",
-  "range": {"drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.04, "duration": 0.3, "curve": "Power2 In"},
+  "range": {"drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.04, "duration": 0.3, "curve": "Ease In"},
   "effects": [{"pid": "p19", "type": "opacity", "opacity": 0}] }
 ```
 
@@ -162,20 +162,20 @@ Letters type in as the word glides left under a chasing blue band and settles, t
       "range": {"basedOn": "charsNoSpace", "around": "all"},
       "effects": [{"pid": "p3", "type": "position", "x": 250, "y": 0}] },
     { "aid": "a4", "name": "Glide out",
-      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "all", "stagger": 0, "duration": 0.5, "curve": "Power2 In"},
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "all", "stagger": 0, "duration": 0.5, "curve": "Ease In"},
       "effects": [{"pid": "p4", "type": "position", "x": -150, "y": 0}, {"pid": "p5", "type": "opacity", "opacity": 0}] }
   ],
   "propertyKeyframes": {
     "txa:a1:start": [
-      { "position": 0, "value": "0", "easing": "AE In" },  // 0 s
+      { "position": 0, "value": "0", "easing": "AE In (arrive)" },  // 0 s
       { "position": 20, "value": "100", "easing": "Smooth" }  // 1 s
     ],
     "txa:a2:offset": [
-      { "position": 6, "value": "-58", "easing": "Power1 Out" },  // 0.3 s
+      { "position": 6, "value": "-58", "easing": "Sine Out" },  // 0.3 s
       { "position": 26, "value": "101", "easing": "Smooth" }  // 1.3 s
     ],
     "txa:a3:amount": [
-      { "position": 0, "value": "100", "easing": "AE In" },  // 0 s
+      { "position": 0, "value": "100", "easing": "AE In (arrive)" },  // 0 s
       { "position": 20, "value": "0", "easing": "Smooth" }  // 1 s
     ]
   }
@@ -199,16 +199,16 @@ Letters type in under a chasing blue band as the word keeps gliding through the 
       "range": {"basedOn": "charsNoSpace", "around": "all"},
       "effects": [{"pid": "p3", "type": "position", "x": 250, "y": 0}] },
     { "aid": "a4", "name": "Glide out",
-      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "all", "stagger": 0, "duration": 0.5, "curve": "Power2 In"},
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "all", "stagger": 0, "duration": 0.5, "curve": "Ease In"},
       "effects": [{"pid": "p4", "type": "position", "x": -150, "y": 0}, {"pid": "p5", "type": "opacity", "opacity": 0}] }
   ],
   "propertyKeyframes": {
     "txa:a1:start": [
-      { "position": 0, "value": "0", "easing": "AE In" },  // 0 s
+      { "position": 0, "value": "0", "easing": "AE In (arrive)" },  // 0 s
       { "position": 18.6, "value": "100", "easing": "Smooth" }  // 0.93 s
     ],
     "txa:a2:offset": [
-      { "position": 2.8, "value": "-58", "easing": "Power1 Out" },  // 0.14 s
+      { "position": 2.8, "value": "-58", "easing": "Sine Out" },  // 0.14 s
       { "position": 22.6, "value": "101", "easing": "Smooth" }  // 1.13 s
     ],
     "txa:a3:amount": [
@@ -227,13 +227,13 @@ Words spring in out of a hot green glow and overshoot into place as the line rec
 {
   "textAnimators": [
     { "aid": "a1", "name": "Recenter",
-      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "all", "stagger": 0, "duration": 1.8, "curve": "Power3 Out"},
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "all", "stagger": 0, "duration": 1.8, "curve": "Cubic Out"},
       "effects": [{"pid": "p1", "type": "position", "x": 462.96, "y": 0}] },
     { "aid": "a2", "name": "Spring in",
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.15, "duration": 1.1, "curve": "Overshoot"},
       "effects": [{"pid": "p2", "type": "position", "x": 129.63, "y": 157.41}, {"pid": "p3", "type": "scale", "scale": 78}] },
     { "aid": "a3", "name": "Focus in",
-      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "auto", "stagger": 0.15, "duration": 0.38, "curve": "Power2 Out"},
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "auto", "stagger": 0.15, "duration": 0.38, "curve": "Ease Out"},
       "effects": [{"pid": "p4", "type": "opacity", "opacity": 0}, {"pid": "p5", "type": "blur", "amount": 25.93}] },
     { "aid": "a4", "name": "Hot glow",
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "auto", "stagger": 0.15, "duration": 0.65, "curve": "Sine Smooth"},
@@ -265,16 +265,16 @@ The same typing and band, but the word glides through the whole layer and all bu
       "range": {"basedOn": "charsNoSpace", "around": "all"},
       "effects": [{"pid": "p3", "type": "position", "x": 250, "y": 0}] },
     { "aid": "a4", "name": "Glide out",
-      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "all", "stagger": 0, "duration": 0.5, "curve": "Power2 In"},
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "all", "stagger": 0, "duration": 0.5, "curve": "Ease In"},
       "effects": [{"pid": "p4", "type": "position", "x": -150, "y": 0}, {"pid": "p5", "type": "opacity", "opacity": 0}] }
   ],
   "propertyKeyframes": {
     "txa:a1:start": [
-      { "position": 0, "value": "0", "easing": "AE In" },  // 0 s
+      { "position": 0, "value": "0", "easing": "AE In (arrive)" },  // 0 s
       { "position": 18.6, "value": "100", "easing": "Smooth" }  // 0.93 s
     ],
     "txa:a2:offset": [
-      { "position": 2.8, "value": "-58", "easing": "Power1 Out" },  // 0.14 s
+      { "position": 2.8, "value": "-58", "easing": "Sine Out" },  // 0.14 s
       { "position": 22.6, "value": "101", "easing": "Smooth" }  // 1.13 s
     ],
     "txa:a3:amount": [
@@ -1039,7 +1039,7 @@ A box sits under each word while it is spoken, dark text on top. Plays: while ea
 {
   "textAnimators": [
     { "aid": "a1", "name": "Spoken box",
-      "range": {"basedOn": "words", "drive": "voice", "animate": "active", "duration": 0.08, "curve": "Power2 Out", "fadeOut": 0.08},
+      "range": {"basedOn": "words", "drive": "voice", "animate": "active", "duration": 0.08, "curve": "Ease Out", "fadeOut": 0.08},
       "effects": [{"pid": "p1", "type": "box", "color": "#33efab", "padX": 12, "padY": 4, "radius": 14, "grow": false}, {"pid": "p2", "type": "fill", "color": "#0b0d0c"}] }
   ]
 }
@@ -1109,7 +1109,7 @@ Words wait dimmed and light up as they are said. Plays: as each word is spoken. 
 {
   "textAnimators": [
     { "aid": "a1", "name": "Not spoken yet",
-      "range": {"basedOn": "words", "drive": "voice", "animate": "in", "duration": 0.2, "curve": "Power2 Out"},
+      "range": {"basedOn": "words", "drive": "voice", "animate": "in", "duration": 0.2, "curve": "Ease Out"},
       "effects": [{"pid": "p1", "type": "opacity", "opacity": 30}] }
   ]
 }
@@ -1137,7 +1137,7 @@ Words rise softly out of a blur as they are spoken. Plays: as each word is spoke
 {
   "textAnimators": [
     { "aid": "a1", "name": "Rise",
-      "range": {"basedOn": "words", "drive": "voice", "animate": "in", "duration": 0.45, "curve": "Power3 Out"},
+      "range": {"basedOn": "words", "drive": "voice", "animate": "in", "duration": 0.45, "curve": "Cubic Out"},
       "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 45}, {"pid": "p2", "type": "blur", "amount": 8}, {"pid": "p3", "type": "opacity", "opacity": 0}] }
   ]
 }

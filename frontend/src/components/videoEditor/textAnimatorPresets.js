@@ -41,7 +41,7 @@ const factory = function (T) {
 
   // Glide Text (the default, first in the list) = the AE "External Storage" word (GREEN
   // PROJECT.aep, Pre-comp 18), fitted to its render frame by frame: a hard typewriter (Start
-  // 0→100, Smoothness 0, AE's 33 %/100 % ease = 'AE In'; 1.0 s here, as spaces take no
+  // 0→100, Smoothness 0, AE's 33 %/100 % ease = 'AE In (arrive)'; 1.0 s here, as spaces take no
   // turn), a blue blob matted to the letters that lags the typing and then overtakes it (a
   // band as wide as the text, its Offset path within 3 % of the blob's), and the word gliding
   // left on the typing's own curve, so it SETTLES when the typing ends and holds. The AE layer
@@ -54,14 +54,14 @@ const factory = function (T) {
     animators: [
       { name: 'Type', range: { smooth: 0 },
         effects: [['opacity', { opacity: 0 }]],
-        keys: { start: [[0, 0, 'AE In'], [1.0, 100]] } },
+        keys: { start: [[0, 0, 'AE In (arrive)'], [1.0, 100]] } },
       { name: 'Blue band', range: { start: 0, end: 100, shape: 'smooth', easeHigh: 40 },
         effects: [['fill', { color: '#3e59ad' }]],
-        keys: { offset: [[0.3, -58, 'Power1 Out'], [1.3, 101]] } },
+        keys: { offset: [[0.3, -58, 'Sine Out'], [1.3, 101]] } },
       { name: 'Glide in', range: { around: 'all' },
         effects: [['position', { x: em(2.5), y: 0 }]],
-        keys: { amount: [[0, 100, 'AE In'], [1.0, 0]] } },
-      { name: 'Glide out', range: { drive: 'time', animate: 'out', around: 'all', stagger: 0, duration: 0.5, curve: 'Power2 In' },
+        keys: { amount: [[0, 100, 'AE In (arrive)'], [1.0, 0]] } },
+      { name: 'Glide out', range: { drive: 'time', animate: 'out', around: 'all', stagger: 0, duration: 0.5, curve: 'Ease In' },
         effects: [['position', { x: em(-1.5), y: 0 }], ['opacity', { opacity: 0 }]] }] };
   // Glide Continuous (was Glide Soft, 14.0.82) is the same word with the owner's timing and
   // glide, from the "Current" board's Project 1 (2026-10-17, a 2.4 s layer): typing 0–0.93 s,
@@ -76,14 +76,14 @@ const factory = function (T) {
     animators: [
       { name: 'Type', range: { smooth: 0 },
         effects: [['opacity', { opacity: 0 }]],
-        keys: { start: [[0, 0, 'AE In'], [0.93, 100]] } },
+        keys: { start: [[0, 0, 'AE In (arrive)'], [0.93, 100]] } },
       { name: 'Blue band', range: { start: 0, end: 100, shape: 'smooth', easeHigh: 40 },
         effects: [['fill', { color: '#3e59ad' }]],
-        keys: { offset: [[0.14, -58, 'Power1 Out'], [1.13, 101]] } },
+        keys: { offset: [[0.14, -58, 'Sine Out'], [1.13, 101]] } },
       { name: 'Glide in', anchor: 'clip', range: { around: 'all' },
         effects: [['position', { x: em(2.5), y: 0 }]],
         keys: { amount: [[0, 100, curve], [100, -100]] } },
-      { name: 'Glide out', range: { drive: 'time', animate: 'out', around: 'all', stagger: 0, duration: 0.5, curve: 'Power2 In' },
+      { name: 'Glide out', range: { drive: 'time', animate: 'out', around: 'all', stagger: 0, duration: 0.5, curve: 'Ease In' },
         effects: [['position', { x: em(-1.5), y: 0 }], ['opacity', { opacity: 0 }]] }],
   });
 
@@ -107,11 +107,11 @@ const factory = function (T) {
       labLayer: { size: 54, weight: 400, stage: '#0c0e0d' },
       description: 'Words spring in out of a hot green glow and overshoot into place as the line recentres, and a key word stays lit',
       animators: [
-        { name: 'Recenter', range: kIn('words', 'all', { stagger: 0, duration: 1.8, curve: 'Power3 Out' }),
+        { name: 'Recenter', range: kIn('words', 'all', { stagger: 0, duration: 1.8, curve: 'Cubic Out' }),
           effects: [['position', { x: em(4.6296), y: 0 }]] },
         { name: 'Spring in', range: kIn('words', 'word', { stagger: 0.15, duration: 1.1, curve: 'Overshoot' }),
           effects: [['position', { x: em(1.2963), y: em(1.5741) }], ['scale', { scale: 78 }]] },
-        { name: 'Focus in', range: kIn('words', 'auto', { stagger: 0.15, duration: 0.38, curve: 'Power2 Out' }),
+        { name: 'Focus in', range: kIn('words', 'auto', { stagger: 0.15, duration: 0.38, curve: 'Ease Out' }),
           effects: [['opacity', { opacity: 0 }], ['blur', { amount: em(0.2593) }]] },
         { name: 'Hot glow', range: kIn('words', 'auto', { stagger: 0.15, duration: 0.65, curve: 'Sine Smooth' }),
           effects: [['fill', { color: '#6dff86' }], ['glow', { color: '#3dff6a', size: em(0.6296), strength: 230 }]] },
@@ -294,7 +294,7 @@ const factory = function (T) {
       animators: [
         { name: 'Drop in', range: kIn('words', 'word', { stagger: 0.14, duration: 1.0, curve: 'Bounce Out' }),
           effects: [['rotation', { angle: -90 }], ['opacity', { opacity: 0 }]] },
-        { name: 'Fall out', range: kOut('words', 'word', { stagger: 0.08, duration: 0.6, curve: 'Power2 In' }),
+        { name: 'Fall out', range: kOut('words', 'word', { stagger: 0.08, duration: 0.6, curve: 'Ease In' }),
           effects: [['rotation', { angle: 90 }], ['opacity', { opacity: 0 }]] }] },
     { id: 'flip-pop', name: 'Flip Pop', cat: 'kinetic', sides: 'inOut', anchor: 'drive', sample: KIN_LINES, tile: KIN_TILE,
       labLayer: { size: 150, lineHeight: 0.95 },
@@ -367,7 +367,7 @@ const factory = function (T) {
       animators: [
         { name: 'Drop in', range: kIn('words', 'word', { stagger: 0.08, duration: 0.9, curve: 'Bounce Out' }),
           effects: [['position', { x: 0, y: em(-1.2) }], ['rotation', { angle: 25 }], ['opacity', { opacity: 0 }]] },
-        { name: 'Fall out', range: kOut('words', 'word', { stagger: 0.04, duration: 0.5, curve: 'Power2 In' }),
+        { name: 'Fall out', range: kOut('words', 'word', { stagger: 0.04, duration: 0.5, curve: 'Ease In' }),
           effects: [['position', { x: 0, y: em(1.2) }], ['rotation', { angle: -25 }], ['opacity', { opacity: 0 }]] }] },
     { id: 'coin-spin', name: 'Coin Spin', cat: 'kinetic', sides: 'inOut', anchor: 'drive', sample: KIN_LETTERS,
       labLayer: { size: 140 },
@@ -563,7 +563,7 @@ const factory = function (T) {
     // ── Voice ──
     { id: 'voice-box', name: 'Spoken Box', cat: 'voice', sides: 'loop', anchor: 'drive', sample: VOICE_SAMPLE,
       description: 'A box sits under each word while it is spoken, dark text on top',
-      animators: [{ name: 'Spoken box', range: voice({ animate: 'active', duration: 0.08, curve: 'Power2 Out', fadeOut: 0.08 }),
+      animators: [{ name: 'Spoken box', range: voice({ animate: 'active', duration: 0.08, curve: 'Ease Out', fadeOut: 0.08 }),
         effects: [['box', { color: ACCENT, padX: em(0.12), padY: em(0.04), radius: em(0.14), grow: false }], ['fill', { color: '#0b0d0c' }]] }] },
     { id: 'voice-pop', name: 'Spoken Pop', cat: 'voice', sides: 'loop', anchor: 'drive', sample: VOICE_SAMPLE,
       description: 'The spoken word swells and turns gold, then settles back',
@@ -583,7 +583,7 @@ const factory = function (T) {
         effects: [['fill', { color: ACCENT }]] }] },
     { id: 'voice-read-along', name: 'Read Along', cat: 'voice', sides: 'in', anchor: 'drive', sample: VOICE_SAMPLE,
       description: 'Words wait dimmed and light up as they are said',
-      animators: [{ name: 'Not spoken yet', range: voice({ animate: 'in', duration: 0.2, curve: 'Power2 Out' }),
+      animators: [{ name: 'Not spoken yet', range: voice({ animate: 'in', duration: 0.2, curve: 'Ease Out' }),
         effects: [['opacity', { opacity: 30 }]] }] },
     { id: 'voice-word-pop', name: 'Word Pop', cat: 'voice', sides: 'in', anchor: 'drive', sample: VOICE_SAMPLE,
       description: 'Each word pops in the moment it is spoken',
@@ -591,7 +591,7 @@ const factory = function (T) {
         effects: [['scale', { scale: 40 }], ['opacity', { opacity: 0 }]] }] },
     { id: 'voice-rise', name: 'Rise on Voice', cat: 'voice', sides: 'in', anchor: 'drive', sample: VOICE_SAMPLE,
       description: 'Words rise softly out of a blur as they are spoken',
-      animators: [{ name: 'Rise', range: voice({ animate: 'in', duration: 0.45, curve: 'Power3 Out' }),
+      animators: [{ name: 'Rise', range: voice({ animate: 'in', duration: 0.45, curve: 'Cubic Out' }),
         effects: [['position', { x: 0, y: em(0.45) }], ['blur', { amount: em(0.08) }], ['opacity', { opacity: 0 }]] }] },
     { id: 'voice-bounce', name: 'Bounce on Voice', cat: 'voice', sides: 'in', anchor: 'drive', sample: VOICE_SAMPLE,
       description: 'Words drop in and bounce as they are spoken',
@@ -722,7 +722,7 @@ const factory = function (T) {
       sides: 'inOut',
       animators: [...p.animators, {
         name: 'Out',
-        range: { drive: 'time', animate: 'out', basedOn, stagger, duration: 0.3, curve: 'Power2 In' },
+        range: { drive: 'time', animate: 'out', basedOn, stagger, duration: 0.3, curve: 'Ease In' },
         effects: [['opacity', { opacity: 0 }]],
       }],
     };

@@ -15,7 +15,7 @@
 import { TransitionEasing } from './types.js';
 
 // Control points for the easings that genuinely ARE a cubic bezier. These trace the
-// same curves GSAP's power/sine/expo/circ/back eases do, so a handle the user grabs
+// same curves GSAP's power/sine/expo/back eases do, so a handle the user grabs
 // starts where the drawn curve already is rather than jumping.
 export const EASING_BEZIER = {
   [TransitionEasing.LINEAR]: [1 / 3, 1 / 3, 2 / 3, 2 / 3],
@@ -35,28 +35,16 @@ export const EASING_BEZIER = {
   [TransitionEasing.SINE_IN_OUT]: [0.445, 0.05, 0.55, 0.95],
   [TransitionEasing.CUBIC_IN]: [0.895, 0.03, 0.685, 0.22],
   [TransitionEasing.CUBIC_OUT]: [0.165, 0.84, 0.44, 1],
-  [TransitionEasing.CUBIC_IN_OUT]: [0.77, 0, 0.175, 1],
   [TransitionEasing.EXPO_IN]: [0.95, 0.05, 0.795, 0.035],
   [TransitionEasing.EXPO_OUT]: [0.19, 1, 0.22, 1],
   [TransitionEasing.EXPO_IN_OUT]: [1, 0, 0, 1],
-  [TransitionEasing.CIRC_IN]: [0.6, 0.04, 0.98, 0.335],
-  [TransitionEasing.CIRC_OUT]: [0.075, 0.82, 0.165, 1],
-  [TransitionEasing.CIRC_IN_OUT]: [0.785, 0.135, 0.15, 0.86],
+  [TransitionEasing.POWER]: [0.23, 1, 0.32, 1],
+  // The "Easing Lab" board's two new curves — these handles ARE the curve.
+  [TransitionEasing.PUNCH]: [0.7, 0, 0.1, 1],
+  [TransitionEasing.APPLE_OUT]: [0.32, 0.72, 0, 1],
   [TransitionEasing.BACK_IN]: [0.6, -0.28, 0.735, 0.045],
   [TransitionEasing.BACK_OUT]: [0.175, 0.885, 0.32, 1.275],
   [TransitionEasing.BACK_IN_OUT]: [0.68, -0.55, 0.265, 1.55],
-  [TransitionEasing.POWER1_IN]: [0.55, 0.085, 0.68, 0.53],
-  [TransitionEasing.POWER1_OUT]: [0.25, 0.46, 0.45, 0.94],
-  [TransitionEasing.POWER1_IN_OUT]: [0.455, 0.03, 0.515, 0.955],
-  [TransitionEasing.POWER2_IN]: [0.55, 0.055, 0.675, 0.19],
-  [TransitionEasing.POWER2_OUT]: [0.215, 0.61, 0.355, 1],
-  [TransitionEasing.POWER2_IN_OUT]: [0.645, 0.045, 0.355, 1],
-  [TransitionEasing.POWER3_IN]: [0.895, 0.03, 0.685, 0.22],
-  [TransitionEasing.POWER3_OUT]: [0.165, 0.84, 0.44, 1],
-  [TransitionEasing.POWER3_IN_OUT]: [0.77, 0, 0.175, 1],
-  [TransitionEasing.POWER4_IN]: [0.755, 0.05, 0.855, 0.06],
-  [TransitionEasing.POWER4_OUT]: [0.23, 1, 0.32, 1],
-  [TransitionEasing.POWER4_IN_OUT]: [0.86, 0, 0.07, 1],
   // Legacy MotionFast template curves (templates/common/easings.ts).
   [TransitionEasing.NATURAL]: [0.8, 0, 0.2, 1],
   [TransitionEasing.SLOW_DOWN]: [0, 0, 0, 1],
@@ -81,15 +69,14 @@ export const GSAP_EASE_NAMES = {
   [TransitionEasing.SINE_IN]: 'sine.in',
   [TransitionEasing.SINE_OUT]: 'sine.out',
   [TransitionEasing.SINE_IN_OUT]: 'sine.inOut',
-  [TransitionEasing.CUBIC_IN_OUT]: 'power3.inOut',
   [TransitionEasing.CUBIC_IN]: 'power3.in',
   [TransitionEasing.CUBIC_OUT]: 'power3.out',
   [TransitionEasing.EXPO_IN]: 'expo.in',
   [TransitionEasing.EXPO_OUT]: 'expo.out',
   [TransitionEasing.EXPO_IN_OUT]: 'expo.inOut',
-  [TransitionEasing.CIRC_IN]: 'circ.in',
-  [TransitionEasing.CIRC_OUT]: 'circ.out',
-  [TransitionEasing.CIRC_IN_OUT]: 'circ.inOut',
+  [TransitionEasing.POWER]: 'power4.out',
+  [TransitionEasing.PUNCH]: 'punch',
+  [TransitionEasing.APPLE_OUT]: 'appleOut',
   [TransitionEasing.BACK_IN]: 'back.in',
   [TransitionEasing.BACK_OUT]: 'back.out',
   [TransitionEasing.BACK_IN_OUT]: 'back.inOut',
@@ -102,18 +89,6 @@ export const GSAP_EASE_NAMES = {
   [TransitionEasing.SWING]: 'mfSwing',
   [TransitionEasing.SMOOTH_OVERSHOOT]: 'mfSmoothOvershoot',
   [TransitionEasing.ANTICIPATE]: 'mfAnticipate',
-  [TransitionEasing.POWER1_IN]: 'power1.in',
-  [TransitionEasing.POWER1_OUT]: 'power1.out',
-  [TransitionEasing.POWER1_IN_OUT]: 'power1.inOut',
-  [TransitionEasing.POWER2_IN]: 'power2.in',
-  [TransitionEasing.POWER2_OUT]: 'power2.out',
-  [TransitionEasing.POWER2_IN_OUT]: 'power2.inOut',
-  [TransitionEasing.POWER3_IN]: 'power3.in',
-  [TransitionEasing.POWER3_OUT]: 'power3.out',
-  [TransitionEasing.POWER3_IN_OUT]: 'power3.inOut',
-  [TransitionEasing.POWER4_IN]: 'power4.in',
-  [TransitionEasing.POWER4_OUT]: 'power4.out',
-  [TransitionEasing.POWER4_IN_OUT]: 'power4.inOut',
 };
 
 // Sampled `linear()` tables (101 points) for the legacy MotionFast spring curves —

@@ -29,7 +29,7 @@ import { evaluateObjectMotionPath, eulerForObjectPathTangent } from './objectMot
 import { namedEase } from './appEases.js';
 import { localPrs } from './keyframeParenting.js';
 import { GRID_KF_PREFIX } from './keyframeProps.js';
-import { TransitionEasing } from './types.js';
+import { TransitionEasing, currentEasing } from './types.js';
 import { contentRectInQuad } from './mediaFit.js';
 
 export { GRID_KF_PREFIX };
@@ -227,7 +227,7 @@ export const GRID_DEFAULTS = Object.freeze({
   revealDuration: 0.6,
   revealStagger: 0.05,
   revealStaggerBy: 'index',
-  revealEase: TransitionEasing.POWER2_OUT,
+  revealEase: TransitionEasing.EASE_OUT,
   revealOut: false,
 
   // layout slots + morph (Grid Morph — look-dev: html/grid-morph.html).
@@ -237,7 +237,7 @@ export const GRID_DEFAULTS = Object.freeze({
   layoutMix: 0,         // 0 … layouts.length-1
   morphStagger: 0.35,   // 0–0.9 — how much of the move is spread across cell ranks
   morphStaggerBy: 'index',
-  morphEase: TransitionEasing.POWER2_IN_OUT,
+  morphEase: TransitionEasing.EASE_IN_OUT,
   morphArc: 60,         // px — outward bulge of the travel (negative implodes)
   morphSpin: 0,         // whole turns added over the blend; vanishes at both ends
 });
@@ -828,14 +828,14 @@ export function normalizeGridConfig(raw) {
     revealDuration: n('revealDuration', 0.05, 20),
     revealStagger: n('revealStagger', -2, 2),
     revealStaggerBy: pick(c.revealStaggerBy, GRID_STAGGER_BY, D.revealStaggerBy),
-    revealEase: Object.values(TransitionEasing).includes(c.revealEase) ? c.revealEase : D.revealEase,
+    revealEase: currentEasing(c.revealEase, D.revealEase),
     revealOut: c.revealOut === true,
 
     layouts: sanitizeGridLayoutSlots(c.layouts),
     layoutMix: n('layoutMix', 0, GRID_MAX_LAYOUT_SLOTS - 1),
     morphStagger: n('morphStagger', 0, 0.9),
     morphStaggerBy: pick(c.morphStaggerBy, GRID_STAGGER_BY, D.morphStaggerBy),
-    morphEase: Object.values(TransitionEasing).includes(c.morphEase) ? c.morphEase : D.morphEase,
+    morphEase: currentEasing(c.morphEase, D.morphEase),
     morphArc: n('morphArc', -600, 600),
     morphSpin: Math.round(n('morphSpin', -4, 4)),
   };

@@ -91,8 +91,8 @@ const PROFILE_FNS = [
 
 export const LINES_DRAW_PROFILE_OPTIONS = [
   { value: 0, label: 'AE Smooth' },
-  { value: 1, label: 'AE In' },
-  { value: 2, label: 'AE Out' },
+  { value: 1, label: 'AE In (arrive)' },
+  { value: 2, label: 'AE Out (leave)' },
   { value: 3, label: 'Cubic In-Out' },
   { value: 4, label: 'Natural' },
   { value: 5, label: 'Expo In-Out' },

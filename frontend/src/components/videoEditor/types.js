@@ -302,21 +302,29 @@ export const TransitionEasing = {
   SMOOTH_GLIDE: 'Smooth Glide',
   GLIDE_STOP: 'Glide Easing Stop',
   // After Effects-style bezier curves — same curves as MotionFast's aeIn/aeSmooth/aeOut.
-  AE_IN: 'AE In',
+  // AE names a curve by the side of the key its influence sits on, so the shapes read
+  // backwards to the CSS names: AE In starts fast and brakes into the key (an arrival),
+  // AE Out starts slow and speeds away (a departure). The label says which.
+  AE_IN: 'AE In (arrive)',
   AE_SMOOTH: 'AE Smooth',
-  AE_OUT: 'AE Out',
+  AE_OUT: 'AE Out (leave)',
   SINE_IN: 'Sine In',
   SINE_OUT: 'Sine Out',
   SINE_IN_OUT: 'Sine Smooth',
-  CUBIC_IN_OUT: 'Cubic Smooth',
   CUBIC_IN: 'Cubic In',
   CUBIC_OUT: 'Cubic Out',
   EXPO_IN: 'Expo In',
   EXPO_OUT: 'Expo Out',
   EXPO_IN_OUT: 'Expo Smooth',
-  CIRC_IN: 'Circ In',
-  CIRC_OUT: 'Circ Out',
-  CIRC_IN_OUT: 'Circ Smooth',
+  // A hard, decisive stop (GSAP power4.out; drawn as cubic-bezier(0.23, 1, 0.32, 1)).
+  POWER: 'Power',
+  // From the "Easing Lab" board (2026-11-01), both plain cubic beziers. Punch winds up
+  // slowly, hits hard and trails a long tail (scene changes on the beat, a logo hit, a
+  // screen swipe); nothing else in the list is within 0.23 of it. Apple Out starts at
+  // full speed and spends most of the move in a soft stop (UI panels, drawers, a
+  // camera landing).
+  PUNCH: 'Punch',
+  APPLE_OUT: 'Apple Out',
   BACK_IN: 'Back In',
   BACK_OUT: 'Back Out',
   BACK_IN_OUT: 'Back Smooth',
@@ -336,18 +344,6 @@ export const TransitionEasing = {
   SMOOTH_OVERSHOOT: 'Smooth Overshoot',
   // Winds back first, then snaps through to the end: an exit. Sampled.
   ANTICIPATE: 'Anticipate',
-  POWER1_IN: 'Power1 In',
-  POWER1_OUT: 'Power1 Out',
-  POWER1_IN_OUT: 'Power1 Smooth',
-  POWER2_IN: 'Power2 In',
-  POWER2_OUT: 'Power2 Out',
-  POWER2_IN_OUT: 'Power2 Smooth',
-  POWER3_IN: 'Power3 In',
-  POWER3_OUT: 'Power3 Out',
-  POWER3_IN_OUT: 'Power3 Smooth',
-  POWER4_IN: 'Power4 In',
-  POWER4_OUT: 'Power4 Out',
-  POWER4_IN_OUT: 'Power4 Smooth',
   // ── Keyframe-only easings ──
   // CUSTOM reads the key's own `bezier: [x1, y1, x2, y2]` (the graph editor writes
   // it by dragging handles); HOLD steps to the next key instead of interpolating.
@@ -357,6 +353,60 @@ export const TransitionEasing = {
   CUSTOM: 'Custom',
   HOLD: 'Hold',
 };
+
+// Names that left the list (the "Easing Lab" review, 2026-11-01) and the curve each
+// one plays now. Most were duplicates: Power2 IS Ease, Power3 IS Cubic, and Power1,
+// Circ and the Smooth variants of Cubic/Power3/Power4 sat within 0.06 of a curve the
+// list keeps. Power4 Out became Power, and the two AE curves gained their labels.
+// Saved projects, presets and agents still write these, so every reader maps them
+// through currentEasing instead of dropping them to the default.
+export const RETIRED_EASINGS = {
+  'Power1 In': TransitionEasing.SINE_IN,
+  'Power1 Out': TransitionEasing.SINE_OUT,
+  'Power1 Smooth': TransitionEasing.SINE_IN_OUT,
+  'Power2 In': TransitionEasing.EASE_IN,
+  'Power2 Out': TransitionEasing.EASE_OUT,
+  'Power2 Smooth': TransitionEasing.EASE_IN_OUT,
+  'Power3 In': TransitionEasing.CUBIC_IN,
+  'Power3 Out': TransitionEasing.CUBIC_OUT,
+  'Power3 Smooth': TransitionEasing.NATURAL,
+  'Power4 In': TransitionEasing.CUBIC_IN,
+  'Power4 Out': TransitionEasing.POWER,
+  'Power4 Smooth': TransitionEasing.NATURAL,
+  'Cubic Smooth': TransitionEasing.NATURAL,
+  'Circ In': TransitionEasing.CUBIC_IN,
+  'Circ Out': TransitionEasing.SLOW_DOWN,
+  'Circ Smooth': TransitionEasing.NATURAL,
+  'AE In': TransitionEasing.AE_IN,
+  'AE Out': TransitionEasing.AE_OUT,
+};
+
+// The same for the fields that store the enum KEY ('EXPO_OUT'): the text counter and
+// the text placeholders.
+export const RETIRED_EASING_KEYS = {
+  POWER1_IN: 'SINE_IN', POWER1_OUT: 'SINE_OUT', POWER1_IN_OUT: 'SINE_IN_OUT',
+  POWER2_IN: 'EASE_IN', POWER2_OUT: 'EASE_OUT', POWER2_IN_OUT: 'EASE_IN_OUT',
+  POWER3_IN: 'CUBIC_IN', POWER3_OUT: 'CUBIC_OUT', POWER3_IN_OUT: 'NATURAL',
+  POWER4_IN: 'CUBIC_IN', POWER4_OUT: 'POWER', POWER4_IN_OUT: 'NATURAL',
+  CUBIC_IN_OUT: 'NATURAL',
+  CIRC_IN: 'CUBIC_IN', CIRC_OUT: 'SLOW_DOWN', CIRC_IN_OUT: 'NATURAL',
+};
+
+const EASING_VALUE_SET = new Set(Object.values(TransitionEasing));
+
+/** A stored easing value as the list names it today: itself, the curve that replaced a
+ *  retired name, or `fallback` for anything else. */
+export function currentEasing(value, fallback = undefined) {
+  if (EASING_VALUE_SET.has(value)) return value;
+  return Object.hasOwn(RETIRED_EASINGS, value) ? RETIRED_EASINGS[value] : fallback;
+}
+
+/** currentEasing for an enum KEY. */
+export function currentEasingKey(key, fallback = undefined) {
+  if (typeof key !== 'string') return fallback;
+  if (Object.hasOwn(TransitionEasing, key)) return key;
+  return Object.hasOwn(RETIRED_EASING_KEYS, key) ? RETIRED_EASING_KEYS[key] : fallback;
+}
 
 // Easings a keyframe may carry but a transition may not.
 export const KEYFRAME_ONLY_EASINGS = [TransitionEasing.CUSTOM, TransitionEasing.HOLD];

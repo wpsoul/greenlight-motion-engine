@@ -1,5 +1,5 @@
 import { parseEase, registerEase, bezierEase } from './easingEngine.js';
-import { TransitionEasing } from './types.js';
+import { TransitionEasing, currentEasing, currentEasingKey } from './types.js';
 import { EASING_BEZIER, SAMPLED_EASING_VALUES, sampleLinearEase, GSAP_EASE_NAMES } from './easingCurves.js';
 
 /*
@@ -24,6 +24,10 @@ registerEase('aeOut', bezierEase(...EASING_BEZIER[TransitionEasing.AE_OUT]));
 registerEase('smoothGlide', bezierEase(...EASING_BEZIER[TransitionEasing.SMOOTH_GLIDE]));
 registerEase('glideStop', bezierEase(...EASING_BEZIER[TransitionEasing.GLIDE_STOP]));
 
+// The Easing Lab's Punch and Apple Out: plain beziers too.
+registerEase('punch', bezierEase(...EASING_BEZIER[TransitionEasing.PUNCH]));
+registerEase('appleOut', bezierEase(...EASING_BEZIER[TransitionEasing.APPLE_OUT]));
+
 // Legacy MotionFast template curves. Natural/Slow Down are the beziers already in
 // EASING_BEZIER; the spring trio samples its 101-point table (see easingCurves.js).
 registerEase('mfNatural', bezierEase(...EASING_BEZIER[TransitionEasing.NATURAL]));
@@ -40,15 +44,18 @@ registerEase('mfAnticipate', (t) => sampleLinearEase(SAMPLED_EASING_VALUES[Trans
 // The table itself is GSAP_EASE_NAMES in easingCurves.js (a leaf the capabilities
 // generator can load); this is the lookup every caller goes through.
 
+// Two storage formats reach this lookup: most fields store the TransitionEasing
+// display value ('Expo Out') the table is keyed by, but a few (the text counter's
+// `easing`, textCounterEasing) store the enum KEY ('EXPO_OUT'). Resolve the key
+// through the enum so those selections play their curve. A retired name ('Power2 Out',
+// 'POWER4_OUT') plays the curve that replaced it (types.js RETIRED_EASINGS).
+function easeNameOf(easingType) {
+  const value = currentEasing(easingType) || TransitionEasing[currentEasingKey(easingType)];
+  return GSAP_EASE_NAMES[value];
+}
+
 export function getGsapEase(easingType) {
-  // Two storage formats reach this lookup: most fields store the TransitionEasing
-  // display value ('Expo Out') the table is keyed by, but a few (the text
-  // counter's `easing`, textCounterEasing) store the enum KEY ('EXPO_OUT').
-  // Resolve the key through the enum so those selections play their curve
-  // instead of silently falling back to power2.inOut.
-  return GSAP_EASE_NAMES[easingType]
-    || GSAP_EASE_NAMES[TransitionEasing[easingType]]
-    || 'power2.inOut';
+  return easeNameOf(easingType) || 'power2.inOut';
 }
 
 /**
@@ -57,7 +64,7 @@ export function getGsapEase(easingType) {
  * Hold and Custom need the key itself — see resolveKeyEase in gsapTransitions.js.
  */
 export function namedEase(easingType) {
-  const name = GSAP_EASE_NAMES[easingType] || GSAP_EASE_NAMES[TransitionEasing[easingType]];
+  const name = easeNameOf(easingType);
   return name ? parseEase(name) : undefined;
 }
 

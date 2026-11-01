@@ -5,10 +5,12 @@
 // getItemKeyframeValues so every consumer (Player, camera, masks, overlays,
 // export) agrees on the result.
 //
-// The five types relate to the keyframed value differently, which is the thing to
+// The six types relate to the keyframed value differently, which is the thing to
 // keep straight when reading this file:
 //   elastic / bounce  RESHAPE the move — each keyframe transition is replayed
-//                     through a profile, superseding the keys' own easing.
+//   / spring          through a profile, superseding the keys' own easing.
+//                     Elastic and Bounce stretch to the segment; Spring runs in
+//                     real seconds.
 //   glide             SOFTENS it — the keyed motion (easing included) is run
 //                     through an all-positive filter, so it lands late and soft.
 //   wiggle            ADDS to it — the base motion is untouched.
@@ -51,6 +53,27 @@ export const KEYFRAME_FX_TYPES = [
       // decayed to under 1% by the key — so a final key still lands on its
       // value — while leaving enough tail to carry into a following segment.
       { key: 'decay', label: 'Decay', min: 0.5, max: 15, step: 0.1, def: 5 },
+    ],
+  },
+  {
+    id: 'spring',
+    label: 'Spring',
+    hint: 'Each move is a real spring: it leaves the key before at rest, overshoots as far as its damping lets it and settles. It runs in seconds, so a short move and a long one ring alike.',
+    // The "Easing Lab" board's two springs. They set the spring only, so a
+    // tuned Strength survives a switch; the first equals the param defaults.
+    presets: [
+      { id: 'snappy', label: 'Snappy', hint: '1.6 Hz, damping 0.55: about 12 % overshoot. Buttons, icons, pop-ins', params: { freq: 1.6, damping: 0.55 } },
+      { id: 'gentle', label: 'Gentle', hint: '1 Hz, damping 0.8: a 1.5 % overshoot. Mascots, big cards, the camera', params: { freq: 1, damping: 0.8 } },
+    ],
+    params: [
+      { key: 'amp', label: 'Strength', min: 0, max: 300, step: 1, def: 100, suffix: '%' },
+      // The spring's natural frequency: higher is quicker. A move settles (within
+      // 2 %) in about 4 / (2π · freq · damping) s — Snappy 0.7 s, Gentle 0.8 s —
+      // whatever the gap to the next key.
+      { key: 'freq', label: 'Frequency', min: 0.1, max: 10, step: 0.05, def: 1.6, suffix: 'Hz' },
+      // Damping ratio ζ: lower rings longer and overshoots further; 1 is
+      // critically damped (no overshoot at all).
+      { key: 'damping', label: 'Damping', min: 0.05, max: 1, step: 0.01, def: 0.55 },
     ],
   },
   {
@@ -244,7 +267,24 @@ function bounceProfile(u, e, nMax) {
   return 1 - (vk * tb - (g * tb * tb) / 2);
 }
 
-// Superpose every keyframe step through `profile`, then mix with the base.
+// Spring step response, `tSec` seconds after the key the move leaves from — a damped
+// harmonic oscillator released at rest:
+//   x(t) = 1 − e^(−ζωt)·(cos ω_d t + ζω/ω_d · sin ω_d t),  ω = 2πf, ω_d = ω·√(1 − ζ²)
+// It leaves at zero speed and peaks at 1 + e^(−ζπ/√(1−ζ²)) when t = π/ω_d. Unlike the
+// two profiles above it is NOT normalized to the segment: the gap to the next key does
+// not change the shape, only where the next step starts.
+function springProfile(tSec, freq, damping) {
+  if (tSec <= 0) return 0;
+  const w = 2 * Math.PI * freq;
+  const zw = damping * w;
+  if (zw * tSec > 14) return 1; // envelope below 1e-6 even with the 1/√(1−ζ²) gain near ζ = 1
+  if (damping >= 0.999) return 1 - Math.exp(-w * tSec) * (1 + w * tSec); // critically damped
+  const wd = w * Math.sqrt(1 - damping * damping);
+  return 1 - Math.exp(-zw * tSec) * (Math.cos(wd * tSec) + (zw / wd) * Math.sin(wd * tSec));
+}
+
+// Superpose every keyframe step through `profile`, then mix with the base. The
+// profile gets the segment's length too, for one that runs in seconds (Spring).
 function profiledValue(track, pct, base, durationSec, strength, profile) {
   if (track.length < 2 || !(strength > 0)) return base;
   const t = (pct / 100) * durationSec;
@@ -259,7 +299,7 @@ function profiledValue(track, pct, base, durationSec, strength, profile) {
     const tPrev = (Number(track[i - 1].position) / 100) * durationSec;
     const segSec = (Number(track[i].position) / 100) * durationSec - tPrev;
     if (!(segSec > 0)) continue;
-    value += step * profile((t - tPrev) / segSec);
+    value += step * profile((t - tPrev) / segSec, segSec);
   }
   return base + strength * (value - base);
 }
@@ -267,6 +307,11 @@ function profiledValue(track, pct, base, durationSec, strength, profile) {
 function elasticValue(cfg, track, pct, base, durationSec) {
   const { amp, freq, decay } = cfg.params;
   return profiledValue(track, pct, base, durationSec, amp / 100, (u) => elasticProfile(u, freq, decay));
+}
+
+function springValue(cfg, track, pct, base, durationSec) {
+  const { amp, freq, damping } = cfg.params;
+  return profiledValue(track, pct, base, durationSec, amp / 100, (u, segSec) => springProfile(u * segSec, freq, damping));
 }
 
 function bounceValue(cfg, track, pct, base, durationSec) {
@@ -571,6 +616,8 @@ export function evaluateKeyframeFx(cfg, track, pct, base, durationSec, seedKey =
       return elasticValue(cfg, track, pct, base, durationSec);
     case 'bounce':
       return bounceValue(cfg, track, pct, base, durationSec);
+    case 'spring':
+      return springValue(cfg, track, pct, base, durationSec);
     case 'wiggle':
       return base + wiggleOffset(cfg, (pct / 100) * durationSec, stringSeed(seedKey));
     case 'glide':

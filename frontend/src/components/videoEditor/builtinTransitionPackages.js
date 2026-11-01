@@ -1,7 +1,7 @@
 import { createTransitionPackageMaterialForBackend } from './materialFactory.js';
 import { EASING_BEZIER, SAMPLED_EASING_VALUES } from './easingCurves.js';
 import { namedEase } from './appEases.js';
-import { TransitionEasing } from './types.js';
+import { TransitionEasing, currentEasing } from './types.js';
 import { CAMERA_WHIP_NODE_SAMPLES } from './cameraWhipSamples.js';
 import { SHAPE_RULERS_GLSL } from './shapeRulersGlsl.js';
 
@@ -912,11 +912,12 @@ const PIXEL_BLOCKS_MODES = Object.freeze({ cross: 0, appear: 1, disappear: 2, co
 // control points come from easingCurves.js, so a preset ports 1:1 from the lab.
 const PIXEL_BLOCKS_EASINGS = Object.freeze([
   TransitionEasing.LINEAR,
-  TransitionEasing.SINE_IN, TransitionEasing.POWER1_IN, TransitionEasing.EASE_IN, TransitionEasing.POWER3_IN,
-  TransitionEasing.EXPO_IN, TransitionEasing.CIRC_IN, TransitionEasing.BACK_IN, TransitionEasing.AE_IN,
-  TransitionEasing.SINE_IN_OUT, TransitionEasing.POWER1_IN_OUT, TransitionEasing.EASE_IN_OUT, TransitionEasing.POWER3_IN_OUT,
-  TransitionEasing.EXPO_IN_OUT, TransitionEasing.AE_SMOOTH, TransitionEasing.NATURAL,
-  TransitionEasing.SINE_OUT, TransitionEasing.EASE_OUT, TransitionEasing.POWER3_OUT, TransitionEasing.EXPO_OUT, TransitionEasing.AE_OUT,
+  TransitionEasing.SINE_IN, TransitionEasing.EASE_IN, TransitionEasing.CUBIC_IN,
+  TransitionEasing.EXPO_IN, TransitionEasing.BACK_IN, TransitionEasing.AE_OUT,
+  TransitionEasing.SINE_IN_OUT, TransitionEasing.EASE_IN_OUT,
+  TransitionEasing.EXPO_IN_OUT, TransitionEasing.AE_SMOOTH, TransitionEasing.NATURAL, TransitionEasing.PUNCH,
+  TransitionEasing.SINE_OUT, TransitionEasing.EASE_OUT, TransitionEasing.CUBIC_OUT, TransitionEasing.EXPO_OUT,
+  TransitionEasing.POWER, TransitionEasing.APPLE_OUT, TransitionEasing.AE_IN,
 ].map((value) => Object.freeze({ value, label: value })));
 
 function cubicBezierEase(p1x, p1y, p2x, p2y) {
@@ -941,7 +942,8 @@ const pixelBlocksEaseCache = new Map();
 // The curve the editor plays for that name (appEases), not EASING_BEZIER's handles,
 // which only trace most families (14.0.18).
 function pixelBlocksEase(name) {
-  const key = EASING_BEZIER[name] ? name : TransitionEasing.SINE_IN;
+  const current = currentEasing(name);
+  const key = EASING_BEZIER[current] ? current : TransitionEasing.SINE_IN;
   let fn = pixelBlocksEaseCache.get(key);
   if (!fn) { const played = namedEase(key); fn = (x) => played(clamp01(x)); pixelBlocksEaseCache.set(key, fn); }
   return fn;
@@ -1359,7 +1361,8 @@ const whipBoundaryFade = (p) => whipSmooth(p / 0.1) * whipSmooth((1 - p) / 0.1);
 // bezier or the mf* table), so a lab preset name ports across unchanged.
 const whipEaseCache = new Map();
 function whipEase(name) {
-  const key = EASING_BEZIER[name] || SAMPLED_EASING_VALUES[name] ? name : TransitionEasing.AE_SMOOTH;
+  const current = currentEasing(name);
+  const key = EASING_BEZIER[current] || SAMPLED_EASING_VALUES[current] ? current : TransitionEasing.AE_SMOOTH;
   let fn = whipEaseCache.get(key);
   if (!fn) {
     const played = namedEase(key);

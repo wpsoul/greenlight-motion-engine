@@ -60,11 +60,21 @@ const TXA = (function () {
   // The app's easing names (TransitionEasing values), each played by the same maths
   // GSAP uses in the app (see CURVE_FNS) — so a Time / Voice animator in the lab, a
   // preset tile and the Player all land on the same frame.
-  const CURVE_NAMES = ['Linear', 'Ease In', 'Ease Out', 'Smooth', 'Smooth Glide', 'Glide Easing Stop', 'Power1 In', 'Power1 Out', 'Power1 Smooth',
-    'Power2 In', 'Power2 Out', 'Power2 Smooth', 'Power3 In', 'Power3 Out', 'Power3 Smooth', 'Power4 In', 'Power4 Out',
-    'Power4 Smooth', 'Sine In', 'Sine Out', 'Sine Smooth', 'Cubic In', 'Cubic Out', 'Cubic Smooth', 'Expo In', 'Expo Out',
-    'Expo Smooth', 'Circ In', 'Circ Out', 'Circ Smooth', 'Back In', 'Back Out', 'Back Smooth', 'Bounce Out', 'Elastic',
-    'Overshoot', 'Smooth Overshoot', 'Impulse', 'Swing', 'Anticipate', 'Natural', 'Slow Down', 'AE In', 'AE Smooth', 'AE Out'];
+  const CURVE_NAMES = ['Linear', 'Ease In', 'Ease Out', 'Smooth', 'Smooth Glide', 'Glide Easing Stop',
+    'Sine In', 'Sine Out', 'Sine Smooth', 'Cubic In', 'Cubic Out', 'Expo In', 'Expo Out', 'Expo Smooth', 'Power',
+    'Punch', 'Apple Out', 'Back In', 'Back Out', 'Back Smooth', 'Bounce Out', 'Elastic',
+    'Overshoot', 'Smooth Overshoot', 'Impulse', 'Swing', 'Anticipate', 'Natural', 'Slow Down',
+    'AE In (arrive)', 'AE Smooth', 'AE Out (leave)'];
+  // Names the app retired (types.js RETIRED_EASINGS) → the curve that replaced each, so
+  // a saved animator keeps its motion instead of dropping to the default.
+  const RETIRED_CURVES = {
+    'Power1 In': 'Sine In', 'Power1 Out': 'Sine Out', 'Power1 Smooth': 'Sine Smooth',
+    'Power2 In': 'Ease In', 'Power2 Out': 'Ease Out', 'Power2 Smooth': 'Smooth',
+    'Power3 In': 'Cubic In', 'Power3 Out': 'Cubic Out', 'Power3 Smooth': 'Natural',
+    'Power4 In': 'Cubic In', 'Power4 Out': 'Power', 'Power4 Smooth': 'Natural',
+    'Cubic Smooth': 'Natural', 'Circ In': 'Cubic In', 'Circ Out': 'Slow Down', 'Circ Smooth': 'Natural',
+    'AE In': 'AE In (arrive)', 'AE Out': 'AE Out (leave)',
+  };
 
   const RANGE_FIELDS = {
     // What moves the selection. Range: Start / End / Offset (keyframes, Flow). Time
@@ -280,7 +290,10 @@ const TXA = (function () {
       .map(sanitizeEffect)
       .filter((e) => e && !seen.has(e.pid) && seen.add(e.pid))
       .slice(0, MAX_EFFECTS);
-    const range = sanitizeGroup(RANGE_FIELDS, raw.range);
+    const rawRange = raw.range && typeof raw.range === 'object' && RETIRED_CURVES[raw.range.curve]
+      ? { ...raw.range, curve: RETIRED_CURVES[raw.range.curve] }
+      : raw.range;
+    const range = sanitizeGroup(RANGE_FIELDS, rawRange);
     // The handles belong to Custom alone: a Custom without them plays the default
     // curve, and a named curve drops them (as a keyframe does when a name is picked).
     if (range.curve !== 'Custom') range.bezier = null;
@@ -614,7 +627,6 @@ const TXA = (function () {
   // GSAP 3.14's Expo: exactly 0 at the start and 1 at the end.
   const expoIn = (p) => Math.pow(2, 10 * (p - 1)) * p + Math.pow(p, 6) * (1 - p);
   const sineIn = (p) => (p === 1 ? 1 : 1 - Math.cos((p * Math.PI) / 2));
-  const circIn = (p) => -(Math.sqrt(1 - p * p) - 1);
   const backIn = (p) => (p ? p * p * (2.70158 * p - 1.70158) : 0);
   function bounceOut(p) {
     const n1 = 7.5625, c = 2.75;
@@ -659,10 +671,11 @@ const TXA = (function () {
     return {
       Linear: (p) => p,
       'Ease In': powIn(3), 'Ease Out': outOf(powIn(3)), Smooth: inOutOf(powIn(3)),
-      ...fam(powIn(2), 'Power1'), ...fam(powIn(3), 'Power2'), ...fam(powIn(4), 'Power3'), ...fam(powIn(5), 'Power4'),
-      // The app plays "Cubic" as GSAP power3 (a quartic), so this does too.
-      ...fam(powIn(4), 'Cubic'),
-      ...fam(sineIn, 'Sine'), ...fam(expoIn, 'Expo'), ...fam(circIn, 'Circ'), ...fam(backIn, 'Back'),
+      // The app plays "Cubic" as GSAP power3 (a quartic), so this does too; Power is
+      // GSAP power4.out.
+      'Cubic In': powIn(4), 'Cubic Out': outOf(powIn(4)),
+      Power: outOf(powIn(5)),
+      ...fam(sineIn, 'Sine'), ...fam(expoIn, 'Expo'), ...fam(backIn, 'Back'),
       'Bounce Out': bounceOut,
       Elastic: elasticOut,
       Overshoot: sampled(SAMPLED.Overshoot),
@@ -672,9 +685,11 @@ const TXA = (function () {
       Anticipate: sampled(SAMPLED.Anticipate),
       Natural: bezier(0.8, 0, 0.2, 1),
       'Slow Down': bezier(0, 0, 0, 1),
-      'AE In': bezier(0.3141666673, 0, 0.0875000209, 1),
+      'AE In (arrive)': bezier(0.3141666673, 0, 0.0875000209, 1),
       'AE Smooth': bezier(0.8820833270, 0, 0.2445833683, 1),
-      'AE Out': bezier(0.8699999754, 0, 0.6433336333, 1),
+      'AE Out (leave)': bezier(0.8699999754, 0, 0.6433336333, 1),
+      Punch: bezier(0.7, 0, 0.1, 1),
+      'Apple Out': bezier(0.32, 0.72, 0, 1),
       'Smooth Glide': bezier(0.2111, 0.7721, 0.8541, 0.112),
       'Glide Easing Stop': bezier(0, 0.9125, 1, -0.0338),
     };
@@ -1791,7 +1806,7 @@ const TXA = (function () {
     evalTrack, evaluate, selection, rangeEdges, mapToUnits, glyphFor, mul, revealedOf, boxRects,
     LEVELS, levelOf, hasTransform, groupBoxes, maskedXf, unitTransform, unitTransform3d, m4Mul, applyH, hToCanvas, warpBegin, warpEnd,
     hexToRgb, rgbCss, mixRgb, sampleStops, paintCss, easeShape, shapeAt,
-    CURVE_NAMES, RANGE_ONLY, DRIVE_ONLY, rangeShows, fieldShown, curveFn, ranksOf, voiceFits, voiceTurns, driveAmounts, rangeAt,
+    CURVE_NAMES, RETIRED_CURVES, RANGE_ONLY, DRIVE_ONLY, rangeShows, fieldShown, curveFn, ranksOf, voiceFits, voiceTurns, driveAmounts, rangeAt,
     caretRect, motionKey,
   };
   return api;
@@ -1855,6 +1870,7 @@ export const {
   easeShape,
   shapeAt,
   CURVE_NAMES,
+  RETIRED_CURVES,
   RANGE_ONLY,
   DRIVE_ONLY,
   rangeShows,

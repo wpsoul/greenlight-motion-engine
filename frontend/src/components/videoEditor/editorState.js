@@ -5,7 +5,7 @@
  * Engine can normalize a project without loading the editor UI. VideoEditor.jsx imports and re-exports it.
  */
 import { normalizeMtimeNs } from "./mediaUrlVersion";
-import { ClipSource, TransitionType, TransitionEasing, TransitionOrder, LayerTransitionType, SHAPE_TYPES, TEXT_FONT_SIZE_PX_MIN, TEXT_FONT_SIZE_PX_MAX, TEXT_FONT_SIZE_PCT_MIN, TEXT_FONT_SIZE_PCT_MAX, DEFAULT_TEXT_FONT_SIZE_PX, DEFAULT_TEXT_FONT_SIZE_PCT, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT, textFontSizeUnitOf, MODEL_CONFIG_DEFAULTS, resolveTransitionType, migrateDirectionalTransition, TEXT_BG_REVEAL_TYPES, TEXT_BORDER_STYLES, TEXT_BG_REVEAL_STYLES, TEXT_BG_GROW_APPEAR } from "./types";
+import { ClipSource, TransitionType, TransitionEasing, currentEasing, currentEasingKey, TransitionOrder, LayerTransitionType, SHAPE_TYPES, TEXT_FONT_SIZE_PX_MIN, TEXT_FONT_SIZE_PX_MAX, TEXT_FONT_SIZE_PCT_MIN, TEXT_FONT_SIZE_PCT_MAX, DEFAULT_TEXT_FONT_SIZE_PX, DEFAULT_TEXT_FONT_SIZE_PCT, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT, textFontSizeUnitOf, MODEL_CONFIG_DEFAULTS, resolveTransitionType, migrateDirectionalTransition, TEXT_BG_REVEAL_TYPES, TEXT_BORDER_STYLES, TEXT_BG_REVEAL_STYLES, TEXT_BG_GROW_APPEAR } from "./types";
 import { BLEND_MODES } from "./clipShader";
 import { isPrimitiveKind, PRIMITIVE_DEFAULT_COLOR, PRIMITIVE_DEFAULT_TEXT } from "./model3dPresets";
 import { CAMERA_CHANNEL_KIND, CAMERA_KF_LABELS, CAMERA_MEDIA_TYPE, isCameraChannel, pinCameraChannelTop, sanitizeCameraPath } from "./projectCamera";
@@ -129,6 +129,16 @@ export function clampKeyValue(value, min, max) {
   return String(sanitizeNumber(Number.parseFloat(value), min, { min, max }));
 }
 
+// A key saved with a retired easing name (types.js RETIRED_EASINGS) carries the curve
+// that replaced it, and so does the slice a split cut from it, so the slice still
+// matches its key and keeps playing its part of the move.
+function withCurrentEasing(key) {
+  const easing = currentEasing(key.easing);
+  if (!easing || easing === key.easing) return key;
+  const slice = key.easeSlice && key.easeSlice.of === key.easing ? { ...key.easeSlice, of: easing } : key.easeSlice;
+  return { ...key, easing, ...(slice ? { easeSlice: slice } : null) };
+}
+
 export function sanitizePropertyKeyframes(propertyKeyframes, effects = [], item = null) {
   if (!propertyKeyframes || typeof propertyKeyframes !== 'object') return {};
   const result = {};
@@ -137,12 +147,13 @@ export function sanitizePropertyKeyframes(propertyKeyframes, effects = [], item 
     const seen = new Set();
     const keys = track
       .filter((key) => key && Number.isFinite(Number(key.position)))
+      .map(withCurrentEasing)
       .map((key) => ({
         // Positions come back as numbers from JSON, but a string one would land
         // every key on 0 and collapse the track — parse for the same reason.
         position: sanitizeNumber(Number.parseFloat(key.position), 0, { min: 0, max: 100 }),
         value: coerceValue ? coerceValue(key.value) : String(key.value ?? ''),
-        easing: Object.values(TransitionEasing).includes(key.easing) ? key.easing : TransitionEasing.EASE_IN_OUT,
+        easing: currentEasing(key.easing, TransitionEasing.EASE_IN_OUT),
         // A CUSTOM key's curve. This object literal is the whitelist — anything not
         // spelled out here is dropped on the next autosave, so the graph editor's
         // hand-shaped curves have to be carried explicitly. Kept only for CUSTOM so
@@ -1808,7 +1819,7 @@ export function sanitizeTimelineItem(item) {
       min: 0.05,
       max: isLocalAdvancedTransitionType(transitionType) ? ADVANCED_TRANSITION_MAX_DURATION : 4,
     }),
-    transitionEasing: Object.values(TransitionEasing).includes(item.transitionEasing) ? item.transitionEasing : TransitionEasing.EASE_IN_OUT,
+    transitionEasing: currentEasing(item.transitionEasing, TransitionEasing.EASE_IN_OUT),
     // Which clip animates over which. Only written when it is off the default,
     // so a project that never touched it round-trips byte-identical.
     ...(item.transitionOrder === TransitionOrder.PREV_OVER_NEXT
@@ -1942,13 +1953,13 @@ export function sanitizeTimelineItem(item) {
       : 'center',
     transitionInType: layerTransitionInType,
     transitionInDuration: sanitizeNumber(item.transitionInDuration, 1, { min: 0.1, max: 3 }),
-    transitionInEasing: Object.values(TransitionEasing).includes(item.transitionInEasing) ? item.transitionInEasing : TransitionEasing.EASE_IN_OUT,
+    transitionInEasing: currentEasing(item.transitionInEasing, TransitionEasing.EASE_IN_OUT),
     ...(transitionInOptions ? { transitionInOptions } : {}),
     customTransitionConfig: sanitizeCrossCustomConfig(item.customTransitionConfig),
     customTransitionInConfig: item.customTransitionInConfig ? sanitizeCustomLayerConfig(item.customTransitionInConfig, { defaultOpacity: 0 }) : null,
     transitionOutType: layerTransitionOutType,
     transitionOutDuration: sanitizeNumber(item.transitionOutDuration, 1, { min: 0.1, max: 3 }),
-    transitionOutEasing: Object.values(TransitionEasing).includes(item.transitionOutEasing) ? item.transitionOutEasing : TransitionEasing.EASE_IN_OUT,
+    transitionOutEasing: currentEasing(item.transitionOutEasing, TransitionEasing.EASE_IN_OUT),
     ...(transitionOutOptions ? { transitionOutOptions } : {}),
     customTransitionOutConfig: item.customTransitionOutConfig ? sanitizeCustomLayerConfig(item.customTransitionOutConfig, { defaultOpacity: 0 }) : null,
     textContent: typeof item.textContent === 'string' ? item.textContent : DEFAULT_TEXT_LAYER_TEXT,
@@ -1994,17 +2005,17 @@ export function sanitizeTimelineItem(item) {
     textBgInGrowStart: sanitizeNumber(item.textBgInGrowStart, 0, { min: 0, max: 600 }),
     textBgInGrowAppear: TEXT_BG_GROW_APPEAR.includes(item.textBgInGrowAppear) ? item.textBgInGrowAppear : 'none',
     textBgInGrowAppearDuration: sanitizeNumber(item.textBgInGrowAppearDuration, 0.4, { min: 0.05, max: 4 }),
-    textBgInGrowAppearEasing: Object.values(TransitionEasing).includes(item.textBgInGrowAppearEasing) ? item.textBgInGrowAppearEasing : TransitionEasing.EASE_OUT,
+    textBgInGrowAppearEasing: currentEasing(item.textBgInGrowAppearEasing, TransitionEasing.EASE_OUT),
     textBgOutGrowStart: sanitizeNumber(item.textBgOutGrowStart, 0, { min: 0, max: 600 }),
     textBgOutGrowAppear: TEXT_BG_GROW_APPEAR.includes(item.textBgOutGrowAppear) ? item.textBgOutGrowAppear : 'none',
     textBgOutGrowAppearDuration: sanitizeNumber(item.textBgOutGrowAppearDuration, 0.4, { min: 0.05, max: 4 }),
-    textBgOutGrowAppearEasing: Object.values(TransitionEasing).includes(item.textBgOutGrowAppearEasing) ? item.textBgOutGrowAppearEasing : TransitionEasing.EASE_IN,
+    textBgOutGrowAppearEasing: currentEasing(item.textBgOutGrowAppearEasing, TransitionEasing.EASE_IN),
     textBgInDuration: sanitizeNumber(item.textBgInDuration, 0.5, { min: 0.05, max: 4 }),
-    textBgInEasing: Object.values(TransitionEasing).includes(item.textBgInEasing) ? item.textBgInEasing : TransitionEasing.EASE_OUT,
+    textBgInEasing: currentEasing(item.textBgInEasing, TransitionEasing.EASE_OUT),
     textBgOutType: TEXT_BG_REVEAL_TYPES.includes(item.textBgOutType) ? item.textBgOutType : 'none',
     textBgOutStyle: TEXT_BG_REVEAL_STYLES.includes(item.textBgOutStyle) ? item.textBgOutStyle : 'wipe',
     textBgOutDuration: sanitizeNumber(item.textBgOutDuration, 0.4, { min: 0.05, max: 4 }),
-    textBgOutEasing: Object.values(TransitionEasing).includes(item.textBgOutEasing) ? item.textBgOutEasing : TransitionEasing.EASE_IN,
+    textBgOutEasing: currentEasing(item.textBgOutEasing, TransitionEasing.EASE_IN),
     ...(wordTimings.length ? { textWordTimings: wordTimings } : {}),
     // Voice link (voiceSync.js): the layer whose speech the word times come from.
     ...(sanitizeVoiceSource(item.textVoiceSource) ? { textVoiceSource: sanitizeVoiceSource(item.textVoiceSource) } : {}),
@@ -2059,12 +2070,11 @@ export function sanitizeTimelineItem(item) {
     textCounterStyle: COUNTER_STYLES.includes(item.textCounterStyle) ? item.textCounterStyle : COUNTER_DEFAULTS.textCounterStyle,
     textCounterDelay: sanitizeNumber(item.textCounterDelay, COUNTER_DEFAULTS.textCounterDelay, { min: 0, max: 3600 }),
     textCounterDuration: sanitizeNumber(item.textCounterDuration, COUNTER_DEFAULTS.textCounterDuration, { min: 0.05, max: 600 }),
-    // An enum KEY ('POWER3_OUT'); the keyframe-only curves have
+    // An enum KEY ('CUBIC_OUT'); the keyframe-only curves have
     // no meaning for a timed count.
-    textCounterEasing: typeof item.textCounterEasing === 'string' && TransitionEasing[item.textCounterEasing]
-      && item.textCounterEasing !== 'CUSTOM' && item.textCounterEasing !== 'HOLD'
-      ? item.textCounterEasing
-      : COUNTER_DEFAULTS.textCounterEasing,
+    textCounterEasing: ['CUSTOM', 'HOLD'].includes(currentEasingKey(item.textCounterEasing))
+      ? COUNTER_DEFAULTS.textCounterEasing
+      : currentEasingKey(item.textCounterEasing, COUNTER_DEFAULTS.textCounterEasing),
     textCounterStagger: sanitizeNumber(item.textCounterStagger, COUNTER_DEFAULTS.textCounterStagger, { min: 0, max: 10 }),
     textCounterWidth: item.textCounterWidth === 'fit' ? 'fit' : 'fixed',
     textCounterTabular: item.textCounterTabular !== false,

@@ -489,7 +489,7 @@ export function compileScript(script, caps, files = new Map()) {
           ...(el?.ghost ? { lineGhost: clamp(num(el.ghost, 20), 0, 100) } : {}), ...pos });
         const kf = {};
         const drawn = el?.draw !== false ? r3(Math.min(100, (0.9 / (end - start)) * 100)) : 0;
-        if (drawn) kf.lineTrimEnd = [{ position: 0, value: '0', easing: 'AE Out' }, { position: drawn, value: String(full), easing: 'Linear' }];
+        if (drawn) kf.lineTrimEnd = [{ position: 0, value: '0', easing: 'AE Out (leave)' }, { position: drawn, value: String(full), easing: 'Linear' }];
         if (el?.drain) {
           // `drain`: true empties it from the draw-on to the element's end; [start, end] (s into the element) empties it then
           const len = Math.max(1e-3, end - start);

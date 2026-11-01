@@ -76,7 +76,7 @@ matte, masks, particles, 3D) goes on from \`project.json\`: SKILL.md, "Beyond th
   \`startAt\` (s into the file) and \`volume\` (0–100, default muted). No entrance unless you set \`enter\`.
 - **Keyframes on any element** — your own motion: \`"keyframes": { "x": [[0, -400], [0.8, 0, "Smooth Glide"]], "scale": [[0, 0.9], [2, 1.05]] }\`
   — tracks x, y (px offsets from \`at\`), scale, rotate (deg), opacity (0–1); each key [seconds into the element, value, easing of the
-  segment after it — Smooth Glide, AE Smooth, Expo Out, Back Out, Elastic, Linear …]. They replace an entrance's keys on the same track;
+  segment after it — Smooth Glide, AE Smooth, Expo Out, Power, Punch, Apple Out, Back Out, Elastic, Linear …]. They replace an entrance's keys on the same track;
   one key holds that value for the whole element.
 - **Every element**: \`start\` / \`end\` (s within its scene; default: staggered 0.12 s, to the scene's end), \`enter\` / \`exit\` (keyframe presets, \`direction\` up | down | left | right
   for directional ones), \`effects\`: [{ "id", "params"? }], \`sound\` (played at its start), \`id\`, \`label\` (its name in the page's options), \`opacity\` (0–1),

@@ -27,12 +27,12 @@ export const COUNTER_STYLES = ['odometer', 'roll', 'count'];
 export const COUNTER_PROGRESS_KF = 'textCounterProgress';
 
 // Defaults tuned to the lab's #odometer: 1.8 s, three extra turns on the rightmost
-// column, left column landing first at ~55% of the run, Power3 Out.
+// column, left column landing first at ~55% of the run, Cubic Out.
 export const COUNTER_DEFAULTS = Object.freeze({
   textCounterStyle: 'odometer',
   textCounterDelay: 0,
   textCounterDuration: 1.8,
-  textCounterEasing: 'POWER3_OUT',
+  textCounterEasing: 'CUBIC_OUT',
   textCounterStagger: 0.15,
   textCounterWidth: 'fixed',
   textCounterTabular: true,

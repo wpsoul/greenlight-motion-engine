@@ -149,7 +149,7 @@ missing ones take the default shown, and out-of-range values are clamped on load
   "revealDuration": 0.6,       // seconds, for ONE cell
   "revealStagger": 0.05,       // seconds between cells (negative runs the wave backwards)
   "revealStaggerBy": "index",  // index | ring | distance | random
-  "revealEase": "Power2 Out",
+  "revealEase": "Ease Out",
   "revealOut": false,          // cells leave again before the layer ends, in the same order
 
   // ── layout slots + morph (Grid Morph) ──
@@ -168,7 +168,7 @@ missing ones take the default shown, and out-of-range values are clamped on load
   "layoutMix": 0,              // 0…layouts.length-1 — keyframe `gr:layoutMix` to morph; integer = exactly that slot (single layout evaluated); a Hold key hard-cuts
   "morphStagger": 0.35,        // 0–0.9 — spreads the move across cell ranks (0 = all cells slide together)
   "morphStaggerBy": "index",   // index | ring | distance | random — ranked on the layout being LEFT
-  "morphEase": "Power2 Smooth",// per-cell ramp (TransitionEasing name)
+  "morphEase": "Smooth",// per-cell ramp (TransitionEasing name)
   "morphArc": 60,              // px — bulges each cell's travel outward mid-move (negative implodes); exactly zero at both endpoints
   "morphSpin": 0               // whole turns added over the blend; integers land back on themselves
 }

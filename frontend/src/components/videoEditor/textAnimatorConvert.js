@@ -8,22 +8,24 @@ const factory = function (T, P) {
   // animators store the display names ('Expo Out').
   const EASE_NAME = {
     LINEAR: 'Linear', EASE_IN: 'Ease In', EASE_OUT: 'Ease Out', EASE_IN_OUT: 'Smooth',
-    AE_IN: 'AE In', AE_SMOOTH: 'AE Smooth', AE_OUT: 'AE Out',
+    AE_IN: 'AE In (arrive)', AE_SMOOTH: 'AE Smooth', AE_OUT: 'AE Out (leave)',
     SINE_IN: 'Sine In', SINE_OUT: 'Sine Out', SINE_IN_OUT: 'Sine Smooth',
-    CUBIC_IN_OUT: 'Cubic Smooth', CUBIC_IN: 'Cubic In', CUBIC_OUT: 'Cubic Out',
+    CUBIC_IN: 'Cubic In', CUBIC_OUT: 'Cubic Out',
     EXPO_IN: 'Expo In', EXPO_OUT: 'Expo Out', EXPO_IN_OUT: 'Expo Smooth',
-    CIRC_IN: 'Circ In', CIRC_OUT: 'Circ Out', CIRC_IN_OUT: 'Circ Smooth',
+    POWER: 'Power', PUNCH: 'Punch', APPLE_OUT: 'Apple Out',
     BACK_IN: 'Back In', BACK_OUT: 'Back Out', BACK_IN_OUT: 'Back Smooth',
     BOUNCE_OUT: 'Bounce Out', ELASTIC_OUT: 'Elastic',
     NATURAL: 'Natural', SLOW_DOWN: 'Slow Down', OVERSHOOT: 'Overshoot', IMPULSE: 'Impulse', SWING: 'Swing',
     SMOOTH_OVERSHOOT: 'Smooth Overshoot',
-    POWER1_IN: 'Power1 In', POWER1_OUT: 'Power1 Out', POWER1_IN_OUT: 'Power1 Smooth',
-    POWER2_IN: 'Power2 In', POWER2_OUT: 'Power2 Out', POWER2_IN_OUT: 'Power2 Smooth',
-    POWER3_IN: 'Power3 In', POWER3_OUT: 'Power3 Out', POWER3_IN_OUT: 'Power3 Smooth',
-    POWER4_IN: 'Power4 In', POWER4_OUT: 'Power4 Out', POWER4_IN_OUT: 'Power4 Smooth',
+    // Retired keys (the app's RETIRED_EASING_KEYS): the curve that replaced each.
+    POWER1_IN: 'Sine In', POWER1_OUT: 'Sine Out', POWER1_IN_OUT: 'Sine Smooth',
+    POWER2_IN: 'Ease In', POWER2_OUT: 'Ease Out', POWER2_IN_OUT: 'Smooth',
+    POWER3_IN: 'Cubic In', POWER3_OUT: 'Cubic Out', POWER3_IN_OUT: 'Natural',
+    POWER4_IN: 'Cubic In', POWER4_OUT: 'Power', POWER4_IN_OUT: 'Natural',
+    CUBIC_IN_OUT: 'Natural', CIRC_IN: 'Cubic In', CIRC_OUT: 'Slow Down', CIRC_IN_OUT: 'Natural',
   };
   const curveOf = (v, fallback) => {
-    const n = EASE_NAME[v] || v;
+    const n = EASE_NAME[v] || T.RETIRED_CURVES[v] || v;
     return T.CURVE_NAMES.includes(n) ? n : fallback;
   };
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));

@@ -84,7 +84,7 @@ in the last frames.
 | [Center Burst](#center-burst) | The middle words burst out first and the others follow, wobbling into place; at the end they shrink away from the outside in | words | each word's centre | Elastic · Back In |
 | [Pendulum](#pendulum) | Words hang from their top edge and swing in like a pendulum until they settle; at the end they swing away | words | each word's centre | Elastic · Anticipate |
 | [Spin Pop](#spin-pop) | Each word spins a full turn in place as it grows in; at the end each spins back out | words | each word's centre | Back Out · Back In |
-| [Domino](#domino) | Words stand up on their bottom-left corner and drop flat with a bounce, one after another; at the end they fall over | words | each word's bottom-left corner | Bounce Out · Power2 In |
+| [Domino](#domino) | Words stand up on their bottom-left corner and drop flat with a bounce, one after another; at the end they fall over | words | each word's bottom-left corner | Bounce Out · Ease In |
 | [Flip Pop](#flip-pop) | Words flip up into view in 3D, past flat and back; at the end they tip back and flip away | words | each word's centre | Overshoot · Anticipate |
 | [Card Turn](#card-turn) | Words turn to face you like cards, one by one, overshooting the turn; at the end they turn away | words | each word's centre | Overshoot · Anticipate |
 | [Slam Zoom](#slam-zoom) | Words slam down from huge, punch past their size and settle; at the end they fly back at the camera | words | each word's centre | Overshoot · Expo In |
@@ -93,7 +93,7 @@ in the last frames.
 | [Whip](#whip) | Words whip in from the left leaning into the move, snap past and settle; at the end they lean back and whip off to the right | words | each word's centre | Overshoot · Anticipate |
 | [Rubber Letters](#rubber-letters) | Letters spring out of thin slivers and wobble like rubber; at the end they stretch tall and squash flat | letters | each letter's centre | Elastic · Anticipate |
 | [Pop Letters](#pop-letters) | Letters pop up in random order, each with a little twist; at the end they swell and pop away at random | letters | each letter's centre | Overshoot · Anticipate |
-| [Drop Swing](#drop-swing) | Words drop in tilted from above and bounce as they land; at the end they fall out of the frame | words | each word's centre | Bounce Out · Power2 In |
+| [Drop Swing](#drop-swing) | Words drop in tilted from above and bounce as they land; at the end they fall out of the frame | words | each word's centre | Bounce Out · Ease In |
 | [Coin Spin](#coin-spin) | Letters spin in like coins, one after another, and rock to a stop; at the end they spin away | letters | each letter's centre | Overshoot · Anticipate |
 | [Converge](#converge) | Words shrink down from far bigger, the outer ones first, and settle; at the end they burst outward | words | each word's centre | Expo Out · Expo In |
 | [Roll In](#roll-in) | Letters roll in from the right like wheels and rock back into place; at the end they roll off to the left | letters | each letter's centre | Overshoot · Back In |
@@ -215,7 +215,7 @@ Words stand up on their bottom-left corner and drop flat with a bounce, one afte
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.14, "duration": 1, "curve": "Bounce Out"},
       "effects": [{"pid": "p1", "type": "rotation", "angle": -90}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
     { "aid": "a2", "name": "Fall out",
-      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.08, "duration": 0.6, "curve": "Power2 In"},
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.08, "duration": 0.6, "curve": "Ease In"},
       "effects": [{"pid": "p3", "type": "rotation", "angle": 90}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
   ],
   "textAnimatorPivotX": -100,
@@ -371,7 +371,7 @@ Words drop in tilted from above and bounce as they land; at the end they fall ou
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.08, "duration": 0.9, "curve": "Bounce Out"},
       "effects": [{"pid": "p1", "type": "position", "x": 0, "y": -120}, {"pid": "p2", "type": "rotation", "angle": 25}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
     { "aid": "a2", "name": "Fall out",
-      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.04, "duration": 0.5, "curve": "Power2 In"},
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.04, "duration": 0.5, "curve": "Ease In"},
       "effects": [{"pid": "p4", "type": "position", "x": 0, "y": 120}, {"pid": "p5", "type": "rotation", "angle": -25}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
   ]
 }

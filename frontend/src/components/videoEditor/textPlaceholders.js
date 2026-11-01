@@ -93,7 +93,7 @@ export const CYCLE_DEFAULTS = Object.freeze({
   textCycleDelay: 0,
   textCycleHold: 1.2,
   textCycleDuration: 0.45,
-  textCycleEasing: 'POWER3_OUT',
+  textCycleEasing: 'CUBIC_OUT',
   textCycleLoop: true,
   textCycleWidth: 'fit',
   textCycleDirection: 'up',
@@ -157,7 +157,7 @@ const EASING_VALUE_RE = /^[a-z][a-z0-9_]{0,31}$/;
 const KF_ID_RE = /^[a-z0-9]{1,8}$/;
 
 // Option schemas. `num: [min, max]` numbers, `values` enums, `easing` a TransitionEasing
-// key written lowercase (power3_out), `kf` a keyframe-track id. The same table drives
+// key written lowercase (cubic_out), `kf` a keyframe-track id. The same table drives
 // parsing, the card fields and serialization.
 export const PLACEHOLDER_OPTIONS = Object.freeze({
   number: {

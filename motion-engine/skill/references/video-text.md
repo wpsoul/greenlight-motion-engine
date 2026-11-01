@@ -150,9 +150,9 @@ Orders {{{COUNTER:0-2,480; style=roll; duration=2.5; easing=expo_out}}} in {{{TI
 
 | Type | Options (defaults) |
 |---|---|
-| COUNTER | `style` odometer\|roll\|count (odometer) · `start` s (0) · `duration` s (1.8) · `easing` a TransitionEasing key in lowercase, e.g. `power3_out` (power3_out) · `width` fixed\|fit (fixed) · `digits` tabular\|natural, Count only (tabular) · `turns` 0–10 (3) · `lands` left\|right\|together (left) · `cascade` 0–90 % (45) · `direction` auto\|up\|down (auto) · `blur` 0–100 % (35) · `kf` a track id |
+| COUNTER | `style` odometer\|roll\|count (odometer) · `start` s (0) · `duration` s (1.8) · `easing` a TransitionEasing key in lowercase, e.g. `cubic_out` (cubic_out) · `width` fixed\|fit (fixed) · `digits` tabular\|natural, Count only (tabular) · `turns` 0–10 (3) · `lands` left\|right\|together (left) · `cascade` 0–90 % (45) · `direction` auto\|up\|down (auto) · `blur` 0–100 % (35) · `kf` a track id |
 | TIMER | the same keys; defaults are a real clock: `style` count, `duration` = the timer's own span (05:00 → 300 s), `easing` linear |
-| CYCLE | `style` roll\|fade\|blur (roll) · `start` (0) · `hold` s per word (1.2) · `duration` transition s (0.45) · `easing` (power3_out) · `width` fit\|fixed (fit) · `direction` up\|down, roll only (up) · `loop` on\|off (on) |
+| CYCLE | `style` roll\|fade\|blur (roll) · `start` (0) · `hold` s per word (1.2) · `duration` transition s (0.45) · `easing` (cubic_out) · `width` fit\|fixed (fit) · `direction` up\|down, roll only (up) · `loop` on\|off (on) |
 | SCRAMBLE | `start` (0) · `duration` (1.2) · `chars` symbols\|letters\|digits\|binary\|blocks (symbols) · `order` ltr\|rtl\|random (ltr) · `flicker` glyph changes/s (18) |
 | TIMECODE / FRAME | no options — `clip` and the format are the token body (`{{{TIMECODE:clip mm:ss}}}`) |
 
@@ -221,7 +221,7 @@ Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid
 | `delay` | −60…600 s (0) | In: after the layer starts. Out: before it ends. Voice: after the word is spoken (negative = before). |
 | `stagger` | 0…10 s (0.06) | Time: between one unit's turn and the next. |
 | `duration` | 0…20 s (0.6) | How long each unit takes (0 = instant). For `active`/`stay` it is the fade-in. |
-| `curve` | the app's easing names (`Ease Out`) | Each unit's own easing: `Linear`, `Ease In/Out`, `Smooth`, `Power1–4 In/Out/Smooth`, `Sine/Cubic/Expo/Circ/Back In/Out/Smooth`, `Bounce Out`, `Elastic`, `Overshoot`, `Smooth Overshoot`, `Impulse`, `Swing`, `Anticipate`, `Natural`, `Slow Down`, `AE In/Smooth/Out`. Back, Bounce, Elastic and the Overshoots land each unit past its rest and settle (transforms follow the overshoot, colours clamp). `Anticipate` is an exit: the unit winds back the other way (to −0.38 of the move at 58 %), then snaps through in the last frames. `Custom` plays `bezier`. |
+| `curve` | the app's easing names (`Ease Out`) | Each unit's own easing: `Linear`, `Ease In/Out`, `Smooth`, `Smooth Glide`, `Glide Easing Stop`, `Sine/Expo/Back In/Out/Smooth`, `Cubic In/Out`, `Power`, `Punch`, `Apple Out`, `Bounce Out`, `Elastic`, `Overshoot`, `Smooth Overshoot`, `Impulse`, `Swing`, `Anticipate`, `Natural`, `Slow Down`, `AE In (arrive)`, `AE Smooth`, `AE Out (leave)` (a retired name such as `Power2 Smooth` loads as its replacement). Back, Bounce, Elastic and the Overshoots land each unit past its rest and settle (transforms follow the overshoot, colours clamp). `Anticipate` is an exit: the unit winds back the other way (to −0.38 of the move at 58 %), then snaps through in the last frames. `Custom` plays `bezier`. |
 | `bezier` | `[x1, y1, x2, y2]` or null (null) | The `Custom` curve's handles, the same shape as a keyframe's `bezier` (x 0…1, y −3…4; past 0…1 = overshoot). Write it together with `"curve": "Custom"`: a `Custom` without it plays `Ease Out`, and any named `curve` drops it. |
 | `hold` | 0…600 s (0) | `active`: how long a unit stays lit; 0 = until the next unit's turn (voice: until the next word starts). |
 | `fadeOut` | 0…20 s (0) | `active`: fade back down after `hold`. |
@@ -297,16 +297,16 @@ Worked examples (spread onto a text item; durations assume a 4 s layer):
 
 // Fade Up (Time): words rise in 0.06 s apart, and leave upward at the end.
 "textAnimators": [
-  { "aid": "a1", "name": "In", "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.06, "duration": 0.8, "curve": "Power2 Smooth" },
+  { "aid": "a1", "name": "In", "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.06, "duration": 0.8, "curve": "Smooth" },
     "effects": [ { "pid": "p1", "type": "position", "x": 0, "y": 50 }, { "pid": "p2", "type": "opacity", "opacity": 0 } ] },
-  { "aid": "a2", "name": "Out", "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.7, "curve": "Power2 Smooth" },
+  { "aid": "a2", "name": "Out", "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.7, "curve": "Smooth" },
     "effects": [ { "pid": "p3", "type": "position", "x": 0, "y": -50 }, { "pid": "p4", "type": "opacity", "opacity": 0 } ] }]
 
 // Energetic in and out (Swing Pop and 20 more, each two Time animators): video-text-kinetic.md.
 // Every other app preset (typing reveals, text on shapes, highlights, loops, decoders, voice): video-text-presets.md.
 
 // Caption karaoke on the voice (needs textWordTimings): a box sits under each word while it is spoken.
-"textAnimators": [{ "aid": "a1", "name": "Spoken box", "range": { "drive": "voice", "animate": "active", "basedOn": "words", "duration": 0.08, "curve": "Power2 Out", "fadeOut": 0.08 },
+"textAnimators": [{ "aid": "a1", "name": "Spoken box", "range": { "drive": "voice", "animate": "active", "basedOn": "words", "duration": 0.08, "curve": "Ease Out", "fadeOut": 0.08 },
   "effects": [ { "pid": "p1", "type": "box", "color": "#33efab", "padX": 12, "padY": 4, "radius": 14, "grow": false }, { "pid": "p2", "type": "fill", "color": "#0b0d0c" } ] }]
 
 // Letters typed at speaking pace behind a caret (captions).
@@ -359,9 +359,9 @@ PUT /api/moodboards/{board_id}/video-projects/{project_id}
           "textFontWeight": 800, "textAlign": "center",
           "panX": 0, "panY": 35,
           "textAnimators": [
-            { "aid": "a1", "name": "In", "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.06, "duration": 0.8, "curve": "Power2 Smooth" },
+            { "aid": "a1", "name": "In", "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.06, "duration": 0.8, "curve": "Smooth" },
               "effects": [ { "pid": "p1", "type": "position", "x": 0, "y": 50 }, { "pid": "p2", "type": "opacity", "opacity": 0 } ] },
-            { "aid": "a2", "name": "Out", "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.7, "curve": "Power2 Smooth" },
+            { "aid": "a2", "name": "Out", "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.7, "curve": "Smooth" },
               "effects": [ { "pid": "p3", "type": "position", "x": 0, "y": -50 }, { "pid": "p4", "type": "opacity", "opacity": 0 } ] }
           ]
         }

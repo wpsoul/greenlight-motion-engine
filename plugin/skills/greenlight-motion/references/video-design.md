@@ -34,10 +34,13 @@ and check every version against them.
 
 ## Easing by intent
 
-- Entrances: `AE Out` or `Expo Out` (fast start, soft landing). Camera and big moves: `AE Smooth`.
+- Entrances: `AE In (arrive)`, `Expo Out` or `Power` (fast start, soft landing); UI panels and drawers: `Apple Out`.
+  Camera and big moves: `AE Smooth`.
+- Scene changes on the beat, a logo hit, a screen swipe: `Punch` (slow wind-up, hard hit, long tail).
 - A layer that passes through (in, glide, out): `Smooth Glide` with the `glide` expression — the Glide keyframe
   presets build it (video-keyframes.md).
-- Playful arrivals: `Back Out` or `Overshoot`. Exits: `Ease In`.
+- Playful arrivals: `Back Out` or `Overshoot`; a real spring: the `spring` expression (Snappy for buttons, icons and
+  pop-ins, Gentle for mascots, big cards and the camera). Exits: `Ease In` or `AE Out (leave)`.
 - `Linear` only for constant motion: tickers, rotation, progress along a path.
 
 ## Text animation

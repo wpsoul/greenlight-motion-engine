@@ -44,7 +44,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.6,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -73,7 +73,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.5,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -113,7 +113,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.6,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -142,7 +142,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.5,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -182,7 +182,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.7,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -208,7 +208,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.5,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -245,7 +245,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.6,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -280,7 +280,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.45,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -319,7 +319,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.6,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -348,7 +348,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.5,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -486,7 +486,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.4,
-     "curve": "Power2 In"
+     "curve": "Ease In"
     },
     "effects": [
      [
@@ -532,7 +532,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.5,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -568,7 +568,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.4,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -608,7 +608,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.12,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -681,7 +681,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.4,
-     "curve": "Power2 In"
+     "curve": "Ease In"
     },
     "effects": [
      [
@@ -750,7 +750,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.3,
-     "curve": "Power2 In"
+     "curve": "Ease In"
     },
     "effects": [
      [
@@ -790,7 +790,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.7,
-     "curve": "Power3 Out"
+     "curve": "Cubic Out"
     },
     "effects": [
      [
@@ -824,7 +824,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.4,
-     "curve": "Power2 In"
+     "curve": "Ease In"
     },
     "effects": [
      [
@@ -889,7 +889,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.35,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -954,7 +954,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.35,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1018,7 +1018,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.15,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1075,7 +1075,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.25,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1144,7 +1144,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.3,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1166,7 +1166,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.3,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1224,7 +1224,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.35,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1253,7 +1253,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.3,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1384,7 +1384,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.5,
-     "curve": "Power3 Out"
+     "curve": "Cubic Out"
     },
     "effects": [
      [
@@ -1413,7 +1413,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.25,
-     "curve": "Power2 In"
+     "curve": "Ease In"
     },
     "effects": [
      [
@@ -1452,7 +1452,7 @@ export const CLASSIC_PRESETS = [
    "textBgOutType": "mask-right",
    "textBgOutStyle": "grow",
    "textBgOutDuration": 0.3,
-   "textBgOutEasing": "Power2 In",
+   "textBgOutEasing": "Ease In",
    "textBgOutGrowStart": 0,
    "textBgOutGrowAppear": "scale-in",
    "textBgOutGrowAppearDuration": 0.15,
@@ -1638,7 +1638,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.3,
-     "curve": "Power2 Out"
+     "curve": "Ease Out"
     },
     "effects": [
      [
@@ -1667,7 +1667,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.2,
-     "curve": "Power2 In"
+     "curve": "Ease In"
     },
     "effects": [
      [
@@ -1693,7 +1693,7 @@ export const CLASSIC_PRESETS = [
    "textBgInType": "mask-right",
    "textBgInStyle": "grow",
    "textBgInDuration": 0.6,
-   "textBgInEasing": "Power3 Out",
+   "textBgInEasing": "Cubic Out",
    "textBgInDelay": 0,
    "textBgInGrowStart": 0,
    "textBgInGrowAppear": "fade",
@@ -1702,7 +1702,7 @@ export const CLASSIC_PRESETS = [
    "textBgOutType": "mask-right",
    "textBgOutStyle": "grow",
    "textBgOutDuration": 0.4,
-   "textBgOutEasing": "Power2 In",
+   "textBgOutEasing": "Ease In",
    "textBgOutGrowStart": 0,
    "textBgOutGrowAppear": "none",
    "textBgOutGrowAppearDuration": 0.4,
@@ -1761,7 +1761,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.2,
-     "curve": "Power2 In"
+     "curve": "Ease In"
     },
     "effects": [
      [
@@ -1842,7 +1842,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.4,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1904,7 +1904,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.5,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -1940,7 +1940,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.4,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -2001,7 +2001,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.7,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -2027,7 +2027,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.5,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -2088,7 +2088,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.4,
-     "curve": "Power2 Smooth"
+     "curve": "Smooth"
     },
     "effects": [
      [
@@ -2159,7 +2159,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "in",
      "duration": 0.14,
-     "curve": "Power2 Out"
+     "curve": "Ease Out"
     },
     "effects": [
      [
@@ -2199,7 +2199,7 @@ export const CLASSIC_PRESETS = [
      "drive": "time",
      "animate": "out",
      "duration": 0.25,
-     "curve": "Power2 In"
+     "curve": "Ease In"
     },
     "effects": [
      [
