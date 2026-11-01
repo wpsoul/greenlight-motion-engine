@@ -27,7 +27,7 @@
 
 import { TransitionEasing } from './types.js';
 import { EASING_BEZIER, bezierHandlesFor, sanitizeBezier } from './easingCurves.js';
-import { resolveSpeedCurve, getSpeedAtTime, splitSpeedSegmentAt, SPEED_MIN, SPEED_MAX } from './speedUtils.js';
+import { resolveSpeedCurve, getSpeedAtTime, splitSpeedSegmentAt, speedCurveToRate, SPEED_MIN, SPEED_MAX } from './speedUtils.js';
 
 // The track key. Deliberately a plain name rather than a namespaced one
 // (`rig:`, `msk:`, `mp:`): there is exactly one speed track per layer, and the
@@ -148,9 +148,13 @@ export function speedTrackToPoints(track, easeFnFor = null) {
  * written as an easing at all — an easing is normalised by the value delta, and
  * that one is zero. Those segments come back as Linear, which is what the curve
  * looked like before anyone dragged a handle onto a flat run.
+ *
+ * A curve built on the plot's scale (speedUtils, `tan`) goes through its rate-space
+ * handles first: a key's easing interpolates the RATE, so the keys hold a close copy
+ * of that curve, not the identical one.
  */
 export function speedPointsToTrack(points) {
-  const curve = resolveSpeedCurve(points);
+  const curve = resolveSpeedCurve(speedCurveToRate(points));
   if (!curve) return null;
   const { anchors } = curve;
   const track = [];
