@@ -235,6 +235,17 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // source-local, so evaluating them against trimStart + clip time keeps a
     // split/trimmed caption's words on-voice in both halves.
     const tSrcSec = (Number(item.trimStart) || 0) + clamp(progress, 0, 1) * (durationSec || 0);
+    // The text's OWN animation — Text Animators with their `txa:` tracks and caret, and
+    // the caption-bar reveal — runs through the Speed Curve like a MotionFast template's:
+    // timeline seconds in, source seconds out (calculateVideoTime), so a Slow Mo curve
+    // holds the middle of the typing and a ramp speeds it up. Layer keyframes, keyed
+    // paints, placeholders and the voice clock stay in timeline time. On a flat 1× curve
+    // this is the timeline clock.
+    const animSpan = Math.max(0, (Number(item.trimEnd) || 0) - (Number(item.trimStart) || 0)) || (durationSec || 0);
+    const timelineSecNow = clamp(progress, 0, 1) * (durationSec || 0);
+    const remappedSec = calculateVideoTime(item, timelineSecNow) - (Number(item.trimStart) || 0);
+    const animSec = Number.isFinite(remappedSec) ? clamp(remappedSec, 0, animSpan) : timelineSecNow;
+    const animPct = animSpan > 0 ? (animSec / animSpan) * 100 : clamp(progress, 0, 1) * 100;
     // A `textColor` keyframe track overrides the static paint. Keys may hold a
     // solid OR a full CSS gradient — the interpolator blends both, and every
     // downstream read (glyph paint, outline fallback, gradient detection)
@@ -552,13 +563,13 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     const txaVoice = wordWinSec ? { t: tSrcSec, wins: wordWinSec } : null;
     const txaRun = () => {
       const pk = item.propertyKeyframes;
-      const pct = clamp(progress, 0, 1) * 100;
+      const pct = animPct;
       return txaEvaluate({
         animators: txaList,
         units: txaUnits(),
         counts: txaCounts,
-        time: clamp(progress, 0, 1) * (durationSec || 0),
-        clipSec: durationSec || 0,
+        time: animSec,
+        clipSec: animSpan,
         voice: txaVoice,
         value: (aid, chan, stored) => {
           const track = pk?.[`${TXA_KF_PREFIX}${aid}:${chan}`];
@@ -706,15 +717,15 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       // the signature as a value. So the clock is folded in only when the reveal is
       // live — a plain label's signature is the same on every frame and it never
       // repaints.
-      const textPaintClock = bgInType !== 'none' || bgOutType !== 'none' ? progress : 0;
+      const textPaintClock = bgInType !== 'none' || bgOutType !== 'none' ? animSec : 0;
       // Text Animators only while they move (a track, Flow, Wiggle, a Scramble rate, a
       // blinking caret, a Time / Voice cascade in flight): the engine's motion key is the
       // time then, and a fixed token while a cascade rests, so a settled caption is a
       // cached plate again.
       const txaClock = txaMoves && drawUnits.length
         ? txaMotionKey(txaList, (aid) => txaHasTrack(item.propertyKeyframes, aid), {
-          time: clamp(progress, 0, 1) * (durationSec || 0),
-          clipSec: durationSec || 0,
+          time: animSec,
+          clipSec: animSpan,
           units: txaUnits(),
           counts: txaCounts,
           voice: txaVoice,
@@ -902,7 +913,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         }
       }
     }
-    const tSecNow = clamp(progress, 0, 1) * (durationSec || 0);
+    const tSecNow = animSec;
     const fillForBox = (value, box, fallback) => (
       isCssGradient(value)
         ? (buildCanvasGradient(ctx, value, box) || gradientFirstStopColor(value, fallback))
@@ -1283,8 +1294,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     if ((bgEnabled || borderEnabled) && !textPathOn) {
       // Reveal window: In plays over textBgInDuration seconds starting
       // textBgInDelay into the item (the bar is absent during the delay), Out
-      // over the last textBgOutDuration — the same item-local clock (tSecNow)
-      // the split reveal uses. Whichever window is active supplies the mask;
+      // over the last textBgOutDuration — the text's animation clock (tSecNow,
+      // through the Speed Curve) the split reveal uses. Whichever window is active supplies the mask;
       // on an item shorter than both windows the Out wins so the bar still
       // clears the frame before the item ends.
       // Grow Shape's appearance runs on its own duration inside the same slot
@@ -1295,13 +1306,13 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       let bgRevealSlot = 'in';
       let bgReveal = 1;
       let bgAppear = null;
-      if (bgOutType !== 'none' && durationSec > 0) {
+      if (bgOutType !== 'none' && animSpan > 0) {
         // Mirrored sequence on the way out: the bar retracts to its seed first,
         // then the seed zooms away over the item's last appear-duration seconds.
         const outSeq = bgOutStyle === 'grow' && bgOutAppear === 'scale-in';
-        const q = clamp((tSecNow - Math.max(0, durationSec - bgOutDuration - (outSeq ? bgOutAppearDuration : 0))) / bgOutDuration, 0, 1);
+        const q = clamp((tSecNow - Math.max(0, animSpan - bgOutDuration - (outSeq ? bgOutAppearDuration : 0))) / bgOutDuration, 0, 1);
         const aq = bgOutAppear !== 'none'
-          ? clamp((tSecNow - Math.max(0, durationSec - bgOutAppearDuration)) / bgOutAppearDuration, 0, 1) : 0;
+          ? clamp((tSecNow - Math.max(0, animSpan - bgOutAppearDuration)) / bgOutAppearDuration, 0, 1) : 0;
         if (q > 0 || aq > 0) {
           bgRevealType = bgOutType;
           bgRevealStyle = bgOutStyle;
@@ -1477,7 +1488,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // engine's caretRect), drawn over the glyphs.
     if (txaEval && txaEval.carets.length && drawUnits.length && !isMask && !textPathOn) {
       const cells = txaCells();
-      const tNow = clamp(progress, 0, 1) * (durationSec || 0);
+      const tNow = animSec;
       ctx.save();
       ctx.shadowColor = 'rgba(0,0,0,0)';
       for (const c of txaEval.carets) {

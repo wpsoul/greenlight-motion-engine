@@ -5578,6 +5578,34 @@ button.ve-clip-proxy-toggle.ve-clip-proxy-badge--orig:hover {
   cursor: pointer;
 }
 
+/* Under the plot: where the source frames land on the clip's own timeline — ticks
+   close together where it plays fast, far apart where it is slow. Inset by the plot's
+   1px border so a tick sits under the point of the curve it belongs to. */
+.ve-speed-lane {
+  position: relative;
+  height: 12px;
+  margin: 2px 1px 0;
+}
+
+.ve-speed-lane svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.ve-speed-lane-tick {
+  stroke: #3d4442;
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.ve-speed-lane-ph {
+  stroke: #7ff1e3a0;
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
 /* Presets */
 .ve-presets-section {
   display: flex;
