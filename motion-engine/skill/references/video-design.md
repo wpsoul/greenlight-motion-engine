@@ -30,7 +30,7 @@ and check every version against them.
 - Shapes and pictures enter in 0.4–0.8 s; exits are faster than entrances.
 - A text animation takes at least 0.8–1 s over the whole line, first unit in to last unit settled, unless the video
   needs snap (a beat hit, a glitch flick): faster text flashes past before it is read. The arithmetic per kind of
-  animation: video-projects.md, Text animation pace.
+  animation: [Text animation pace](#text-animation-pace).
 
 ## Easing by intent
 
@@ -38,22 +38,50 @@ and check every version against them.
   Camera and big moves: `AE Smooth`.
 - Scene changes on the beat, a logo hit, a screen swipe: `Punch` (slow wind-up, hard hit, long tail).
 - A layer that passes through (in, glide, out): `Smooth Glide` with the `glide` expression — the Glide keyframe
-  presets build it (video-keyframes.md).
+  presets build it ([video-keyframes.md](video-keyframes.md)).
 - Playful arrivals: `Back Out` or `Overshoot`; a real spring: the `spring` expression (Snappy for buttons, icons and
-  pop-ins, Gentle for mascots, big cards and the camera). Exits: `Ease In` or `AE Out (leave)`.
+  pop-ins, Gentle for mascots, big cards and the camera). Exits: `Ease In` or `AE Out (leave)`; the Kinetic recipes'
+  `Anticipate` exits (wind back, then snap away) are the exception and stay as tuned.
 - `Linear` only for constant motion: tickers, rotation, progress along a path.
 
 ## Text animation
 
 - Animate words or letters, never a whole line at once — the text presets do this.
-- One family per video. Calm presets for lines and captions: Glide Text (`glide-text`), Classic Fade Up
-  (`classic-fade-up`), Classic Rise (Mask) (`classic-rise-mask`); Focus Type (`focus-type`) for a title.
-- Punchy presets that tilt or overshoot — Swing Pop (`swing-pop`), Whip (`whip`), Letter Vortex (`letter-vortex`) —
-  only on 1–3 words when the video wants energy. On a longer caption they read cheap.
+- One family per video. Calm presets for lines and captions: Classic Fade Up (`classic-fade-up`), Classic Rise (Mask)
+  (`classic-rise-mask`), Glide Text (`glide-text`); Focus Type (`focus-type`) for a title. All are in
+  [video-text-presets.md](video-text-presets.md).
+- Punchy presets that tilt or overshoot ([video-text-kinetic.md](video-text-kinetic.md): Swing Pop (`swing-pop`), Whip (`whip`),
+  Letter Vortex (`letter-vortex`)…) only on short titles, hooks and calls to action — up to about 5 words, or 2–4 short
+  stacked lines — and only when the video wants energy. On a longer line or a caption under speech they read cheap.
 - Glide Continuous (`glide-continuous`) and Glide Soft Stop (`glide-soft-stop`) never let the text rest: use them
   only when the user asks for drifting text.
 - On a coloured card, pick a preset without a colour band (Classic Rise (Mask), Classic Fade Up): a band's colour can
   clash with the card.
+
+## Text animation pace
+
+By default, text that animates in, animates out or gets a one-time pass (a sweep, a highlight, a typed line) takes
+**at least 0.8–1 s**, counted from the moment its first unit starts to the moment its last unit settles. Faster than
+that, the words flash past before anyone can read them. In a Video Editor project the rule holds however the motion is
+built:
+
+- **Advanced Animations on Time** (`textAnimators[].range.drive: "time"`): the span is
+  `(units − 1) × stagger + duration`. For example, 4 words with `stagger` 0.06 and `duration` 0.8 take 0.98 s. For
+  moves (rise, slide, scale, rotate, blur), reach the span with `duration`, because a long `stagger` makes a long line
+  crawl. A typewriter (`duration` 0) gets its pace from `stagger`.
+- **Keyframes** (`txa:` range tracks such as Start or Offset, or a text layer's own position, scale and opacity
+  tracks): the first and last key of one move sit at least 0.8 s apart. Key positions are % of the layer, so a move
+  from `p1` to `p2` lasts `(p2 − p1) / 100 × layer seconds`. On a layer with a speed curve, a `txa:` key's position is
+  a % of the clip's source length (`trimEnd − trimStart`) instead, so time the move on that clock
+  ([video-text.md](video-text.md)).
+- **Layer entrances and exits** on a text layer: `transitionInDuration` / `transitionOutDuration` of 0.8 or more
+  (the most they take is 3 s).
+- **Recipes** from [video-text-kinetic.md](video-text-kinetic.md) and [video-text-presets.md](video-text-presets.md) keep their tuned timing.
+  On very short text (one or two words), where the span works out under 0.8 s, raise `duration` until it reaches 0.8 s.
+
+Go faster only when the edit really needs it: the user asks for snappy or fast text, a word hits on a beat or a fast
+cut, a glitch or scramble flicks, the layer is too short to fit a 0.8 s move, or the animator uses `drive: "voice"`
+(the speech sets the pace there).
 
 ## Transitions and camera
 
@@ -70,6 +98,10 @@ and check every version against them.
 
 - A soft whoosh on each transition and on the first headline is a good base. `data-1` or `selection-data-click` for
   UI-like pops, `cinematic-transition-13` for one big reveal.
+- Take sound effects from the user's Sound Library first
+  (media.md (GreenLight Dash only)). The ids above are GreenLight Motion library sounds, not
+  Sound Library files: `GET /api/motion-sounds/v1/<id>.wav` serves one (e.g. `/api/motion-sounds/v1/data-1.wav`). Save
+  it into the board folder and use the board url as an `audio` clip's `url`.
 
 ## What to check in every version
 

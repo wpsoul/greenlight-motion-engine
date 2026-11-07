@@ -19,8 +19,16 @@ import { AI_FILL_PROMPT, restoreAiFillTakes } from "./aiFill";
 import { resolveKeyEase } from "./gsapTransitions";
 import { KF_PROP_LABELS } from "./keyframeProps";
 import { COUNTER_DEFAULTS, COUNTER_STYLES } from "./textCounter";
-import { CYCLE_DEFAULTS, CYCLE_STYLES, SCRAMBLE_CHARSETS, SCRAMBLE_DEFAULTS, sanitizeTextVariables } from "./textPlaceholders";
+import { CYCLE_DEFAULTS, CYCLE_STYLES, SCRAMBLE_CHARSETS, SCRAMBLE_DEFAULTS, sanitizeLineStates, sanitizeTextVariables } from "./textPlaceholders";
 import { sanitizeKeyframeFxMap, hasAnyKeyframeFx } from "./keyframeFx";
+
+// `textLineStates` only while it is on (a valid style), its easing a real timed curve.
+function lineStatesField(raw) {
+  const cfg = sanitizeLineStates(raw, {
+    isEasing: (key) => !!TransitionEasing[key] && key !== 'CUSTOM' && key !== 'HOLD',
+  });
+  return cfg ? { textLineStates: cfg } : {};
+}
 import { sanitizeBezier, sanitizeEaseSlice } from "./easingCurves";
 import { AUDIO_FADE_CURVES } from "./audioFade";
 import { GIF_LOOP_MODES, GIF_LOOP_MODE_DEFAULT, GIF_SPEED_DEFAULT, GIF_SPEED_MIN, GIF_SPEED_MAX } from "./animatedImage";
@@ -52,7 +60,7 @@ import { BEZIER_WARP_LAYER_EFFECT_ID, BW_DEFAULTS, BW_NUMBER_FIELDS } from "./be
 import { sanitizeCameraRig, sanitizeCameraMoveMode } from "./cameraRig";
 import { sanitizeSmartZoom, syncSmartZoomCameraSpans } from "./smartZoomCamera";
 import { sanitizeRecordingCursor } from "./recordingCursor";
-import { sanitizeRig, sanitizeShadowPlate, rigKfKeysFor, buildRigKfPropsFor, isRigTrackKey, isRigColorTrackKey, RIG_MEDIA_TYPE, RIG_CHANNEL_KIND, pinRigChannelUnderCamera } from "./rig3d";
+import { rigUsesWorld, sanitizeRig, sanitizeShadowPlate, rigKfKeysFor, buildRigKfPropsFor, isRigTrackKey, isRigColorTrackKey, RIG_MEDIA_TYPE, RIG_CHANNEL_KIND, pinRigChannelUnderCamera } from "./rig3d";
 import { PARTICLE_MEDIA_TYPE, PARTICLE_CLIP_DURATION_SECONDS, sanitizeParticleSystem, particleProxKfField } from "../../sim/particles/schema.js";
 import { DEFAULT_MOTION_BLUR_SHUTTER, sanitizeMotionBlurShutter } from "./motionBlurLevels";
 import { DEFAULT_TEXTURE_QUALITY, sanitizeTextureQuality } from "./rasterDensity";
@@ -403,7 +411,8 @@ export function sanitizePropertyKeyframes(propertyKeyframes, effects = [], item 
     if (keys) result[SPEED_KF_KEY] = keys;
   }
   // Keyframed shape size (Width / Height, or a circle's Radius), one track per unit
-  // field it overrides (shapePath.js SHAPE_SIZE_KF_PROPS). Inert on other layers.
+  // field it overrides (shapePath.js SHAPE_SIZE_KF_PROPS). Inert on other layers,
+  // except the corner radius tracks, which also round every media plate.
   for (const meta of SHAPE_SIZE_KF_PROPS) {
     const track = cleanTrack(propertyKeyframes[meta.label], (v) => clampKeyValue(v, meta.min, meta.max));
     if (track) result[meta.label] = track;
@@ -1357,7 +1366,7 @@ export function sanitizeEffectChain(list) {
         // A named easing (Strip's entrance/outro): one of the param's options, else its default.
         params[p.key] = sanitizeEffectEasing(rawValue, p);
       } else {
-        params[p.key] = sanitizeNumber(rawValue, p.default, { min: p.min, max: p.max });
+        params[p.key] = sanitizeNumber(rawValue, p.default, p.free ? {} : { min: p.min, max: p.max });
       }
     }
     const eff = {
@@ -1475,7 +1484,7 @@ export const MODEL_LOOPS = ['once', 'loop', 'pingpong'];
 export function sanitizeParticleSystemField(item) {
   const raw = item?.particleSystem;
   if (!raw || typeof raw !== 'object') return {};
-  return { particleSystem: sanitizeParticleSystem(raw) };
+  return { particleSystem: sanitizeParticleSystem(raw), ...(item.particleLook === '3d' ? { particleLook: '3d' } : null) };
 }
 
 export function sanitizeModel3dConfig(item) {
@@ -1534,6 +1543,7 @@ export function sanitizeModel3dConfig(item) {
       fitValue: sanitizeNumber(raw.fitValue, D.fitValue, { min: 0.01, max: 10000 }),
       anchor: pick(raw.anchor, MODEL_ANCHORS, D.anchor),
       placeOnRigFloor: raw.placeOnRigFloor !== false,
+      physics: raw.physics === 'falls' || raw.physics === 'solid' ? raw.physics : 'off',
       // With a Scene Rig: whether the model casts into / receives from its shadow map.
       // Both default on, and are only stored when switched off.
       ...(raw.castShadow === false ? { castShadow: false } : {}),
@@ -1790,6 +1800,8 @@ export function sanitizeTimelineItem(item) {
   const videoStabilization = sanitizeVideoStabilization(item.videoStabilization);
   // Color Correction: kept only when something is off its default.
   const colorCorrection = sanitizeColorCorrection(item.colorCorrection);
+  const itemVolume = sanitizeNumber(item.volume, 100, { min: 0, max: 100 });
+  const flagOnlyMute = !!item.muted && itemVolume > 0;
 
   return {
     id: typeof item.id === 'string' && item.id ? item.id : createId(),
@@ -1879,7 +1891,10 @@ export function sanitizeTimelineItem(item) {
     mirrorV: !!item.mirrorV,
     muted: !!item.muted,
     // Sound volume 0–100% (default 100). Applies to clips with audio (video + audio).
-    volume: sanitizeNumber(item.volume, 100, { min: 0, max: 100 }),
+    // `volume` is the sound control and `muted` follows it. A layer stored muted at a
+    // volume > 0 (an outside write that set only the flag) plays nothing while the
+    // panel says 100%, so it loads as the M key's mute: volume 0, the level kept below.
+    volume: flagOnlyMute ? 0 : itemVolume,
     // Audio intro/outro fade (seconds of the placed span; 0 = off). Stored only
     // when set so untouched items keep their saved shape; the curve only exists
     // alongside a fade and only when it differs from the 'smooth' default.
@@ -1888,7 +1903,8 @@ export function sanitizeTimelineItem(item) {
     ...(AUDIO_FADE_CURVES.includes(item.audioFadeCurve) && item.audioFadeCurve !== 'smooth'
       ? { audioFadeCurve: item.audioFadeCurve } : {}),
     // Volume to restore when un-muting via the "M" shortcut; only present while muted.
-    ...(Number.isFinite(item.preMuteVolume) ? { preMuteVolume: sanitizeNumber(item.preMuteVolume, 100, { min: 0, max: 800 }) } : {}),
+    ...(flagOnlyMute ? { preMuteVolume: itemVolume }
+      : Number.isFinite(item.preMuteVolume) ? { preMuteVolume: sanitizeNumber(item.preMuteVolume, 100, { min: 0, max: 800 }) } : {}),
     // Animated raster playback (GIF / animated WebP / APNG). Conditional spread so
     // the overwhelming majority of image layers — every still, and every GIF left on
     // its defaults — keep their saved shape byte for byte. WITHOUT these two lines
@@ -1915,8 +1931,8 @@ export function sanitizeTimelineItem(item) {
       camY: sanitizeNumber(item.camY, 0, { min: -200, max: 200 }),
       camRoll: sanitizeNumber(item.camRoll, 0, { min: -180, max: 180 }),
       camDolly: sanitizeNumber(item.camDolly, 0, { min: -3000, max: 3000 }),
-      camTiltX: sanitizeNumber(item.camTiltX, 0, { min: -60, max: 60 }),
-      camTiltY: sanitizeNumber(item.camTiltY, 0, { min: -60, max: 60 }),
+      camTiltX: sanitizeNumber(item.camTiltX, 0),
+      camTiltY: sanitizeNumber(item.camTiltY, 0),
       camDofEnabled: item.camDofEnabled === true || Number(item.camDofEnabled) >= 0.5,
       camFocusDistance: sanitizeNumber(item.camFocusDistance, 0, { min: 0, max: 20000 }),
       camAperture: sanitizeNumber(item.camAperture, 24, { min: 0, max: 300 }),
@@ -2096,6 +2112,9 @@ export function sanitizeTimelineItem(item) {
     textCycleWidth: item.textCycleWidth === 'fixed' ? 'fixed' : 'fit',
     textCycleDirection: item.textCycleDirection === 'down' ? 'down' : 'up',
     textCycleStagger: sanitizeNumber(item.textCycleStagger, CYCLE_DEFAULTS.textCycleStagger, { min: 0, max: 10 }),
+    // Line states (textPlaceholders.js sanitizeLineStates): each line of the text is one
+    // state of a cycle / Text Morph. Only while on — older items round-trip unchanged.
+    ...lineStatesField(item.textLineStates),
     // {{{SCRAMBLE:text}}} — random characters decoding into the text.
     textScrambleDelay: sanitizeNumber(item.textScrambleDelay, SCRAMBLE_DEFAULTS.textScrambleDelay, { min: 0, max: 3600 }),
     textScrambleDuration: sanitizeNumber(item.textScrambleDuration, SCRAMBLE_DEFAULTS.textScrambleDuration, { min: 0.05, max: 60 }),
@@ -2184,6 +2203,9 @@ export function sanitizeTimelineItem(item) {
     // (shapePath.js shapeCornerRadii). Spread only when set, so px projects
     // round-trip byte-identically.
     ...(item.borderRadiusUnit === 'pct' ? { borderRadiusUnit: 'pct' } : {}),
+    // Keep the corners' on-screen size while the layer scales: the radii are divided
+    // by the layer's scale (borderKeyframes.js withRadiusScaleLock). Spread only when on.
+    ...(item.borderRadiusScaleLock === true ? { borderRadiusScaleLock: true } : {}),
     borderWidth: sanitizeNumber(item.borderWidth, 0, { min: 0, max: 200 }),
     borderStyle: ['solid', 'dashed', 'dotted', 'double'].includes(item.borderStyle) ? item.borderStyle : 'solid',
     borderColor: typeof item.borderColor === 'string' && item.borderColor ? item.borderColor : '#ffffff',
@@ -2332,6 +2354,20 @@ export function sanitizeTimeline(timeline, clipIds) {
 
 export function createDefaultChannel(name = 'Channel 1') {
   return { id: createId(), name, visible: true, items: [] };
+}
+
+/** A model in a Scene has no place in a sequence: it stands wherever it was put, so its row is never snapped. */
+export function unsnapSceneModels(channels, clips) {
+  if (!channels.some((ch) => ch.kind === RIG_CHANNEL_KIND && rigUsesWorld(ch.items?.[0]?.rig))) return channels;
+  const models = new Set(clips.filter((c) => c.mediaType === 'model3d').map((c) => c.id));
+  let changed = false;
+  const next = channels.map((ch) => {
+    if (ch.unsnapped || !ch.items?.length || !ch.items.every((it) => models.has(it.clipId))) return ch;
+    changed = true;
+    const layout = getTimelineLayout(ch.items);
+    return { ...ch, unsnapped: true, items: ch.items.map((item, i) => ({ ...item, freeStart: layout[i]?.startTime ?? 0 })) };
+  });
+  return changed ? next : channels;
 }
 
 export function pinSingletonChannels(channels) {

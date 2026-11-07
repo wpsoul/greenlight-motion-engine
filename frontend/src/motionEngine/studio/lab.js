@@ -145,7 +145,8 @@ export function install(STUDIO) {
   let rebuilding=false,clipboard=null,selMarker=null;
   const muted=(()=>{try{return JSON.parse(store.get('rv-muted','{}'))||{};}catch{return {};}})();   // layer id → its opacity before Mute
   const markers=(()=>{try{return JSON.parse(store.get('rv-markers','[]'))||[];}catch{return [];}})();
-  const saveMarkers=()=>store.set('rv-markers',JSON.stringify(markers));
+  const saveMarkers=()=>{store.set('rv-markers',JSON.stringify(markers));window.dispatchEvent(new Event('glm:edits'));};
+  const saveMuted=()=>{store.set('rv-muted',JSON.stringify(muted));window.dispatchEvent(new Event('glm:edits'));};
   const fmtT=t=>`${Math.floor(t/60)}:${(t%60).toFixed(2).padStart(5,'0')}`;
   function itemOfId(id,proj=window.GL_LAB_PROJECT){for(const ch of proj.channels)for(const it of ch.items)if(it.id===id)return {ch,it};return null;}
   const newId=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
@@ -179,7 +180,9 @@ export function install(STUDIO) {
     if(rebuilding)return false;rebuilding=true;document.body.classList.add('rv-rebuilding');
     try{selMarker=null;await remount(proj,o);return true;}finally{rebuilding=false;document.body.classList.remove('rv-rebuilding');}
   }
-  window.LabEdit={rebuild,mount,rebuilding:()=>rebuilding,markers:()=>markers.slice(),muted:()=>({...muted}),clipboard:()=>clipboard};
+  // the markers and mutes of a state (Undo / Redo: history.js)
+  function setMarks({markers:m=[],muted:u={}}){markers.splice(0,markers.length,...m);for(const k of Object.keys(muted))delete muted[k];Object.assign(muted,u);store.set('rv-markers',JSON.stringify(markers));store.set('rv-muted',JSON.stringify(muted));selMarker=null;navSig='';gutterSig='';renderNav(true);renderActs();drawMarkers();}
+  window.LabEdit={rebuild,mount,rebuilding:()=>rebuilding,markers:()=>markers.slice(),muted:()=>({...muted}),clipboard:()=>clipboard,marks:()=>({markers:markers.slice(),muted:{...muted}}),setMarks};
   function addLayer(kind){
     window.RV?.setMode('edit');const at=api().state().currentTime,D=api().duration,len=Math.max(0.5,Math.min(4,D-at)),bg=(api().values().background||'#c9bdf2').toLowerCase();
     const darkBg=parseInt(bg.slice(1,3),16)*.299+parseInt(bg.slice(3,5),16)*.587+parseInt(bg.slice(5,7),16)*.114<128;
@@ -193,10 +196,10 @@ export function install(STUDIO) {
   function addMarker(){window.RV?.setMode('edit');const t=api().state().currentTime;const m={id:newId('m'),time:+t.toFixed(3),label:`Marker ${markers.length+1}`,color:'#8b5cf6'};markers.push(m);markers.sort((a,b)=>a.time-b.time);saveMarkers();selMarker=m.id;api().select(null);navSig='';renderNav(true);renderActs();drawMarkers();toast(`${m.label} at ${fmtT(m.time)}`);}
   function duplicate(id){rebuild(proj=>{const f=itemOfId(id,proj);if(!f)return null;const nid=newId('copy-');const clip=proj.clips.find(c=>c.id===f.it.clipId);const nclip={...structuredClone(clip||{}),id:'c-'+nid,name:(clip?.name||'Layer')+' copy'};proj.clips.push(nclip);
     const item={...structuredClone(f.it),id:nid,clipId:nclip.id};const ch={...structuredClone(f.ch),id:'ch-'+nid,name:(names[id]||f.ch.name)+' copy',items:[item]};if(f.ch.items.length>1){ch.unsnapped=true;}
-    proj.channels.splice(proj.channels.indexOf(f.ch)+1,0,ch);if(muted[id]!=null)muted[nid]=muted[id];store.set('rv-muted',JSON.stringify(muted));return nid;});}
+    proj.channels.splice(proj.channels.indexOf(f.ch)+1,0,ch);if(muted[id]!=null)muted[nid]=muted[id];saveMuted();return nid;});}
   function remove(id){if(selMarker===id||markers.some(m=>m.id===id)){const i=markers.findIndex(m=>m.id===id);if(i>=0){const m=markers.splice(i,1)[0];saveMarkers();selMarker=null;toast(`${m.label} deleted`);navSig='';renderNav(true);renderActs();drawMarkers();}return;}
     const nm=nameOf(api().layers().find(l=>l.id===id)||{id,name:'the layer'});
-    rebuild(proj=>{const f=itemOfId(id,proj);if(!f)return null;f.ch.items=f.ch.items.filter(i=>i!==f.it);if(!f.ch.items.length)proj.channels.splice(proj.channels.indexOf(f.ch),1);if(!proj.channels.some(c=>c.items.some(i=>i.clipId===f.it.clipId)))proj.clips=proj.clips.filter(c=>c.id!==f.it.clipId);delete muted[id];store.set('rv-muted',JSON.stringify(muted));return null;}).then(()=>toast(`${nm} deleted`));}
+    rebuild(proj=>{const f=itemOfId(id,proj);if(!f)return null;f.ch.items=f.ch.items.filter(i=>i!==f.it);if(!f.ch.items.length)proj.channels.splice(proj.channels.indexOf(f.ch),1);if(!proj.channels.some(c=>c.items.some(i=>i.clipId===f.it.clipId)))proj.clips=proj.clips.filter(c=>c.id!==f.it.clipId);delete muted[id];saveMuted();return null;}).then(()=>toast(`${nm} deleted`));}
   // the settings a layer can hand to another: its look, place and motion (never its words, its timing or its identity)
   const NOT_SETTINGS=new Set(['id','clipId','trimStart','trimEnd','freeStart','textContent','customName','name']);
   function settingsOf(id){const f=itemOfId(id);if(!f)return null;const ed=api().edits().itemEdits[id]||{};const all={...structuredClone(f.it),...structuredClone(ed)};const type=(window.GL_LAB_PROJECT.clips.find(c=>c.id===f.it.clipId)||{}).mediaType;
@@ -205,7 +208,7 @@ export function install(STUDIO) {
   function paste(id){if(!clipboard)return;const f=itemOfId(id);if(!f)return;const type=(window.GL_LAB_PROJECT.clips.find(c=>c.id===f.it.clipId)||{}).mediaType;
     const keys=Object.keys(clipboard.values).filter(k=>type===clipboard.type||SHARED.includes(k));keys.forEach(k=>api().setLayerValue(id,k,structuredClone(clipboard.values[k])));
     toast(type===clipboard.type?`Pasted ${clipboard.from}'s settings`:`Pasted ${clipboard.from}'s place and motion`);}
-  function toggleMute(id){if(muted[id]!=null){api().setLayerValue(id,'opacity',muted[id]);delete muted[id];}else{const ed=api().edits().itemEdits[id]||{};const f=itemOfId(id);muted[id]=ed.opacity??f?.it.opacity??100;api().setLayerValue(id,'opacity',0);}store.set('rv-muted',JSON.stringify(muted));navSig='';renderNav(true);renderActs();syncGutter();}
+  function toggleMute(id){if(muted[id]!=null){api().setLayerValue(id,'opacity',muted[id]);delete muted[id];}else{const ed=api().edits().itemEdits[id]||{};const f=itemOfId(id);muted[id]=ed.opacity??f?.it.opacity??100;api().setLayerValue(id,'opacity',0);}saveMuted();navSig='';renderNav(true);renderActs();syncGutter();}
   function actBtn(key,label,title,fn,{disabled=false,on=false}={}){const b=document.createElement('button');b.type='button';b.className='rv-act'+(on?' is-on':'');b.dataset.act=key;b.title=title;b.disabled=disabled;b.innerHTML=svg(ACT[key],14,2)+`<span>${label}</span>`;b.onclick=e=>{e.stopPropagation();fn();};return b;}
   // the Edit timeline's toolbar row (the Video Editor's layer buttons): Text · Shape · Marker | the selected layer's
   // Duplicate · Copy · Paste · Mute · Delete (off until a layer is picked; a marker has Delete)

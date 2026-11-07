@@ -589,13 +589,38 @@ const renderers = {
   'Gradient Map': (ctx, p, w, h, rawOptions) => {
     drawGradientMapTile(ctx, p, w, h, resolveAdvancedTransitionOptions('Gradient Map', rawOptions) || {});
   },
-  'Zoom Ruler': (ctx, p, w, h, rawOptions) => {
+  // `lane` (layer entrance 'curr' / exit 'prev'): one lane over nothing — the
+  // entrance shows the layer inside the box, the exit keeps it outside.
+  'Zoom Ruler': (ctx, p, w, h, rawOptions, lane = null) => {
     const o = resolveAdvancedTransitionOptions('Zoom Ruler', rawOptions) || {};
     // The runtime's own box maths (y up) at tile size; the tile draws y down.
     const s = zoomRulerFrame(o, p, w, h);
     const cy = h - s.cy;
-    drawScene(ctx, 0, 0, w, h, true);
-    if (s.fade > 0 && s.hx > 0.5) {
+    const open = s.fade > 0 && s.hx > 0.5;
+    if (lane === 'prev') {
+      // Outside the box the layer stays; inside it goes with the reveal's fade-in.
+      ctx.save();
+      if (open) {
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.rect(s.cx - s.hx, cy - s.hy, s.hx * 2, s.hy * 2);
+        ctx.clip('evenodd');
+      }
+      drawScene(ctx, 0, 0, w, h, false);
+      ctx.restore();
+      if (open && s.fade < 1) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(s.cx - s.hx, cy - s.hy, s.hx * 2, s.hy * 2);
+        ctx.clip();
+        ctx.globalAlpha = 1 - s.fade;
+        drawScene(ctx, 0, 0, w, h, false);
+        ctx.restore();
+      }
+    } else if (!lane) {
+      drawScene(ctx, 0, 0, w, h, true);
+    }
+    if (lane !== 'prev' && open) {
       ctx.save();
       ctx.beginPath();
       ctx.rect(s.cx - s.hx, cy - s.hy, s.hx * 2, s.hy * 2);
@@ -991,11 +1016,15 @@ const layerRenderers = {
   'Pixel Blocks': (ctx, p, w, h, rawOptions, lane = 'curr') => {
     renderers['Pixel Blocks'](ctx, p, w, h, rawOptions, lane);
   },
+  // One lane: the layer opens inside the ruler box, or the box cuts it away.
+  'Zoom Ruler': (ctx, p, w, h, rawOptions, lane = 'curr') => {
+    renderers['Zoom Ruler'](ctx, p, w, h, rawOptions, lane);
+  },
 };
 
 // Layer transitions whose renderer takes an explicit lane instead of being
 // played in reverse for the OUT preview.
-const LANE_RENDERERS = new Set(['Advanced Zoom', 'Advanced Movement', '3D Carousel', 'Camera Whip', 'Gradient Glow Stack', 'Gradient Map', 'Pixel Blocks', 'Slide', 'Wipe']);
+const LANE_RENDERERS = new Set(['Advanced Zoom', 'Advanced Movement', '3D Carousel', 'Camera Whip', 'Gradient Glow Stack', 'Gradient Map', 'Pixel Blocks', 'Zoom Ruler', 'Slide', 'Wipe']);
 
 // ── Custom transition renderer factory ──
 
@@ -1630,7 +1659,34 @@ export function TransitionPresetModal({
                 // label that breaks the run — no collapsing, that belongs to
                 // the inspector where the list is read top to bottom.
                 if (field.type === 'section') {
-                  return <div className="ve-trp-option-section" key={field.key || field.label}>{field.label}</div>;
+                  const label = <div className="ve-trp-option-section" key={field.key || field.label}>{field.label}</div>;
+                  if (!field.presets?.length) return label;
+                  // the section's named presets (colour stacks …) on their own line
+                  return [label, (
+                    <div className="ve-fx-presets ve-trp-option-presets" key={`${field.key || field.label}:presets`}>
+                      {field.presets.map((pre) => {
+                        const on = Object.entries(pre.options).every(([key, value]) => (
+                          String(advancedOptions[key] ?? '').toLowerCase() === String(value).toLowerCase()
+                        ));
+                        const colors = Object.keys(pre.options).filter((key) => /^color\d+$/.test(key))
+                          .slice(0, pre.options.layers || undefined).map((key) => pre.options[key]);
+                        return (
+                          <button
+                            key={pre.name}
+                            type="button"
+                            className={`ve-fx-preset${on ? ' on' : ''}`}
+                            title={`${pre.name} preset`}
+                            onClick={() => patch({ options: { ...advancedOptions, ...pre.options } })}
+                          >
+                            {colors.length > 0 && (
+                              <span className="ve-fx-preset-sw" style={{ backgroundImage: `linear-gradient(90deg, ${colors.join(', ')})` }} />
+                            )}
+                            {pre.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )];
                 }
                 if (field.type === 'switch') {
                   const enabled = !!advancedOptions[field.key];

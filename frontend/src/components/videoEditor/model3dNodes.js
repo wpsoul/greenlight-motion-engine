@@ -27,7 +27,7 @@ const pcssHash3 = (p) => {
   q.addAssign(dot(q, q.zyx.add(31.32)));
   return fract(q.x.add(q.y).mul(q.z));
 };
-export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, depthLayer }, builder) => {
+export const softShadowFilter = () => Fn(({ depthTexture, shadowCoord, shadow, depthLayer }, builder) => {
   const mapSize = reference('mapSize', 'vec2', shadow).setGroup(renderGroup);
   const packed = reference('radius', 'float', shadow).setGroup(renderGroup);
   const kq = floor(packed.div(1024));
@@ -50,7 +50,11 @@ export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, dept
   const g = select(abs(det).greaterThan(1e-14),
     vec2(sdx.z.mul(sdy.y).sub(sdx.y.mul(sdy.z)), sdx.x.mul(sdy.z).sub(sdx.z.mul(sdy.x))).div(det), vec2(0));
   const dzUv = g.mul(min(float(1), float(16).div(max(length(g), 1e-9)))).toVar();
-  const sum = float(0).toVar(), count = float(0).toVar();
+  // Every read of a texture shares one binding, and from three 0.185 the first read settles whether its sampler compares, so one that
+  // compares goes before the blocker search's raw reads.
+  let first = texture(depthTexture, shadowCoord.xy);
+  if (depthTexture.isArrayTexture) first = first.depth(depthLayer);
+  const sum = first.compare(shadowCoord.z).mul(0).toVar(), count = float(0).toVar();
   const nB = int(min(mapSize.x, 16)), nF = int(min(mapSize.x, 32));
   const reversed = builder.renderer.reversedDepthBuffer;
   // WebGL's rule: a texel still at the clear depth saw no caster and never blocks,
@@ -84,6 +88,7 @@ export const rigSoftShadowFilter = Fn(({ depthTexture, shadowCoord, shadow, dept
   });
   return result;
 });
+export const rigSoftShadowFilter = softShadowFilter();
 
 /** Same underside height capture and separable Gaussian as rigContactShadows. */
 export function createRigContactNodeMaterials() {

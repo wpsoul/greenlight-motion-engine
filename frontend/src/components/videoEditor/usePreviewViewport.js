@@ -52,6 +52,7 @@ function isPanStart(event) {
     && !target.closest('.ve-mask-overlay')
     && !target.closest('.ve-distort-overlay')
     && !target.closest('.ve-force-emitter-overlay')
+    && !target.closest('.ve-cam-capture-overlay')
     && !target.closest('.ve-cc-compare-line')
     && !target.closest('.ve-player-frame');
 }

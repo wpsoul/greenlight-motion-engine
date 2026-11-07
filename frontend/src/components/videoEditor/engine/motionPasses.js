@@ -152,7 +152,10 @@ export function renderLayerMotionBlur(engine, env, srcTarget, outTarget, frame, 
   return outTarget;
 }
 
-export function renderLayerAccumBlur(engine, env, rt, cs, chCam, mblur, frame, t) {
+// `root`: what each sub-frame renders. A top-level channel hangs off its camera
+// rig (cs.rig); a sequence's inner channel hangs its group straight in the
+// sequence scene and its rig is empty, so the sequence compositor passes cs.group.
+export function renderLayerAccumBlur(engine, env, rt, cs, chCam, mblur, frame, t, root = null) {
   const renderer = engine.renderer;
   const orthoCamera = engine.orthoCamera;
   const mixScene = engine.motionBlurMixScene;
@@ -162,6 +165,7 @@ export function renderLayerAccumBlur(engine, env, rt, cs, chCam, mblur, frame, t
   const { params } = frame;
   const mesh = cs.currMesh?.visible ? cs.currMesh : (cs.prevMesh?.visible ? cs.prevMesh : null);
   if (!mesh) return false;
+  const subject = root || cs.rig;
 
   const { w: W, h: H } = engine.videoSize;
   const duration = entry.endTime - entry.startTime;
@@ -212,7 +216,7 @@ export function renderLayerAccumBlur(engine, env, rt, cs, chCam, mblur, frame, t
     renderer.setRenderTarget(k === 0 ? acc : rt.f);
     renderer.setClearColor(0x000000, 0);
     renderer.clear(true, true, true);
-    renderer.render(cs.rig, chCam);
+    renderer.render(subject, chCam);
     if (k > 0) {
       // Running mean in a shader — additive 1/K into an 8-bit target
       // posterizes dark values (the lab hit this).
@@ -243,7 +247,7 @@ export function renderLayerAccumBlur(engine, env, rt, cs, chCam, mblur, frame, t
     renderer.setRenderTarget(rt.f);
     renderer.setClearColor(0x000000, 0);
     renderer.clear(true, true, true);
-    renderer.render(cs.rig, chCam);
+    renderer.render(subject, chCam);
     mixMaterial.uniforms.uAcc.value = rt.f.texture;
     mixMaterial.uniforms.uSub.value = acc.texture;
     mixMaterial.uniforms.uResolution.value.set(acc.width, acc.height);
@@ -422,7 +426,16 @@ export function renderLayerTrailTemporal(engine, env, srcTarget, outTarget, fram
     const prevBox = boxAt(frameIdx - 1);
     const perFrame = prevBox ? trailBoxDisplacement(boxNow, prevBox, w, h) : 0;
     const stepPx = Math.max(2, 5 * (h / 1080));
-    const sub = Math.max(1, Math.min(16, Math.ceil(perFrame / stepPx)));
+    // An EVEN number of substeps, so every frame leaves the accumulator in slot A.
+    // Inside a sequence on WebGPU the slot written last by one frame read back
+    // empty at the next frame's first step whenever that slot was B — an odd
+    // count alternates the last slot, so every other exported frame came out
+    // blank and the trail never got longer than one frame (measured:
+    // tests/layer-fx-in-sequence; WebGL and the top level were unaffected).
+    // Persistence and taper are divided by the same count, so the trail a frame
+    // adds is unchanged; the cost is at most one extra pass per frame.
+    const subRaw = Math.max(1, Math.min(16, Math.ceil(perFrame / stepPx)));
+    const sub = subRaw + (subRaw % 2);
     const persistSub = Math.pow(Math.min(1, Math.max(0, params.trailPersist / 100)), 1 / sub);
     const taperSub = (Math.max(0, params.trailTaper) * (h / 1080)) / sub;
     const step = (srcTex) => {

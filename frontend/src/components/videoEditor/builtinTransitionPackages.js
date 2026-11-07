@@ -1757,7 +1757,9 @@ export const CAMERA_WHIP_PRESET = Object.freeze({
 // Look-dev: html/zoom-ruler-transition-lab.html. The Shape Rulers box is the clip
 // mask: the outgoing clip outside it, the incoming one inside, until the box has
 // cleared the frame. Ruler geometry is shared with the overlay effect
-// (shapeRulersGlsl.js), so the two look identical.
+// (shapeRulersGlsl.js), so the two look identical. One-sided, the empty lane is
+// transparent: an entrance opens the layer inside the box over what is under
+// it, an exit keeps it outside the box, and the rulers draw over both.
 //
 // The reference (an After Effects edit, 2880×1620 @ 30 fps) was measured frame by
 // frame: the box = a fixed start square + a scale × a base rect, and the scale
@@ -1977,13 +1979,15 @@ export const ZOOM_RULER_PRESET = Object.freeze({
     ]) }),
     Object.freeze({ key: 'boxRatio', label: 'Custom ratio (w : h)', type: 'range', min: 0.3, max: 3.5, step: 0.01 }),
     Object.freeze({ key: 'feather', label: 'Edge feather', type: 'range', min: 0, max: 60, step: 1, suffix: 'px' }),
-    Object.freeze({ type: 'section', key: 'sec-zoom', label: 'Zoom' }),
-    Object.freeze({ key: 'zoom', label: 'Zoom', type: 'range', min: 0, max: 40, step: 0.5, suffix: '%' }),
-    Object.freeze({ key: 'zoomDirection', label: 'Direction', type: 'select', options: Object.freeze([
+    // The zoom scales the incoming plate only — an exit has none, so the Out
+    // slot drops the whole group.
+    Object.freeze({ type: 'section', key: 'sec-zoom', label: 'Zoom', outHidden: true }),
+    Object.freeze({ key: 'zoom', label: 'Zoom', type: 'range', min: 0, max: 40, step: 0.5, suffix: '%', outHidden: true }),
+    Object.freeze({ key: 'zoomDirection', label: 'Direction', type: 'select', outHidden: true, options: Object.freeze([
       Object.freeze({ value: 'in', label: 'Push in' }),
       Object.freeze({ value: 'settle', label: 'Settle' }),
     ]) }),
-    Object.freeze({ key: 'zoomEasing', label: 'Zoom easing', type: 'select', options: Object.freeze([
+    Object.freeze({ key: 'zoomEasing', label: 'Zoom easing', type: 'select', outHidden: true, options: Object.freeze([
       Object.freeze({ value: 'follow', label: 'Follow the box' }),
       ...ZOOM_RULER_EASINGS,
     ]) }),
@@ -2129,6 +2133,25 @@ const GLOW_STACK = Object.freeze({
   MAX_LAYERS: 6,
 });
 const GLOW_STACK_COLORS = Object.freeze(['#4b73ff', '#ff66f4', '#ff0105', '#ff8282', '#ffc46b', '#8a5cff']);
+// Named stacks for the Colours section: a layer count plus all six colours, so
+// raising Layers after picking one keeps going in the same palette. Colour 1 is
+// the biggest, softest glow (the outer ring); the last used colour is the core.
+// Classic = the defaults (the decoded reference), so it is lit on a fresh transition.
+const glowStackPreset = (name, layers, colors) => Object.freeze({
+  name,
+  options: Object.freeze({ layers, ...Object.fromEntries(colors.map((c, i) => [`color${i + 1}`, c])) }),
+});
+const GLOW_STACK_PRESETS = Object.freeze([
+  glowStackPreset('Classic', 4, GLOW_STACK_COLORS),
+  glowStackPreset('Sunset', 4, ['#5a2dff', '#e2369b', '#ff5b2e', '#ffb648', '#ffe2a0', '#fff6e0']),
+  glowStackPreset('Lagoon', 4, ['#1238c8', '#1f7bff', '#19c6e8', '#8ff3ff', '#e6fdff', '#ffffff']),
+  glowStackPreset('Borealis', 4, ['#2a1f9e', '#7b4dff', '#21d39a', '#a6ffd8', '#e8fff5', '#ffffff']),
+  glowStackPreset('Lava', 5, ['#5e0b1e', '#c8161d', '#ff4d12', '#ff9a1f', '#ffd25a', '#fff3c4']),
+  glowStackPreset('Neon', 3, ['#00e5ff', '#ff1fd1', '#fff23a', '#7cff4f', '#ff6a00', '#8a5cff']),
+  glowStackPreset('Prism', 6, ['#9b5cff', '#3d7bff', '#22c7d6', '#4ee07a', '#ffd23a', '#ff4a3d']),
+  glowStackPreset('Frost', 3, ['#3f6dff', '#9fd8ff', '#ffffff', '#e3f4ff', '#b8c8ff', '#7aa2ff']),
+  glowStackPreset('Silver', 4, ['#5d6070', '#9a9dab', '#d3d5dd', '#ffffff', '#eceef2', '#b4b7c2']),
+]);
 const GLOW_STACK_DIRECTIONS = Object.freeze({
   up: [0, 1], down: [0, -1], right: [1, 0], left: [-1, 0],
   upRight: [Math.SQRT1_2, Math.SQRT1_2], upLeft: [-Math.SQRT1_2, Math.SQRT1_2],
@@ -2388,7 +2411,7 @@ export const GLOW_STACK_PRESET = Object.freeze({
     Object.freeze({ key: 'roundness', label: 'Corner roundness (square)', type: 'range', min: 0, max: 100, step: 1, suffix: '%' }),
     Object.freeze({ key: 'size', label: 'Size', type: 'range', min: 40, max: 200, step: 1, suffix: '%' }),
     Object.freeze({ key: 'softness', label: 'Softness', type: 'range', min: 0, max: 250, step: 1, suffix: '%' }),
-    Object.freeze({ type: 'section', key: 'sec-colours', label: 'Colours' }),
+    Object.freeze({ type: 'section', key: 'sec-colours', label: 'Colours', presets: GLOW_STACK_PRESETS }),
     Object.freeze({ key: 'layers', label: 'Layers', type: 'range', min: 2, max: 6, step: 1 }),
     Object.freeze({ key: 'color1', label: 'Colour 1 (bottom, leads)', type: 'color' }),
     Object.freeze({ key: 'color2', label: 'Colour 2', type: 'color' }),

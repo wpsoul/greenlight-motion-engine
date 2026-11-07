@@ -18,7 +18,7 @@ import { notifyModelAssetLoaded } from './model3dEvents';
 import { createModelTonePassMaterial } from './model3dTonePass';
 import { glyphGeometry, clearGlyphGeometries } from './text3dGlyphs';
 import { makeShadowPlateMaterial } from './model3dShadowPlate';
-import {
+import { rigUsesWorld,
   normalizeRig, vectorFromSpherical, candelaIntensity, areaLuminance, lightTarget, AREA_SHADOW_SHARE,
   cycSizePx, resolveEnvUrl, cycSurfaceColor, legacyRigLights,
 } from './rig3d';
@@ -79,9 +79,11 @@ function getLoaders() {
 }
 
 export function modelExt(url) {
-  const m = /\.(glb|gltf|obj)(\?.*)?$/i.exec(String(url || ''));
+  const m = /\.(glb|gltf|obj|ply|splat|spz)(\?.*)?$/i.exec(String(url || ''));
   return m ? m[1].toLowerCase() : null;
 }
+
+export const isSplatUrl = (url) => ['ply', 'splat', 'spz'].includes(modelExt(url));
 
 function loadAsset(url) {
   const hit = assets.get(url);
@@ -112,6 +114,25 @@ function loadAsset(url) {
       notifyModelAssetLoaded();
       return entry;
     });
+    return entry;
+  }
+
+  // A splat is drawn by the world alone. Here it is an unseen box of its own size, so placing, fitting and selecting work as for any
+  // model. The reader loads with the first splat and stays out of the app until then.
+  if (isSplatUrl(url)) {
+    entry.promise = fetch(url)
+      .then((r) => { if (!r.ok) throw new Error(`Could not load this file (${r.status}).`); return r.arrayBuffer(); })
+      .then(async (bytes) => {
+        const { gunzip, readSplat } = await import('../../world3d/splat/readSplat.js');
+        const { min, max } = readSplat(await gunzip(bytes)).box;
+        const size = new THREE.Vector3(...max).sub(new THREE.Vector3(...min));
+        const box = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
+        box.position.fromArray(min).addScaledVector(size, 0.5);
+        entry.scene = new THREE.Group().add(box);
+        entry.status = 'ready';
+      })
+      .catch((e) => { entry.status = 'error'; entry.error = e?.message || 'Could not read this splat.'; })
+      .then(() => { notifyModelAssetLoaded(); return entry; });
     return entry;
   }
 
@@ -1482,6 +1503,7 @@ function applyContactShadow(entry, shadow) {
       })
     );
     mesh.rotation.x = -Math.PI / 2;
+    mesh.userData.noPick = true;
     entry.shadowMesh = mesh;
     // Under the model but inside the fit/anchor group, so it scales with the object.
     entry.inner.add(mesh);
@@ -3063,15 +3085,34 @@ function poseModel(entry, item, config, prs, rig, W, H, time, frameToken) {
  * everything drawn before it trailed it by a frame. Same opts as renderModelLayer;
  * only meaningful with a rig.
  */
+// Screen artwork on a preset device, then media on named meshes of any model (model3dConfig.screens).
+function syncModelScreens(entry, item, config, time) {
+  if (!entry.laneKey) entry.laneKey = `scr:${entry.itemId}:device`;
+  applyScreen(entry, modelScreenTarget(item), config.screen || null, time);
+  applyModelScreens(entry, config.screens, time);
+}
+
+/** A procedural shape's colour (model3dConfig.primitive.color). Both paths need it: the world reads it off the material and skips the pass. */
+function syncPrimitiveTint(entry, config) {
+  if (!entry.tintMaterials?.length) return;
+  const tintColor = config.primitive?.color || PRIMITIVE_DEFAULT_COLOR;
+  if (entry.tintColor === tintColor) return;
+  for (const m of entry.tintMaterials) m.color.set(tintColor);
+  entry.tintColor = tintColor;
+}
+
 export function poseModelLayer(opts) {
   const { item, clip, prs, W, H, time } = opts;
   if (!opts.rig) return;
   const { ready, entry } = ensureModelInstance(item, clip);
   if (!ready || !entry) return;
+  // The world draws this model, so nothing else will keep its screens current.
+  if (rigUsesWorld(opts.rig)) syncModelScreens(entry, item, item?.model3dConfig || {}, time);
   const rig = normalizeRig(opts.rig);
   const world = ensureSharedWorld();
   joinWorld(world, `m:${item.id}`, entry.outer, entry.scene);
   const config = item?.model3dConfig || {};
+  syncPrimitiveTint(entry, config);
   setShadowFlags(entry.outer, config.castShadow !== false, config.receiveShadow !== false, true);
   poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken);
   entry.lastFrameToken = opts.frameToken ?? 0;
@@ -3157,22 +3198,12 @@ export function renderModelLayer(renderer, opts) {
   entry.lastConfig = config;
 
   // Screen artwork on a preset device, if it has a screen and the user set one.
-  if (!entry.laneKey) entry.laneKey = `scr:${entry.itemId}:device`;
-  applyScreen(entry, modelScreenTarget(item), config.screen || null, time);
-  // Media on named meshes of any model (model3dConfig.screens).
-  applyModelScreens(entry, config.screens, time);
+  syncModelScreens(entry, item, config, time);
   // Screen depth bias at this pass's size (see SCREEN_DEPTH_BIAS).
   scaleScreenDepthBias(entry, entry.hdr.height);
   // Self-lit screens that opt in still take the rig's shadows (screens[].receiveShadow).
   syncScreenShadows(entry, config, world && rig?.shadows?.mode === 'map' ? world : null, rig);
-  // A procedural shape's colour (model3dConfig.primitive.color).
-  if (entry.tintMaterials?.length) {
-    const tintColor = config.primitive?.color || PRIMITIVE_DEFAULT_COLOR;
-    if (entry.tintColor !== tintColor) {
-      for (const m of entry.tintMaterials) m.color.set(tintColor);
-      entry.tintColor = tintColor;
-    }
-  }
+  syncPrimitiveTint(entry, config);
 
   // Standalone layers retain their optional blob. A rig owns all floor contacts,
   // including free-positioned models, so no model pass writes a translucent floor
@@ -3590,6 +3621,79 @@ export function applyModelAnimation(entry, animation, time) {
 // would double the memory of an already heavy asset. Its lights come along (a
 // MeshStandardMaterial with no light and no environment renders black) and the caller
 // gets a function that puts everything back exactly as it was.
+/** A model's fitted group: what the world renderer places the file under, in world px. */
+export function modelWorldMatrix(itemId) {
+  const entry = instances.get(itemId);
+  if (!entry?.inner) return null;
+  entry.inner.updateWorldMatrix(true, false);
+  return entry.inner.matrixWorld.elements;
+}
+
+/** Every node's local transform in traversal order, while a clip plays. Bones are nodes, so this carries skinning too. */
+export function modelNodePose(itemId) {
+  const entry = instances.get(itemId);
+  if (!entry?.mixer || !(entry.activeActions?.length || entry.activeAction)) return null;
+  const nodes = [];
+  entry.root.traverse((n) => nodes.push(n));
+  const out = new Float32Array(nodes.length * 16);
+  nodes.forEach((n, i) => { n.updateMatrix(); n.matrix.toArray(out, i * 16); });
+  return out;
+}
+
+/** What the model's screens show, for the world renderer: a canvas crosses between two threes as it is. */
+export function modelScreensForWorld(itemId) {
+  const entry = instances.get(itemId);
+  if (!entry) return [];
+  const meshes = [];
+  entry.root.traverse((n) => { if (n.isMesh) meshes.push(n); });
+  const out = [];
+  for (const holder of [entry, ...(entry.screenSlots || [])]) {
+    const surface = holder.screenSurface;
+    if (!surface?.texture?.image) continue;
+    const swapped = [...(holder.screenOriginals?.keys() || [])];
+    out.push({
+      meshes: swapped.map((m) => meshes.indexOf(m)).filter((i) => i >= 0),
+      uv: swapped.map((m) => (holder.screenGeomOriginals?.has(m) ? m.geometry.attributes.uv?.array : null)),
+      canvas: surface.texture.image, version: surface.texture.version,
+      flipY: surface.texture.flipY, mirrorX: surface.texture.repeat.x < 0, rotation: surface.texture.rotation,
+    });
+  }
+  return out;
+}
+
+/** A shape built on this side, as plain arrays and plain numbers: the world renderer has a three of its own. */
+export function modelBakedParts(itemId) {
+  const entry = instances.get(itemId);
+  if (!entry?.inner) return null;
+  const parts = [];
+  entry.inner.updateWorldMatrix(true, true);
+  const inverse = entry.inner.matrixWorld.clone().invert();
+  entry.inner.traverse((o) => {
+    const g = o.isMesh && o !== entry.shadowMesh ? o.geometry : null;
+    if (!g?.attributes?.position) return;
+    const m = o.material;
+    parts.push({
+      position: g.attributes.position.array, normal: g.attributes.normal?.array, uv: g.attributes.uv?.array, index: g.index?.array,
+      matrix: inverse.clone().multiply(o.matrixWorld).toArray(),
+      material: { base: `#${m?.color?.getHexString?.() ?? 'cccccc'}`, roughness: m?.roughness ?? 0.5, metalness: m?.metalness ?? 0 },
+    });
+  });
+  return parts;
+}
+
+/** The Rig's backdrop, the same way. Null when the set has none. */
+export function cycloramaArrays(rawRig, compH) {
+  const norm = normalizeRig(rawRig || {});
+  if (!norm.cyclorama || norm.cyclorama.shape === 'none') return null;
+  const entry = ensureRigInstance();
+  syncCyclorama(entry.cyc, norm.cyclorama, compH);
+  const mesh = entry.cyc.mesh;
+  if (!mesh?.visible) return null;
+  mesh.updateMatrix();
+  const g = mesh.geometry;
+  return { position: g.attributes.position.array, normal: g.attributes.normal?.array, uv: g.attributes.uv?.array, index: g.index?.array, matrix: mesh.matrix.toArray() };
+}
+
 /** The layer's real geometry group, for the 3D view's gizmo and selection box. */
 export function getModelObject(itemId) {
   return instances.get(itemId)?.outer || null;
@@ -3630,18 +3734,36 @@ const _seedRaycaster = new THREE.Raycaster();
 const _seedNdc = new THREE.Vector2();
 const _seedVec = new THREE.Vector3();
 
+// A raycast finds hidden meshes too, and the invisible catcher a shadow lands on.
+function firstSurfaceHit(entry, u, vDown) {
+  _seedNdc.set(u * 2 - 1, 1 - vDown * 2);
+  _seedRaycaster.setFromCamera(_seedNdc, entry.camera);
+  return _seedRaycaster.intersectObject(entry.outer, true).find((h) => {
+    if (!h.object?.isMesh || h.object === entry.shadowMesh) return false;
+    for (let o = h.object; o; o = o.parent) if (!o.visible) return false;
+    return true;
+  }) || null;
+}
+
 /** Raycast a preview click (frame uv, y down) onto the model surface.
  *  Returns a root-local point { x, y, z } or null on a miss. */
 export function pickModelSurface(itemId, u, vDown) {
   const entry = instances.get(itemId);
   if (!entry?.camera || !entry.outer) return null;
-  _seedNdc.set(u * 2 - 1, 1 - vDown * 2);
-  _seedRaycaster.setFromCamera(_seedNdc, entry.camera);
-  const hits = _seedRaycaster.intersectObject(entry.outer, true);
-  const hit = hits.find((h) => h.object?.isMesh && h.object !== entry.shadowMesh);
+  const hit = firstSurfaceHit(entry, u, vDown);
   if (!hit) return null;
   const p = entry.root.worldToLocal(hit.point.clone());
   return { x: p.x, y: p.y, z: p.z };
+}
+
+/** How deep a preview click lands on a layer filmed in its own pass (model, plate, 3D text), as the distance along the
+ *  view: the pass films with the compositor's camera, so this is the number DOF compares each of its pixels against.
+ *  Undefined when the layer has no such pass, null when the click misses what it shows. */
+export function pickFilmedDepth(itemId, u, vDown) {
+  const entry = instances.get(itemId) || plateInstances.get(itemId) || text3dInstances.get(itemId);
+  if (!entry?.camera || !entry.outer) return undefined;
+  const hit = firstSurfaceHit(entry, u, vDown);
+  return hit ? -_seedVec.copy(hit.point).applyMatrix4(entry.camera.matrixWorldInverse).z : null;
 }
 
 /** Project a root-local seed point back to frame uv (y down) for the overlay's

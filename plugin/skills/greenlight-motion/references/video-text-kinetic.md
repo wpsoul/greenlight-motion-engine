@@ -10,36 +10,38 @@
 
 ## Contents
 
-- [When to use them](video-text-kinetic.md#when-to-use-them)
-- [How every recipe works](video-text-kinetic.md#how-every-recipe-works)
-- [Writing a recipe onto a layer](video-text-kinetic.md#writing-a-recipe-onto-a-layer)
-- [The catalogue](video-text-kinetic.md#the-catalogue) and [Recipes](video-text-kinetic.md#recipes)
+- [When to use them](#when-to-use-them)
+- [How every recipe works](#how-every-recipe-works)
+- [Writing a recipe onto a layer](#writing-a-recipe-onto-a-layer)
+- [The catalogue](#the-catalogue) and [Recipes](#recipes)
 
 ## When to use them
 
-**Prefer these 21 recipes whenever text should feel energetic** — a hook, a title card, a promo or social
+**Prefer these 22 recipes whenever text should feel energetic** — a hook, a title card, a promo or social
 line, a beat-synced word, a call to action, a reveal; anything the user calls punchy, bouncy, poppy, playful,
 dynamic, kinetic, lively, "with energy" or "make it pop". They are the app's own Kinetic presets: tuned
 in-and-out motion that a hand-built animator rarely matches, so start from one instead of composing animators
 from scratch, then adjust.
 
 Not for calm or readable-first text: captions under speech, tutorials, long paragraphs, lower thirds. Use a
-plain Time fade or rise there (Fade Up in video-text.md) — a swinging paragraph is hard to read.
+plain Time fade or rise there ([Classic Fade Up](video-text-presets.md#classic-fade-up) or
+[Classic Rise (Mask)](video-text-presets.md#classic-rise-mask)) — a swinging paragraph is hard to read.
 
 Pick by the text:
 
-- **2–4 short lines** (a stacked title): a *lines* recipe. Swing Pop is the signature one.
-- **One line of 3–8 words**: a *words* recipe.
+- **2–4 short stacked lines** (one or a few words each): a *words* recipe; Swing Pop is the signature one.
+- **One line of up to ~5 words** (a hook, a title, a call to action): a *words* recipe. A longer line or a caption
+  under speech reads cheap with this much motion; use a calm preset there ([video-design.md](video-design.md#text-animation)).
 - **One short word or title, up to ~20 letters**: a *letters* recipe.
 
 Preferred recipes: when the user has not named one, choose from these first, as long as the recipe fits the text by
 the rules above: [Swing Pop](#swing-pop), [Pendulum](#pendulum), [Fan Deal](#fan-deal) and [Whip](#whip)
-(lines); [Word Swing](#word-swing) (words); [Letter Vortex](#letter-vortex)
+(words; they read well stacked); [Word Swing](#word-swing) (words); [Letter Vortex](#letter-vortex)
 (letters).
 
 ## How every recipe works
 
-Each recipe is **two Time animators** (some add a third, a quick fade) on one text layer, and nothing else:
+Each recipe is exactly **two Time animators** on one text layer, and nothing else:
 
 - the **in** animator (`"animate": "in"`): every unit arrives from its effects, `stagger` seconds apart,
   from the layer's start;
@@ -48,33 +50,36 @@ Each recipe is **two Time animators** (some add a third, a quick fade) on one te
 
 There are no keyframes, so a recipe fits any layer length: changing the layer's duration keeps the entrance at
 the start and the exit at the end. One side takes `(units − 1) × stagger + duration` seconds; keep the layer
-longer than the in and out sides together plus the time the text should rest (line recipes: 2.5 s or more;
+longer than the in and out sides together plus the time the text should rest (word recipes on 2–4 lines: 2.5 s or more;
 letter recipes on long text need more).
 
-`"around": "all"` turns every unit around the centre of the **whole** text, not its own centre, so outer lines
-and letters travel on arcs — Swing Pop's look. `textAnimatorPivotX` / `textAnimatorPivotY` (−100…100) move
-that point: Pendulum hangs from the top (`textAnimatorPivotY: -100`), Fan Deal fans from the bottom, Door
-Swing hinges on the left edge, Domino stands each line on its own bottom-left corner.
+`"around": "all"` turns every unit around the centre of the **whole** text, not its own centre, so outer words
+and letters travel on arcs — Word Swing's and Letter Vortex's look. `textAnimatorPivotX` / `textAnimatorPivotY`
+(−100…100) move each unit's turning point: Pendulum hangs each word from its top edge (`textAnimatorPivotY: -100`),
+Fan Deal fans each word from its bottom edge, Door Swing hinges each word on its left edge, Domino stands each word
+on its bottom-left corner.
 
-The curves do the energy: `Overshoot` lands past rest and settles, `Elastic` and `Bounce Out` wobble or bounce,
-`Swing` dips before it springs, and `Anticipate` (the usual exit) winds back the other way, then snaps through
+The curves do the energy: `Overshoot` lands past rest and settles, `Elastic` and `Bounce Out` wobble or bounce, and `Anticipate` (the usual exit) winds back the other way, then snaps through
 in the last frames.
 
 ## Writing a recipe onto a layer
 
-- Copy the recipe's JSON into the text item: its `textAnimators`, plus `textAnimatorPivotX` / `textAnimatorPivotY`
-  when the recipe has them. Replace the layer's existing `textAnimators`, or append with fresh unique `aid` /
-  `pid` values.
-- **Lengths are for `textFontSize` 100.** Multiply every `position` `x` / `y`, `blur` `amount` and `rotate3d`
-  `perspective` by `textFontSize / 100`. Angles, scales, opacities and timings stay as written.
+Follow [Writing a recipe onto a layer](video-text-presets.md#writing-a-recipe-onto-a-layer) in text-presets.md (replace or
+add, ids, scaling lengths to the font size). Kinetic recipes have no keyframes, so they fit any layer length as
+written. In short:
+- **Replace**: delete the old `textAnimators` and every `txa:` track, and set both pivots to the recipe's values (0
+  when it has none). Recipes reuse ids like `a1`/`p1`, so a leftover track or pivot would drive the new animator.
+- **Lengths are for a 100 px font.** Multiply every `position` `x` / `y` / `z`, `blur` `amount`, `rotate3d`
+  `perspective` and the layer's `textAnimatorPerspective` by the layer's font size in px / 100: `textFontSize`, or in pct mode
+  `textFontSizePct × videoSize.h / 100`. Angles, scales, opacities and timings stay as written.
 - Faster or slower: divide every `stagger` and `duration` by the same factor (2 = twice as fast).
 - Colour, font and size are the layer's own; the recipes only move the text.
 - To check it, render a still at the middle of the entrance and one in the middle of the layer
-  (video-rendering.md): mid-entrance the text is moving, mid-layer it rests exactly as typed.
+  (rendering.md): mid-entrance the text is moving, mid-layer it rests exactly as typed.
 
 ## The catalogue
 
-<!-- KINETIC:BEGIN (generated by tests/text-animators/skill_presets.mjs from presets.js — edit there) -->
+<!-- KINETIC:BEGIN (generated from the app's presets; do not edit by hand) -->
 
 | Recipe | What it does | Unit | Turns around | In · Out curve |
 |---|---|---|---|---|
@@ -82,14 +87,14 @@ in the last frames.
 | [Word Swing](#word-swing) | Words pop out of the middle of the text in random order and swing round into place; at the end they wind up and pop back | words | centre of the whole text | Overshoot · Anticipate |
 | [Letter Vortex](#letter-vortex) | Letters spiral out of the centre of the text one by one; at the end they spin back into it | letters | centre of the whole text | Overshoot · Anticipate |
 | [Center Burst](#center-burst) | The middle words burst out first and the others follow, wobbling into place; at the end they shrink away from the outside in | words | each word's centre | Elastic · Back In |
-| [Pendulum](#pendulum) | Words hang from their top edge and swing in like a pendulum until they settle; at the end they swing away | words | each word's centre | Elastic · Anticipate |
+| [Pendulum](#pendulum) | Words hang from their top edge and swing in like a pendulum until they settle; at the end they swing away | words | each word's top edge | Elastic · Anticipate |
 | [Spin Pop](#spin-pop) | Each word spins a full turn in place as it grows in; at the end each spins back out | words | each word's centre | Back Out · Back In |
 | [Domino](#domino) | Words stand up on their bottom-left corner and drop flat with a bounce, one after another; at the end they fall over | words | each word's bottom-left corner | Bounce Out · Ease In |
 | [Flip Pop](#flip-pop) | Words flip up into view in 3D, past flat and back; at the end they tip back and flip away | words | each word's centre | Overshoot · Anticipate |
 | [Card Turn](#card-turn) | Words turn to face you like cards, one by one, overshooting the turn; at the end they turn away | words | each word's centre | Overshoot · Anticipate |
 | [Slam Zoom](#slam-zoom) | Words slam down from huge, punch past their size and settle; at the end they fly back at the camera | words | each word's centre | Overshoot · Expo In |
 | [Orbit](#orbit) | Words turn in from a third of a turn away and ease into place; at the end they turn off | words | each word's centre | Smooth Overshoot · Anticipate |
-| [Fan Deal](#fan-deal) | Words fan up from their bottom edge like cards dealt from a hand, last word first; at the end they fan away | words | each word's centre | Overshoot · Anticipate |
+| [Fan Deal](#fan-deal) | Words fan up from their bottom edge like cards dealt from a hand, last word first; at the end they fan away | words | each word's bottom edge | Overshoot · Anticipate |
 | [Whip](#whip) | Words whip in from the left leaning into the move, snap past and settle; at the end they lean back and whip off to the right | words | each word's centre | Overshoot · Anticipate |
 | [Rubber Letters](#rubber-letters) | Letters spring out of thin slivers and wobble like rubber; at the end they stretch tall and squash flat | letters | each letter's centre | Elastic · Anticipate |
 | [Pop Letters](#pop-letters) | Letters pop up in random order, each with a little twist; at the end they swell and pop away at random | letters | each letter's centre | Overshoot · Anticipate |
@@ -97,7 +102,9 @@ in the last frames.
 | [Coin Spin](#coin-spin) | Letters spin in like coins, one after another, and rock to a stop; at the end they spin away | letters | each letter's centre | Overshoot · Anticipate |
 | [Converge](#converge) | Words shrink down from far bigger, the outer ones first, and settle; at the end they burst outward | words | each word's centre | Expo Out · Expo In |
 | [Roll In](#roll-in) | Letters roll in from the right like wheels and rock back into place; at the end they roll off to the left | letters | each letter's centre | Overshoot · Back In |
-| [Door Swing](#door-swing) | Words swing open in 3D on a hinge at their left edge, past flat and back; at the end they swing shut | words | each word's centre | Overshoot · Anticipate |
+| [Door Swing](#door-swing) | Words swing open in 3D on a hinge at their left edge, past flat and back; at the end they swing shut | words | each word's left edge | Overshoot · Anticipate |
+| [Title Push 3D](#title-push-3d) | Words fly in from depth one by one, overshoot toward the camera and settle as the line glides over to make room; at the end they rush past the camera | words | each word's centre | Back Out · Ease In |
+| [Perspective Type](#perspective-type) | Lines drive in one after another on a plane tilted toward the camera, which then swings flat; at the end they sink back into depth | lines | each line's centre | AE Smooth · Ease In |
 
 ## Recipes
 
@@ -443,6 +450,50 @@ Words swing open in 3D on a hinge at their left edge, past flat and back; at the
       "effects": [{"pid": "p3", "type": "rotate3d", "x": 0, "y": -80, "perspective": 1000}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
   ],
   "textAnimatorPivotX": -100
+}
+```
+
+### Title Push 3D
+
+Words fly in from depth one by one, overshoot toward the camera and settle as the line glides over to make room; at the end they rush past the camera.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Fly in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.2, "duration": 0.75, "curve": "Back Out"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 35, "z": -2600}, {"pid": "p2", "type": "rotate3d", "x": -50, "y": 0, "perspective": 600}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Push",
+      "range": {"basedOn": "lines", "drive": "time", "animate": "in", "around": "all", "stagger": 0, "duration": 1.6, "curve": "Sine Out"},
+      "effects": [{"pid": "p4", "type": "position", "x": 240, "y": 0}] },
+    { "aid": "a3", "name": "Rush out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.05, "duration": 0.55, "curve": "Ease In"},
+      "effects": [{"pid": "p5", "type": "position", "x": 0, "y": 0, "z": 900}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 1300
+}
+```
+
+### Perspective Type
+
+Lines drive in one after another on a plane tilted toward the camera, which then swings flat; at the end they sink back into depth.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Lines in",
+      "range": {"basedOn": "lines", "drive": "time", "animate": "in", "around": "line", "stagger": 0.5, "duration": 0.5, "curve": "AE Smooth"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 140}, {"pid": "p2", "type": "scale", "scale": 55}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Tilted plane",
+      "range": {"basedOn": "lines", "drive": "time", "animate": "in", "around": "all", "delay": 1.2, "stagger": 0, "duration": 0.7, "curve": "Natural"},
+      "effects": [{"pid": "p4", "type": "rotate3d", "x": 32, "y": 25, "perspective": 300}, {"pid": "p5", "type": "rotation", "angle": -6}, {"pid": "p6", "type": "scale", "scale": 150}, {"pid": "p7", "type": "position", "x": 16, "y": -4}] },
+    { "aid": "a3", "name": "Sink out",
+      "range": {"basedOn": "lines", "drive": "time", "animate": "out", "around": "line", "order": "backward", "stagger": 0.08, "duration": 0.5, "curve": "Ease In"},
+      "effects": [{"pid": "p8", "type": "position", "x": 0, "y": 0, "z": -800}, {"pid": "p9", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 300
 }
 ```
 

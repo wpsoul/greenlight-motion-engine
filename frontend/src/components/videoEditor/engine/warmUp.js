@@ -16,6 +16,8 @@
  * per NEW kind of layer or row, in idle moments (a project with ten effects on one row is about thirty frames, once).
  * Playing before it finishes simply builds the rest on first use, as before.
  */
+import { PHONE_WARM_UP_S, phoneMode } from './phoneMode';
+
 const QUIET_MS = 150;        // no new frame (another time, another project state) in this long: the preview is idle
 const STEP_BUDGET_MS = 12;   // hidden frames per task until this much time went (always at least one)
 const MAX_PLAN = 600;        // sample times per plan
@@ -204,6 +206,8 @@ export function scheduleWarmUp(engine, env, render) {
   if (w.channels !== env.channels) {
     w.channels = env.channels;
     w.queue = planWarmUp(env, w.done);
+    // a phone: only what plays next, its hidden frames would decode the whole film's pictures (./phoneMedia.js)
+    if (phoneMode()) w.queue = w.queue.filter((job) => job.t >= w.time && job.t <= w.time + PHONE_WARM_UP_S);
   }
   if (w.queue.length) arm(engine, w, QUIET_MS);
 }

@@ -9,7 +9,7 @@
 // voice (presets fakeVoice: `voiceWins`). Preview only — the layer itself is drawn by
 // the Player.
 
-import { evaluate, glyphFor, mul, rgbCss, layerSettings, boxRects, groupBoxes, maskedXf, unitTransform, hToCanvas, warpBegin, warpEnd, caretRect } from './textAnimators';
+import { evaluate, glyphFor, mul, rgbCss, layerSettings, boxRects, groupBoxes, maskedXf, unitTransform, unitTransformCam, hToCanvas, warpBegin, warpEnd, caretRect } from './textAnimators';
 import { evaluatePropertyTrack } from './gsapTransitions';
 import { buildCanvasGradient } from '../../utils/cssGradient';
 
@@ -134,7 +134,16 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
     for (let j = 0; j < ln.count; j += 1) X[ln.first + j] -= cum / 2;
   }
   // pivots: every unit's box at each level an animator can turn around
-  const lay = layerSettings(built?.layer ? { textAnimatorPivotX: built.layer.pivotX, textAnimatorPivotY: built.layer.pivotY } : null);
+  const lay = layerSettings(built?.layer ? {
+    textAnimatorPivotX: built.layer.pivotX, textAnimatorPivotY: built.layer.pivotY,
+    textAnimatorCamera: built.layer.camera, textAnimatorPerspective: built.layer.perspective,
+  } : null);
+  // A shared camera (Layer / Project): one eye in front of the tile's centre, at the
+  // preset's Perspective (built at the tile's font size) or the composition camera's
+  // distance for the tile's height (FOV 28°, as the Player's).
+  const cam = lay.camera !== 'unit'
+    ? { x: w / 2, y: h / 2, d: lay.perspective > 0 ? lay.perspective : (h * 0.5) / Math.tan((14 * Math.PI) / 180) }
+    : null;
   const band = L.asc + L.desc;
   const boxOf = groupBoxes(L.units.map((u, i) => ({ x0: X[i] - u.w / 2, y0: u.cy - band / 2, x1: u.space ? X[i] - u.w / 2 : X[i] + u.w / 2, y1: u.cy + band / 2, wi: u.wi, li: u.li })));
   const pivot = { x: lay.pivotX / 100, y: lay.pivotY / 100 };
@@ -219,7 +228,9 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
   // One unit: its transform around each animator's unit (depth = warped).
   const drawUnit = (i, u, st, target = ctx) => {
     const mb = st.mask ? maskOf(i, st.mask) : null;
-    const tf = st.xf ? unitTransform(mb ? maskedXf(st, mb.y1 - mb.y0) : st.xf, (lv) => boxOf(i, lv), pivot) : null;
+    const xfIn = mb ? maskedXf(st, mb.y1 - mb.y0) : st.xf;
+    const tf = !st.xf ? null : cam ? unitTransformCam(xfIn, (lv) => boxOf(i, lv), pivot, cam) : unitTransform(xfIn, (lv) => boxOf(i, lv), pivot);
+    if (tf && tf.hidden) return;
     const local = [1, 0, 0, 1, X[i], u.cy];
     if (tf && tf.projective) {
       // Depth: paint the glyph flat, then warp it into perspective.
@@ -238,8 +249,19 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
     paintGlyph(target, M, u, i, st);
   };
   // Every visible unit onto `target` (masks cut as in the Player).
+  // Under a shared camera nearer units cover farther ones: paint far to near.
+  let order = null;
+  if (cam) {
+    const depth = ev.states.map((st, i) => {
+      if (!st.xf) return 0;
+      const tf = unitTransformCam(st.xf, (lv) => boxOf(i, lv), pivot, cam);
+      return tf ? tf.depth : 0;
+    });
+    if (depth.some((d) => d)) order = depth.map((d, i) => i).sort((a, b) => depth[b] - depth[a] || a - b);
+  }
   const drawUnits = (target) => {
-    for (let i = 0; i < n; i += 1) {
+    for (let k = 0; k < n; k += 1) {
+      const i = order ? order[k] : k;
       const u = L.units[i];
       const st = ev.states[i];
       if (u.space || st.alpha < 0.003) continue;

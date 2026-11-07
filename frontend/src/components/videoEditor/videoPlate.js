@@ -102,9 +102,13 @@ function getVideoSize(url) {
   return entry.status === 'ready' ? { width: entry.width, height: entry.height } : null;
 }
 
-/** The url whose pixels define a clip's real size: the original, not its proxy. */
-function sourceUrl(clip) {
-  return clip?.url || clip?.proxyUrl || '';
+/**
+ * The url whose pixels define a clip's real size: the original, not its proxy — and
+ * not the render-sized copy an export reads instead (the backend swaps `clip.url`
+ * for it and keeps the original in `renderSourceInfo.originalUrl`).
+ */
+export function videoPlateUrl(clip) {
+  return clip?.renderSourceInfo?.originalUrl || clip?.url || clip?.proxyUrl || '';
 }
 
 /**
@@ -137,7 +141,7 @@ export function videoPictureSize(clip, frameW, frameH) {
 }
 
 function realSize(clip) {
-  const url = sourceUrl(clip);
+  const url = videoPlateUrl(clip);
   const size = getVideoSize(url);
   if (size) return size;
   // An original the browser cannot open (a camera codec — the reason it has a

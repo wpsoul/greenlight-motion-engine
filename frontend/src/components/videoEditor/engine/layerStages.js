@@ -95,14 +95,15 @@ export function runLayerGeometryStages(engine, out0, stack, ctx) {
   return { out, camAxis };
 }
 
-export function renderLayerRig(engine, rt, rigFx, layerMesh, t, camAxis = true) {
+// `cam`: the camera the isolate was filmed with (the sequence compositor's own).
+export function renderLayerRig(engine, rt, rigFx, layerMesh, t, camAxis = true, cam = engine.camera) {
   const renderer = engine.renderer;
   const orthoCamera = engine.orthoCamera;
   if (!renderer || !orthoCamera || !layerMesh) return false;
   const { item, entry } = rigFx;
   const effect = getRigEffect(item);
   if (!effect) return false;
-  const box = computeLayerBox(layerMesh, engine.camera, rt.c.width, rt.c.height);
+  const box = computeLayerBox(layerMesh, cam, rt.c.width, rt.c.height);
   if (!box) return false;
   const duration = entry.endTime - entry.startTime;
   const progress = duration > 0 ? Math.max(0, Math.min(1, (t - entry.startTime) / duration)) : 0;

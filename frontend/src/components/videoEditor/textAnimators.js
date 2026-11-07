@@ -22,11 +22,21 @@
  *   all and compose finest first, so letters can bounce inside a word that flips.
  *   Rotate 3D projects in perspective (a camera Perspective px in front of the
  *   unit's centre); Canvas 2D can't, so warpBegin / warpEnd draw such a unit.
+ *   Position Z moves a unit in depth (+ toward the viewer).
+ *
+ * Cameras (layer field Camera): 'unit' (default) = every unit its own camera, as
+ *   above — a Z only scales the unit in place. 'layer' / 'project' = ONE camera for
+ *   all units (unitTransformCam): letters at different depths converge to one
+ *   vanishing point and their 3D turns share it; the host passes the camera's eye in
+ *   plate px — in front of the plate centre at the layer's Perspective ('layer'), or
+ *   the project camera's real eye ('project') — and paints the units far to near.
  *
  * Data (item level):
  *   textAnimatorPivotX, textAnimatorPivotY   (LAYER_FIELDS; a saved
  *   textAnimatorGrouping is from before Transform around moved to the animator,
  *   and is ignored)
+ *   textAnimatorCamera, textAnimatorPerspective   (LAYER_FIELDS too, written only
+ *   while the camera is shared)
  *   textAnimators: [ animator ]          — present only while it holds one
  * One animator:
  *   { aid, name, enabled,
@@ -169,12 +179,23 @@ const TXA = (function () {
   const LAYER_FIELDS = {
     pivotX: num('Pivot X', 0, -100, 100, 1, '%', false, '% of the unit from its centre: −100 = left edge, 100 = right edge'),
     pivotY: num('Pivot Y', 0, -100, 100, 1, '%', false, '% of the unit from its centre: −100 = top, 100 = bottom'),
+    // Who films the units' depth (Position Z, Rotate 3D). Each unit = its own camera in
+    // front of it (letters turn like separate cards). Layer / Project = one camera for
+    // the whole text: nearer letters grow and every letter converges to one vanishing
+    // point. Project = the project's Camera layer itself (dolly, pan, tilt, zoom).
+    camera: en('Camera', 'unit', { unit: 'Each unit', layer: 'Layer', project: 'Project' },
+      'Each unit: every letter (word, line) has its own little camera. Layer: one camera in front of the text. Project camera: the project\'s Camera layer films the letters in depth'),
+    perspective: num('Perspective', 0, 0, 20000, 10, 'px', false,
+      'The layer camera\'s distance from the text. 0 = the composition camera\'s, so a letter moved in Z looks like a layer moved in Z'),
   };
-  const LAYER_ITEM_KEYS = { pivotX: 'textAnimatorPivotX', pivotY: 'textAnimatorPivotY' };
+  const LAYER_ITEM_KEYS = { pivotX: 'textAnimatorPivotX', pivotY: 'textAnimatorPivotY', camera: 'textAnimatorCamera', perspective: 'textAnimatorPerspective' };
+  // Written to the item only while they differ from these (older items round-trip unchanged).
+  const LAYER_SPARSE = { camera: 'unit', perspective: 0 };
 
   const EFFECTS = [
     { key: 'position', label: 'Position', group: 'Transform', desc: 'Move the selected units',
-      fields: { x: num('X', 0, -2000, 2000, 1, 'px'), y: num('Y', -80, -2000, 2000, 1, 'px') } },
+      fields: { x: num('X', 0, -2000, 2000, 1, 'px'), y: num('Y', -80, -2000, 2000, 1, 'px'),
+        z: num('Z', 0, -20000, 20000, 1, 'px', true, 'Depth: + toward you, − away. Under a shared camera (More options ▸ Camera) letters converge to one vanishing point; with each unit\'s own camera a unit grows or shrinks in place') } },
     { key: 'scale', label: 'Scale', group: 'Transform', desc: 'Grow or shrink each unit',
       fields: { scale: num('Scale', 160, -1000, 1000, 1, '%'), x: num('Width', 100, -1000, 1000, 1, '%'), y: num('Height', 100, -1000, 1000, 1, '%') } },
     { key: 'rotation', label: 'Rotation', group: 'Transform', desc: 'Spin each unit around its pivot',
@@ -324,7 +345,10 @@ const TXA = (function () {
     for (const [k, key] of Object.entries(LAYER_ITEM_KEYS)) raw[k] = item[key];
     const lf = sanitizeGroup(LAYER_FIELDS, raw);
     const out = { textAnimators: list };
-    for (const [k, key] of Object.entries(LAYER_ITEM_KEYS)) out[key] = lf[k];
+    for (const [k, key] of Object.entries(LAYER_ITEM_KEYS)) {
+      if (k in LAYER_SPARSE && (lf[k] === LAYER_SPARSE[k] || lf.camera === 'unit')) continue;
+      out[key] = lf[k];
+    }
     return out;
   }
   function layerSettings(item) {
@@ -1139,12 +1163,12 @@ const TXA = (function () {
   // line?, all? } (null = untouched).
   function xfOf(st, level) {
     const xf = st.xf || (st.xf = {});
-    return xf[level] || (xf[level] = { tx: 0, ty: 0, s: 1, sx: 1, sy: 1, rot: 0, rx: 0, ry: 0, skew: 0, axis: 0, persp: 0 });
+    return xf[level] || (xf[level] = { tx: 0, ty: 0, tz: 0, s: 1, sx: 1, sy: 1, rot: 0, rx: 0, ry: 0, skew: 0, axis: 0, persp: 0 });
   }
   function applyEffect(st, type, v, k, i, time, g, fillRgb, level = 'char') {
     const kp = clamp(k, 0, 1); // colour-type effects don't extrapolate
     switch (type) {
-      case 'position': { const e = xfOf(st, level); e.tx += v.x * k; e.ty += v.y * k; break; }
+      case 'position': { const e = xfOf(st, level); e.tx += v.x * k; e.ty += v.y * k; e.tz += (v.z || 0) * k; break; }
       case 'scale': { const e = xfOf(st, level); e.s *= 1 + (v.scale / 100 - 1) * k; e.sx *= 1 + (v.x / 100 - 1) * k; e.sy *= 1 + (v.y / 100 - 1) * k; break; }
       case 'rotation': { const e = xfOf(st, level); e.rot += v.angle * k; break; }
       case 'rotate3d': { const e = xfOf(st, level); e.rx += v.x * k; e.ry += v.y * k; e.persp = v.perspective; break; }
@@ -1251,18 +1275,28 @@ const TXA = (function () {
   // the pivot plane's. A unit bigger than its Perspective flattens instead of
   // passing the camera.
   const W_NEAR = 0.25;
+  // A unit's own camera distance for a Z move when it has no Rotate 3D Perspective and
+  // the host passes none (the app passes the composition camera's).
+  const Z_PERSP = 2000;
   // One level's transform around pivot P in its box: scale, skew, Rotate 3D (X
   // first: + tips the top away; then Y: + turns the right side away), rotation,
   // then the move. Depth projects from a camera Perspective px in front of the
-  // box centre (CSS perspective at the unit's centre), riding the move.
-  function levelH(e, box, pivot) {
+  // box centre (CSS perspective at the unit's centre), riding the move. A Z move
+  // under that camera (its Perspective, else zPersp) grows or shrinks the unit in place.
+  function levelH(e, box, pivot, zPersp = 0) {
     const cx = (box.x0 + box.x1) / 2;
     const cy = (box.y0 + box.y1) / 2;
     const px = cx + (pivot.x * (box.x1 - box.x0)) / 2;
     const py = cy + (pivot.y * (box.y1 - box.y0)) / 2;
     // KS = skew · scale; skew along an axis = R(axis) · shearX(−tan skew) · R(−axis)
-    const sx = e.s * e.sx;
-    const sy = e.s * e.sy;
+    let sx = e.s * e.sx;
+    let sy = e.s * e.sy;
+    if (e.tz) {
+      const Dz = e.persp > 0 ? e.persp : zPersp > 0 ? zPersp : Z_PERSP;
+      const f = Dz / Math.max(Dz * W_NEAR, Dz - e.tz);
+      sx *= f;
+      sy *= f;
+    }
     let k00 = 1, k01 = 0, k10 = 0, k11 = 1;
     if (e.skew) {
       const t = Math.tan((clamp(e.skew, -85, 85) * Math.PI) / 180);
@@ -1379,7 +1413,8 @@ const TXA = (function () {
     // translate(P + move) · L · translate(−P)
     const tx = px + e.tx - (L[0] * px + L[1] * py);
     const ty = py + e.ty - (L[3] * px + L[4] * py);
-    const tz = -(L[6] * px + L[7] * py);
+    // Position Z is + toward the viewer; plate z is + away.
+    const tz = -(L[6] * px + L[7] * py) - (e.tz || 0);
     return [L[0], L[1], L[2], tx, L[3], L[4], L[5], ty, L[6], L[7], L[8], tz, 0, 0, 0, 1];
   }
   function unitTransform3d(xf, boxOf, pivot) {
@@ -1393,13 +1428,41 @@ const TXA = (function () {
     return M;
   }
 
-  function unitTransform(xf, boxOf, pivot) {
+  // ── One camera for every unit ('layer' / 'project') ─────────────────────────
+  // The unit's real 3D pose (unitTransform3d, Position Z included) seen from ONE eye
+  // cam = { x, y, d }: d px in front of plate point (x, y). A point P lands on the plate
+  // where the ray from the eye through P meets it — x' = (d·X + x·Z) / (d + Z), Z + away
+  // — so the plate, filmed afterwards from that same eye, shows P where it really is.
+  // On the unit's plane that is a homography: H = projection · M on (u, v, 0, 1).
+  // A Z-only move stays affine (a scale about the eye's foot), so it needs no warp.
+  // → { H, projective, depth (Z of the unit's centre, + away: paint far to near),
+  //     hidden (a corner at or behind the camera) }, or null when nothing moves it.
+  const CAM_NEAR = 0.05;
+  function unitTransformCam(xf, boxOf, pivot, cam) {
+    const M = unitTransform3d(xf, boxOf, pivot);
+    if (!M) return null;
+    const d = cam.d;
+    const H = [
+      M[0] + (cam.x * M[8]) / d, M[1] + (cam.x * M[9]) / d, M[3] + (cam.x * M[11]) / d,
+      M[4] + (cam.y * M[8]) / d, M[5] + (cam.y * M[9]) / d, M[7] + (cam.y * M[11]) / d,
+      M[8] / d, M[9] / d, 1 + M[11] / d,
+    ];
+    const b = boxOf('char');
+    let wMin = Infinity;
+    for (const [x, y] of [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1]]) wMin = Math.min(wMin, H[6] * x + H[7] * y + H[8]);
+    const depth = M[8] * ((b.x0 + b.x1) / 2) + M[9] * ((b.y0 + b.y1) / 2) + M[11];
+    const projective = Math.abs(H[6]) > 1e-12 || Math.abs(H[7]) > 1e-12;
+    return { H, projective, depth, hidden: !(wMin > CAM_NEAR) };
+  }
+
+  // zPersp: a Z move's camera distance for a unit with no Rotate 3D Perspective.
+  function unitTransform(xf, boxOf, pivot, zPersp = 0) {
     let H = null;
     let projective = false;
     for (const lv of LEVELS) {
       const e = xf && xf[lv];
       if (!e) continue;
-      const r = levelH(e, boxOf(lv), pivot);
+      const r = levelH(e, boxOf(lv), pivot, zPersp);
       H = H ? hMul(r.H, H) : r.H;
       if (r.projective) projective = true;
     }
@@ -1804,7 +1867,7 @@ const TXA = (function () {
     liveAnimators, grainOf, needsLayout, animatorsMove,
     trackKey, parseTrackKey, channelInfo, trackLabel, buildKfProps,
     evalTrack, evaluate, selection, rangeEdges, mapToUnits, glyphFor, mul, revealedOf, boxRects,
-    LEVELS, levelOf, hasTransform, groupBoxes, maskedXf, unitTransform, unitTransform3d, m4Mul, applyH, hToCanvas, warpBegin, warpEnd,
+    LEVELS, levelOf, hasTransform, groupBoxes, maskedXf, unitTransform, unitTransform3d, unitTransformCam, m4Mul, applyH, hToCanvas, warpBegin, warpEnd,
     hexToRgb, rgbCss, mixRgb, sampleStops, paintCss, easeShape, shapeAt,
     CURVE_NAMES, RETIRED_CURVES, RANGE_ONLY, DRIVE_ONLY, rangeShows, fieldShown, curveFn, ranksOf, voiceFits, voiceTurns, driveAmounts, rangeAt,
     caretRect, motionKey,
@@ -1857,6 +1920,7 @@ export const {
   maskedXf,
   unitTransform,
   unitTransform3d,
+  unitTransformCam,
   m4Mul,
   applyH,
   hToCanvas,

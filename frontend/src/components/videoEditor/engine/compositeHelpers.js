@@ -14,6 +14,7 @@ import { applyGsapEasing } from '../gsapTransitions';
 import { resolveModelOverlayFx } from '../model3dFxCatalog';
 import { perfRegistry } from '../perfRegistry.js';
 import { isCameraBaked3dPlate, RIG_MEDIA_TYPE } from '../rig3d';
+import { withRadiusScaleLock } from '../borderKeyframes';
 import { shapeBoxSize, shapeCornerRadii, withShapeSizeKeyframes } from '../shapePath';
 import { shapePlateAt } from './meshTransform';
 import { PREVIEW_TIER } from './previewMedia';
@@ -101,9 +102,10 @@ export function isUprightIsolatePlate(clip, item = null) {
 
 // A glass shape's outline in local px + this frame's material (glassEffect.js),
 // resolved at the same keyframe values and composition size the channel sizes
-// its plate with — the pass maps local px onto that plate.
-export function resolveGlassLayer(item, kf, compositionWidth, compositionHeight) {
-  const shapeItem = withShapeSizeKeyframes(item, kf);
+// its plate with — the pass maps local px onto that plate. `poseScale` is the
+// layer's scale (meshTransform.js layerPoseScale), read by a scale-locked radius.
+export function resolveGlassLayer(item, kf, compositionWidth, compositionHeight, poseScale = 1) {
+  const shapeItem = withRadiusScaleLock(withShapeSizeKeyframes(item, kf), poseScale);
   const { width, height } = shapeBoxSize(shapeItem, compositionWidth, compositionHeight);
   const radii = shapeCornerRadii(shapeItem, width, height);
   const [plateW, plateH] = shapePlateAt(item, kf, compositionWidth, compositionHeight);

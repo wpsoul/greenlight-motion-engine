@@ -1,3 +1,5 @@
+import { boardVisible } from "../pipelines/pipelineUtils";
+
 const API = import.meta.env.VITE_API_BASE_URL || "/api";
 // Exposed for the collaboration module's WebSocket URL (ws(s):// derives from it).
 export const API_BASE = API;
@@ -279,6 +281,8 @@ export const api = {
   listIndexPictures: (model) => request(`/picture-index/pictures?model=${encodeURIComponent(model)}`),
   loadPictureVectors: (model) => request(`/picture-index/vectors?model=${encodeURIComponent(model)}`),
   savePictureVectors: (model, items) => request("/picture-index/vectors", { method: "POST", body: JSON.stringify({ model, items }) }),
+  // Whether a model file is already in the backend's model cache (never downloads): { cached }.
+  modelCacheStatus: (source, path) => request(`/model-cache-status/${source}/${path}`),
   deleteMoodboard: (id, deleteFolder = false, force = false) =>
     request(
       `/moodboards/${id}?delete_folder=${deleteFolder ? "true" : "false"}${force ? "&force=true" : ""}`,
@@ -354,6 +358,7 @@ export const api = {
   // Lightweight board info for sub-board cards: { id, name, parent_id,
   // element_count, thumbnail_url }.
   getMoodboardSummary: (id) => request(`/moodboards/${id}/summary`),
+  getReviewCard: (id, card) => request(`/moodboards/${id}/review-cards/${card}`),
   // Create a child board and move the given elements (media + arrows) into it;
   // returns { board, moved_element_ids, moved_arrow_ids, removed_arrow_ids }.
   createSubBoard: (id, payload) =>
@@ -395,7 +400,9 @@ export const api = {
   getMoodboardRefreshRevision: (mbId) => request(`/moodboards/${mbId}/refresh-revision`),
   getMoodboardChanges: (mbId, since = 0, limit = 100) =>
     request(`/moodboards/${mbId}/changes?since=${encodeURIComponent(since)}&limit=${encodeURIComponent(limit)}`),
-  listElements: (mbId) => request(`/moodboards/${mbId}/elements`),
+  // What the board shows (pipelineUtils.boardVisible). listAllElements is for what works on posts: Pulse and the post sheet.
+  listElements: (mbId) => request(`/moodboards/${mbId}/elements`).then(boardVisible),
+  listAllElements: (mbId) => request(`/moodboards/${mbId}/elements`),
   createElement: (mbId, data) => request(`/moodboards/${mbId}/elements`, { method: "POST", body: JSON.stringify(data) }),
   placeMediaOnCanvas: (mbId, data) => request(`/moodboards/${mbId}/media/place`, { method: "POST", body: JSON.stringify(data) }),
   // Folder-merge conflicts: durable, so they survive a restart and can be
@@ -467,21 +474,22 @@ export const api = {
     request(`/moodboards/${mbId}/social/trends/${frameId}/items/${cardId}/hide`, { method: "POST", body: JSON.stringify({}) }),
 
   // AI Social posting: the Posts frame (data.social.kind "posts") and its post cards
-  // (data.social.kind "post"). Every change goes through these; the backend lays the
-  // frame out again and the canvas reads the result back.
+  // (data.social.kind "post"), which no board shows: Pulse and the post sheet work on them through these.
   // → { accounts, connections }: each account posts through one of the posting connections
   socialAccounts: () => request(`/social/accounts`),
   socialPutAccounts: (accounts) => request(`/social/accounts`, { method: "PUT", body: JSON.stringify({ accounts }) }),
   socialAllPosts: (limit = 50) => request(`/social/posts?limit=${limit}`),
+  // Pulse's calendar: every post with a slot in the range, any status, and every post with no slot (drafts).
+  socialPostsRange: (from, to, limit = 2000) => request(`/social/posts?limit=${limit}&from=${from}&to=${to}`),
+  socialTrendsAll: () => request(`/social/trends`),                  // → { frames }: every Trends frame on every board
+  trendsSources: () => request(`/trends/sources`),                   // → { data: { connected }, networks: { net: "app" | "data" | "agent" } }
+  socialTrendsCreate: (mbId, body = {}) =>
+    request(`/moodboards/${mbId}/social/trends`, { method: "POST", body: JSON.stringify(body) }),
+  socialTrendAdd: (mbId, frameId, body) =>
+    request(`/moodboards/${mbId}/social/trends/${frameId}/items`, { method: "POST", body: JSON.stringify(body) }),
+  socialLimits: () => request(`/social/limits`),                     // → { pro, autoAccounts, autoAccountsMax, sites, sitesMax }
   socialPostsCreate: (mbId, body = {}) =>
     request(`/moodboards/${mbId}/social/posts`, { method: "POST", body: JSON.stringify(body) }),
-  socialPostsGet: (mbId, frameId) => request(`/moodboards/${mbId}/social/posts/${frameId}`),
-  socialPostsLayout: (mbId, frameId) =>
-    request(`/moodboards/${mbId}/social/posts/${frameId}/layout`, { method: "POST", body: JSON.stringify({}) }),
-  socialPostsLook: (mbId, frameId, look) =>
-    request(`/moodboards/${mbId}/social/posts/${frameId}/look`, { method: "PUT", body: JSON.stringify({ look }) }),
-  socialPostsSettings: (mbId, frameId, settings) =>
-    request(`/moodboards/${mbId}/social/posts/${frameId}/settings`, { method: "PUT", body: JSON.stringify(settings) }),
   // → { card_id, post, problems }
   socialPostAdd: (mbId, frameId, body) =>
     request(`/moodboards/${mbId}/social/posts/${frameId}/items`, { method: "POST", body: JSON.stringify(body) }),
@@ -506,6 +514,8 @@ export const api = {
   connectionDelete: (id) => request(`/connections/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // → { ok, who?, channels?, abilities?, error? }
   connectionTest: (id) => request(`/connections/${encodeURIComponent(id)}/test`, { method: "POST", body: JSON.stringify({}) }),
+  // A REST call to a WordPress connection's site, logged in as its user: { method, path, query?, body? } → { status, ok, body }
+  connectionWordpress: (id, body) => request(`/connections/${encodeURIComponent(id)}/wordpress`, { method: "POST", body: JSON.stringify(body) }),
 
   // WordPress export
   listWordpressSites: () => request("/wordpress/sites"),
@@ -898,6 +908,12 @@ export const api = {
     return res.json();
   },
 
+  // A .blend becomes a Scene, simulations baked. A job: Blender may take minutes.
+  blendToWorld: (body) => request(`/blender/projects/to-world`, { method: "POST", body: JSON.stringify(body) }),
+  blendToWorldStatus: (job) => request(`/blender/projects/to-world/${encodeURIComponent(job)}`),
+  blenderInstall: () => request(`/blender/helper/install`, { method: "POST" }),
+  blenderInstallStatus: (job) => request(`/blender/helper/install/${encodeURIComponent(job)}`),
+
   // The user's own saved rigs, beside the ten built-ins in rigPresets.js.
   listRigPresets: () => request(`/rig-presets`),
   saveRigPreset: (name, rig) => request(`/rig-presets`, {
@@ -1242,6 +1258,9 @@ export const api = {
 
   // App-wide settings stored on the backend (read by shared-board exports)
   getAppSettings: () => request(`/app-settings`),
+  // What each agent terminal made (backend/agent_made.py): the newest LIMIT of each, or one terminal's list.
+  getAgentMade: (sessions, limit = 1) => request(`/agent-made?sessions=${encodeURIComponent([].concat(sessions).join(","))}&limit=${limit}`),
+  getAgentMadeFor: (sessionId, limit = 50) => request(`/agent-made/${encodeURIComponent(sessionId)}?limit=${limit}`),
   updateAppSettings: (settings) => request(`/app-settings`, { method: "PUT", body: JSON.stringify(settings) }),
 
   // Share

@@ -85,6 +85,17 @@ export function applyMeshTransform(mesh, item, keyframeProps, W, H, parentXform 
   mesh.scale.set(prs.sx * flipX, prs.sy * flipY, 1);
 }
 
+// The layer's own scale as one number — what applyMeshTransform would give the mesh
+// (item × keyframes × parenting × Motion Follow, the mean of |sx| and |sy|), without
+// a mesh. A shape paints its corners before it is posed, and the radius scale lock
+// (borderKeyframes.js withRadiusScaleLock) divides by this.
+export function layerPoseScale(item, keyframeProps, W, H, parentXform = null, followDelta = null) {
+  let prs = localPrs(item, keyframeProps, W, H);
+  if (parentXform) prs = applyParenting(parentXform.prs, prs, parentXform.type);
+  if (followDelta) prs = applyMotionFollowToPrs(prs, followDelta, W, H);
+  return (Math.abs(prs.sx) + Math.abs(prs.sy)) * 0.5;
+}
+
 // A shape's plate (outline + stroke/border reach + shadow pad) at one set of
 // keyframe values — the same resolution the channel sizes the shape plate with.
 export function shapePlateAt(item, kf, compositionWidth, compositionHeight) {

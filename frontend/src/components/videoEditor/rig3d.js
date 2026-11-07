@@ -271,7 +271,7 @@ export function legacyRigLights(intensities = null) {
 // 2.2 wide leaves the side walls inside the frustum a little behind the subject.
 export const CYC_DEFAULTS = Object.freeze({
   shape: 'cyc',
-  width: 2.2,
+  width: 3.4,          // wide enough for a 16:9 frame, whose back wall stands about three composition heights from the camera
   height: 1.6,
   depth: 1.8,
   curve: 0.3,
@@ -364,6 +364,14 @@ export function cycSizePx(cyc, compHeight) {
 
 // ── Normalisation ───────────────────────────────────────────────────────────
 
+export const LIGHT_PATTERNS = Object.freeze(['window', 'blinds', 'leaves']);
+
+/** What a light shines through: a built-in pattern or an image of the person's own. */
+function lightTexture(raw) {
+  if (LIGHT_PATTERNS.includes(raw?.pattern)) return { pattern: raw.pattern };
+  return typeof raw?.url === 'string' && raw.url ? { url: raw.url.slice(0, 2000), ...(raw.name ? { name: String(raw.name).slice(0, 80) } : {}) } : null;
+}
+
 function normalizeLight(raw, index) {
   if (!raw || typeof raw !== 'object') return null;
   const type = pick(raw.type, LIGHT_TYPES, 'directional');
@@ -409,6 +417,12 @@ function normalizeLight(raw, index) {
     // World px, like `dist`: a softbox is a physical size on the set.
     out.width = num(raw.width, 800, 1, 100000);
     out.height = num(raw.height, 800, 1, 100000);
+    // Only stored once narrowed, as the bias is: a saved rig's shape and look hash stay as they were.
+    if (raw.spread != null && num(raw.spread, 180, 1, 180) < 180) out.spread = num(raw.spread, 180, 1, 180);
+  }
+  if (type === 'directional' || type === 'spot' || type === 'area') {
+    const picture = lightTexture(raw.texture);
+    if (picture) out.texture = picture;
   }
   if (type === 'spot' || type === 'area') {
     out.targetX = num(raw.targetX, 0, -100000, 100000);
@@ -418,7 +432,10 @@ function normalizeLight(raw, index) {
   return out;
 }
 
-function normalizeLights(raw) {
+function normalizeLights(raw, world = false) {
+  // A world Scene lights itself with its environment and its own scene lights, so there an emptied list means no Rig lights. The old
+  // three, unseen and casting no shadow, filled every shadow an agent's sun cast, in Draft and Final alike.
+  if (world && Array.isArray(raw) && !raw.length) return [];
   // The legacy shape: model3dConfig.lights was { key, fill, rim } intensities.
   // Accepted on read, yielding the identical three directionals, so a project
   // saved before the rig existed lights exactly as it always did.
@@ -485,6 +502,10 @@ export function rigDrawsBackdrop(rig) {
   return !!rig && normalizeRig(rig).cyclorama.shape !== 'none';
 }
 
+/** Every Rig is a world Scene, the ones saved before there was one too: `classic` is the only way out. Read here, not stored, so a project
+ *  file changes only when someone edits it. */
+export const rigUsesWorld = (rig) => !!rig && rig.renderer !== 'classic';
+
 export function cycSurfaceColor(material) {
   if (material?.mode === 'shadowCatcher') return material.shadowColor || CYC_SHADOW_TINT;
   return material?.color || CYC_DEFAULTS.material.color;
@@ -499,6 +520,8 @@ function normalizeEnv(raw) {
     url: str(e.url, null),
     intensity: num(e.intensity, D.intensity, 0, 5),
     exposure: num(e.exposure, D.exposure, 0.05, 8),
+    // Only stored once set, as with a light's bias: a saved rig's look hash stays as it was.
+    ...(typeof e.tint === 'string' && e.tint.toLowerCase() !== '#ffffff' ? { tint: color(e.tint, '#ffffff') } : null),
     rotX: num(e.rotX, 0, -360, 360),
     rotY: num(e.rotY, 0, -360, 360),
     rotZ: num(e.rotZ, 0, -360, 360),
@@ -510,17 +533,42 @@ function normalizeEnv(raw) {
  * block) to the canonical one. Total: never throws, never returns null, so a
  * corrupt rig degrades to the legacy three-light default rather than darkness.
  */
+/** How the Render dialog films a world Scene. On the Scene, so a render job and an agent read the same choice. */
+export function normalizeRigRender(r) {
+  return {
+    mode: r?.mode === 'final' ? 'final' : 'draft',
+    spp: num(r?.spp, 64, 1, 4096),
+    bounces: num(r?.bounces, 8, 1, 32),
+    transparentBounces: num(r?.transparentBounces, 5, 0, 32),
+    glossy: num(r?.glossy, 0.5, 0, 1),
+    clamp: num(r?.clamp, 0, 0, 1000),
+    denoise: r?.denoise !== false,
+    // Final only: what the look takes back for the light that bounces, which raster never had.
+    exposure: num(r?.exposure, 1, 0.05, 4),
+    // Off in the preview by default; renders and Final have their shadows either way. Only stored once set.
+    ...(r?.draftShadows === true ? { draftShadows: true } : null),
+    // Final's radiance cache is on unless this says false (world3dLayer settleWorldFrame). Only stored once set.
+    ...(r?.radianceCache === false ? { radianceCache: false } : null),
+  };
+}
+
 export function normalizeRig(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const s = r.shadows && typeof r.shadows === 'object' ? r.shadows : {};
   return {
     cyclorama: normalizeCyclorama(r.cyclorama),
-    lights: normalizeLights(r.lights),
+    lights: normalizeLights(r.lights, r.renderer === 'world'),
     env: normalizeEnv(r.env),
     shadows: {
       mode: pick(s.mode, SHADOW_MODES, SHADOW_DEFAULTS.mode),
       maxCasters: num(s.maxCasters, SHADOW_DEFAULTS.maxCasters, 0, 4),
     },
+    // Only stored once set, so a saved rig's shape (and its look hash) stays what it was.
+    ...(r.renderer === 'world' || r.renderer === 'classic' ? { renderer: r.renderer } : null),
+    ...(r.look && typeof r.look === 'object' ? { look: r.look } : null),
+    ...(r.render && typeof r.render === 'object' ? { render: normalizeRigRender(r.render) } : null),
+    ...(r.scene && typeof r.scene === 'object' ? { scene: r.scene } : null),
+    ...(Number.isFinite(r.exposure) ? { exposure: r.exposure } : null),
   };
 }
 
@@ -744,13 +792,15 @@ const LIGHT_KF_CHANS = Object.freeze({
   penumbra: { label: 'Penumbra', unit: '', min: 0, max: 1, step: 0.01, neutral: 0.5 },
   width: { label: 'Width', unit: 'px', min: 1, max: 100000, step: 10, neutral: 800 },
   height: { label: 'Height', unit: 'px', min: 1, max: 100000, step: 10, neutral: 800 },
+  spread: { label: 'Spread', unit: 'deg', min: 1, max: 180, step: 1, neutral: 180 },
+  shadowSoftness: { label: 'Softness', unit: '', min: 0, max: 10, step: 0.1, neutral: 1 },
 });
 
 const LIGHT_KF_CHANS_BY_TYPE = Object.freeze({
-  directional: ['intensity', 'az', 'elev', 'dist'],
-  point: ['intensity', 'az', 'elev', 'dist'],
-  spot: ['intensity', 'az', 'elev', 'dist', 'angle', 'penumbra'],
-  area: ['intensity', 'az', 'elev', 'dist', 'width', 'height'],
+  directional: ['intensity', 'az', 'elev', 'dist', 'shadowSoftness'],
+  point: ['intensity', 'az', 'elev', 'dist', 'shadowSoftness'],
+  spot: ['intensity', 'az', 'elev', 'dist', 'angle', 'penumbra', 'shadowSoftness'],
+  area: ['intensity', 'az', 'elev', 'dist', 'width', 'height', 'spread', 'shadowSoftness'],
   ambient: ['intensity'],
   hemisphere: ['intensity'],
 });

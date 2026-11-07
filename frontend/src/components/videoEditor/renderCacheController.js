@@ -443,6 +443,11 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
     },
 
     // Commands
+    // The user is back while "Render cache now" runs (an engine page's own render holds the preview): it stops.
+    stop() {
+      st.drainQueue = false;
+      noteActivity();
+    },
     renderNow() {
       if (!active()) return;
       st.drainQueue = true;

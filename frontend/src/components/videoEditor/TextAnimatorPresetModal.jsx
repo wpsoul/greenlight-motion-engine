@@ -10,13 +10,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NumberField } from './Fields';
-import { CATEGORIES, PRESETS, presetSpan, isTimed, build, fakeVoice, usesVoice, hasExit, withExit } from './textAnimatorPresets';
+import { CATEGORIES, PRESETS, presetSpan, isTimed, keyedBothEnds, build, fakeVoice, usesVoice, hasExit, withExit, sideVersions, withSides } from './textAnimatorPresets';
 import { CLASSIC_PRESETS, CLASSIC_CATEGORIES } from './textAnimatorClassicPresets';
 import { presetPatch } from './textAnimatorPresetPatch';
 import { drawPreviewFrame } from './textAnimatorPreview';
 
 const SIDE_LABEL = { in: 'IN', out: 'OUT', inOut: 'IN·OUT', once: 'ONCE', loop: 'LOOP' };
 const SIDE_TITLE = { in: 'Entrance', out: 'Exit at the end of the layer', inOut: 'Entrance, and an exit that ends with the layer', once: 'Plays once near the start', loop: 'Runs for the whole layer' };
+// Sides: the versions an In or Out preset plays as (the other side is it played backwards).
+const SIDE_CHOICES = [['in', 'In'], ['out', 'Out'], ['inOut', 'In·Out']];
+const SIDE_NAME = Object.fromEntries(SIDE_CHOICES);
+const SIDE_HINT = {
+  in: { in: 'Entrance from the layer\'s start', out: 'The entrance played backwards, ending with the layer', inOut: 'Entrance, and the same played backwards as the exit' },
+  out: { in: 'The exit played backwards, from the layer\'s start', out: 'Exit that ends with the layer', inOut: 'The exit played backwards as the entrance, and the exit' },
+};
+const SIDE_HINT_ONLY = { in: 'A highlight: nothing to play backwards', inOut: 'Its in and out are made as one', once: 'Plays once near the start', loop: 'Runs for the whole layer' };
 const TILE_TEXT = 'Text in motion';
 const CYCLE = 3.2;
 const SPEEDS = [['0.5×', 0.5], ['1×', 1], ['1.5×', 1.5], ['2×', 2]];
@@ -52,6 +60,8 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
   const [duration, setDuration] = useState(null);
   const [speed, setSpeed] = useState(1);
   const [exit, setExit] = useState(false);
+  // The side picked under Sides (kept across tiles); a preset without it plays its own.
+  const [sides, setSides] = useState(null);
   const hasAnimators = Array.isArray(item?.textAnimators) && item.textAnimators.length > 0;
   const [mode, setMode] = useState('replace');
   const view = useMemo(() => (prefersLightView(textColor) ? ' light' : ''), [textColor]);
@@ -67,13 +77,20 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
   }, [ALL, query, category]);
   const countFor = (id) => (id === 'all' ? ALL.length : ALL.filter((p) => p.cat === id).length);
   const picked = ALL.find((p) => p.id === selectedId) || null;
-  // Exit: an entrance-only preset gains a fade-out that ends with the layer (seconds
+  const versions = picked ? sideVersions(picked) : null;
+  const side = versions && versions.includes(sides) ? sides : picked?.sides;
+  const base = picked ? withSides(picked, side) : null;
+  // Exit: an entrance-only version gains a fade-out that ends with the layer (seconds
   // from the end, so trimming never stretches it).
-  const canExit = !!picked && picked.sides !== 'loop' && picked.sides !== 'out' && !hasExit(picked);
-  const selected = picked && exit && canExit ? withExit(picked) : picked;
+  const canExit = !!base && base.sides !== 'loop' && base.sides !== 'out' && base.sides !== 'inOut' && !hasExit(base);
+  const withFade = exit && canExit;
+  const selected = base && withFade ? withExit(base) : base;
   const span = selected ? presetSpan(selected) : 0;
-  const timed = selected ? isTimed(selected) : false;
-  const effDuration = timed ? Math.min(duration ?? span, Math.max(0.2, clipSec)) : 0;
+  // Timed = keys to stretch; a preset made only of Time animators takes Speed instead.
+  const timed = selected ? isTimed(selected) && span > 0 : false;
+  // Keys at both ends (an In·Out version): each side gets at most half the layer.
+  const room = Math.max(0.2, selected && keyedBothEnds(selected) ? clipSec / 2 : clipSec);
+  const effDuration = timed ? Math.min(duration ?? span, room) : 0;
 
   const apply = (pick) => {
     const target = pick || selected;
@@ -83,7 +100,7 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
     onApply({
       ...presetPatch(item, target, {
         clipSec, fontPx,
-        duration: own && isTimed(target) ? duration : null,
+        duration: own && timed ? duration : null,
         speed: own ? speed : 1,
         mode,
       }),
@@ -135,7 +152,7 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
   // One loop for every preview: tiles on a fixed sample (or the preset's own `tile`
   // text, when it needs two rows to show), the band on the layer's text.
   const bandState = useRef({});
-  useEffect(() => { bandState.current = { selected, effDuration, timed, speed }; });
+  useEffect(() => { bandState.current = { selected, effDuration, timed, speed, version: `${side}|${withFade}` }; });
   useEffect(() => {
     const family = fontFamily || 'Inter, sans-serif';
     const weight = fontWeight || 700;
@@ -166,7 +183,7 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
       const band = bandRef.current;
       const st = bandState.current;
       if (band && st.selected) {
-        const key = `${st.selected.id}|${st.selected.animators.length}|${st.effDuration}|${st.speed}`;
+        const key = `${st.selected.id}|${st.version}|${st.effDuration}|${st.speed}`;
         if (key !== bandKey) {
           bandKey = key;
           // A voice preset plays as long as the made-up voice takes to say the text.
@@ -188,8 +205,9 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
     if (!selected) return 'Pick an animation';
     const parts = [selected.name, CAT_NAME[selected.cat]];
     if (usesVoice(selected)) parts.push(hasTimings ? 'on the spoken words' : 'no spoken word times here: runs on Time');
-    if (exit && canExit) parts.push('with exit');
-    if (timed) parts.push(`${effDuration.toFixed(2)} s ${selected.anchor === 'end' ? 'at the end' : 'from the start'}`);
+    if (versions) parts.push(SIDE_NAME[side]);
+    if (withFade) parts.push('with exit');
+    if (timed) parts.push(`${effDuration.toFixed(2)} s ${keyedBothEnds(selected) ? 'each side' : selected.anchor === 'end' ? 'at the end' : 'from the start'}`);
     else if (speed !== 1) parts.push(`speed ${speed}×`);
     parts.push(`${selected.animators.length} animator${selected.animators.length === 1 ? '' : 's'}`);
     if (hasAnimators) parts.push(mode === 'add' ? 'added to yours' : 'replaces yours');
@@ -260,6 +278,13 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
           </div>
           <canvas ref={bandRef} className={`ve-txa-pm-band${view}`} />
           <div className="ve-kfp-row">
+            <span className="ve-kfp-rowlabel">Sides</span>
+            {SIDE_CHOICES.map(([id, label]) => (
+              <button key={id} type="button" className={`ve-kfp-chip${side === id ? ' active' : ''}`} disabled={!versions} onClick={() => setSides(id)}>{label}</button>
+            ))}
+            <span className="ve-kfp-hint">{versions ? SIDE_HINT[picked.sides][side] : SIDE_HINT_ONLY[picked?.sides] || ''}</span>
+          </div>
+          <div className="ve-kfp-row">
             <span className="ve-kfp-rowlabel">Timing</span>
             {timed ? (
               <>
@@ -270,13 +295,13 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
                     step={0.05}
                     precision={2}
                     min={0.2}
-                    max={Math.max(0.2, Math.min(10, clipSec))}
+                    max={Math.min(10, room)}
                     suffix="s"
-                    title={selected?.anchor === 'end' ? 'How long the exit takes, ending with the layer' : 'How long the animation takes from the layer\'s start'}
+                    title={keyedBothEnds(selected) ? 'How long each side takes: the entrance from the layer\'s start, the exit ending with it' : selected?.anchor === 'end' ? 'How long the exit takes, ending with the layer' : 'How long the animation takes from the layer\'s start'}
                     onInput={(v) => setDuration(Math.max(0.2, Math.min(10, Number(v) || span)))}
                   />
                 </div>
-                <span className="ve-kfp-hint">{selected?.anchor === 'end' ? 'ends with the layer' : 'from the layer\'s start'}</span>
+                <span className="ve-kfp-hint">{keyedBothEnds(selected) ? 'each side, at the start and the end' : selected?.anchor === 'end' ? 'ends with the layer' : 'from the layer\'s start'}</span>
               </>
             ) : (
               <>
@@ -291,7 +316,7 @@ export default function TextAnimatorPresetModal({ item, fontFamily, fontWeight, 
             <span className="ve-kfp-rowlabel">Exit</span>
             <button type="button" className={`ve-kfp-chip${!exit || !canExit ? ' active' : ''}`} disabled={!canExit} onClick={() => setExit(false)}>None</button>
             <button type="button" className={`ve-kfp-chip${exit && canExit ? ' active' : ''}`} disabled={!canExit} onClick={() => setExit(true)}>Fade out</button>
-            <span className="ve-kfp-hint">{canExit ? 'Units fade out as the layer ends' : picked && hasExit(picked) ? 'This preset has its own exit' : 'Runs for the whole layer'}</span>
+            <span className="ve-kfp-hint">{canExit ? 'Units fade out as the layer ends' : base && (base.sides === 'out' || base.sides === 'inOut' || hasExit(base)) ? 'This version has its own exit' : 'Runs for the whole layer'}</span>
           </div>
           <div className="ve-kfp-row">
             <span className="ve-kfp-rowlabel">Apply</span>

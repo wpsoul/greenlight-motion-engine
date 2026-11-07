@@ -17,16 +17,16 @@ The agent writes the video as data: a `project.json` and its files. The engine t
 ## Quick start
 
 ```bash
-npx greenlight-motion@0.3.4 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
-npx greenlight-motion@0.3.4 init my-video   # a working starter: index.html, project.json, assets/
+npx greenlight-motion@0.4.0 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
+npx greenlight-motion@0.4.0 init my-video   # a working starter: index.html, project.json, assets/
 # edit my-video/project.json, put pictures / video / sound in my-video/assets/
 # or: write my-video/script.json (a scene script, skill/references/scene-script.md), then
-npx greenlight-motion@0.3.4 script my-video # script.json → project.json with the Video Editor's own presets
-npx greenlight-motion@0.3.4 check my-video  # what to fix: missing files, template mistakes, blank frames, broken plugins
-npx greenlight-motion@0.3.4 stills my-video # frames + a labelled contact sheet, to look at
-npx greenlight-motion@0.3.4 render my-video --fps 60 --motion-blur
-npx greenlight-motion@0.3.4 pack my-video   # everything in ONE html file
-npx greenlight-motion@0.3.4 pack my-video --glvideo   # ONE .glvideo: double-clicked, it opens in GreenLight Dash
+npx greenlight-motion@0.4.0 script my-video # script.json → project.json with the Video Editor's own presets
+npx greenlight-motion@0.4.0 check my-video  # what to fix: missing files, template mistakes, blank frames, broken plugins
+npx greenlight-motion@0.4.0 stills my-video # frames + a labelled contact sheet, to look at
+npx greenlight-motion@0.4.0 render my-video --fps 60 --motion-blur
+npx greenlight-motion@0.4.0 pack my-video   # everything in ONE html file
+npx greenlight-motion@0.4.0 pack my-video --glvideo   # ONE .glvideo: double-clicked, it opens in GreenLight Dash
 ```
 
 Also: `trace` (every animated layer's values frame by frame, plus the layer's moments), `set key=value`
@@ -72,7 +72,7 @@ The engine is one classic script, so it runs from a double-clicked file, a CDN o
 
 ```html
 <div id="app"></div>
-<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.3.4/dist/greenlight-motion.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.4.0/dist/greenlight-motion.js"></script>
 <script>
   GreenLightMotion.mountStudio(document.getElementById('app'), {
     project: { /* project.json */ },
@@ -87,7 +87,12 @@ Its review (notes with drawings, highlights, changes) is text to copy for your a
 (`config.save`). In a narrow frame — a chat's column, a card — pass `chat: { height, full, onExpand }`: up to 900 px
 wide it becomes the mobile editor in a box `height` px tall (the whole frame with `full: true`), the timeline across the
 width with its panels as sheets over it; wider, the full studio. `onExpand(full)` puts a Full screen button in the app
-bar for a host that can go full screen; the returned studio's `chat.set({ height, full })` follows the host.
+bar for a host that can go full screen; the returned studio's `chat.set({ height, full })` follows the host. The mobile
+editor has Undo / Redo in its app bar and Go to start / end in its play row. On a touch device the page keeps memory low
+(a preview at most 960 px long, pictures at the size they are drawn, only the scene on screen and the next held), renders
+the seconds a phone plays too slowly into a cache of its own (a line over the ruler, a status beside the time; the files
+stay in the browser), and asks before the first Play of a film too heavy for a phone. The page's `cache` API and
+`memoryStats()` read all of it.
 `GreenLightMotion.mountPage(el, { project, assets, theme })` is the plain page under it, without the review interface.
 
 Without the page UI (in the browser, through a bundler or the ESM build; Node runs only the CLI):

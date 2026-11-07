@@ -484,13 +484,23 @@ export async function exportVideo(opts) {
     // the sink, so the render runs at the speed of its slowest stage instead of
     // banking the difference in memory.
     maxQueuedOutputBytes = DEFAULT_MAX_QUEUED_OUTPUT_BYTES,
+    // Render only what changed (reuseRender.js): the frames to encode when they are
+    // not `duration * fps` in a row, (i) => true for every frame that must open a
+    // GOP (the start of each piece, which the backend cuts the file at), the
+    // length of the sound when it is the whole film rather than these frames, and
+    // the encoder config of the file the pieces are spliced into (a piece encoded
+    // any other way could not share its stream).
+    frameCount = null,
+    keyFrameAt = null,
+    audioDuration = null,
+    encoderConfig = null,
   } = opts;
   // `undefined` (nobody set it) means the default; 0 is a deliberate "off".
   const queuedOutputBudget = Number.isFinite(maxQueuedOutputBytes)
     ? maxQueuedOutputBytes
     : DEFAULT_MAX_QUEUED_OUTPUT_BYTES;
 
-  const totalFrames = Math.max(1, Math.ceil(duration * fps));
+  const totalFrames = Number.isInteger(frameCount) && frameCount > 0 ? frameCount : Math.max(1, Math.ceil(duration * fps));
   console.warn(`[export-phase] exportVideo: ${totalFrames} frames, ${audioClips.length} audio clips, format=${format}, ${width}x${height}`);
   const frameDuration = 1_000_000 / fps; // microseconds per frame
   const useAlpha = format === 'webm-alpha';
@@ -511,7 +521,7 @@ export async function exportVideo(opts) {
   const hasAudio = audioClips.length > 0 && typeof AudioEncoder !== 'undefined';
   const droppedAudioUrls = [];
   const mixedAudioPromise = hasAudio
-    ? mixAudioClips(audioClips, duration, droppedAudioUrls)
+    ? mixAudioClips(audioClips, Number(audioDuration) > 0 ? Number(audioDuration) : duration, droppedAudioUrls)
     : Promise.resolve(null);
 
   // Create muxer
@@ -668,7 +678,13 @@ export async function exportVideo(opts) {
   // An explicit Render Settings bitrate is honoured as a target, as before, and an
   // encoder without quantizer mode falls through to the variable-bitrate configs.
   const quantizerFor = new Map();
-  for (const codec of (framesMode ? [] : codecCandidates)) {
+  if (encoderConfig && !framesMode) {
+    const { quantizer = null, ...forced } = encoderConfig;
+    const config = { ...forced, width, height, framerate: fps };
+    if (quantizer) quantizerFor.set(config, quantizer);
+    configQueue.push(config);
+  }
+  for (const codec of ((framesMode || encoderConfig) ? [] : codecCandidates)) {
     const q = bitrate ? null : autoQuantizerFor(codec, width, height, fps, duration);
     if (q) {
       const config = { ...baseConfig, codec, bitrateMode: 'quantizer' };
@@ -742,8 +758,16 @@ export async function exportVideo(opts) {
   }
 
   if (!selectedConfig && !framesMode) {
+    if (encoderConfig) throw new Error(`The encoder of the file to reuse (${configLabel(configQueue[0])}) is not available here.`);
     throw new Error(`No supported video codec found for ${isWebm ? 'WebM' : 'MP4'} export at ${width}x${height}. Tried: ${rejectedCodecs.join(', ')}`);
   }
+  // What a later render that reuses this file's frames must encode with (encoderConfig).
+  const encoderInfo = selectedConfig ? {
+    codec: selectedConfig.codec,
+    ...(selectedConfig.bitrateMode ? { bitrateMode: selectedConfig.bitrateMode } : {}),
+    bitrate: selectedConfig.bitrate,
+    quantizer: quantizerFor.get(selectedConfig) || null,
+  } : null;
 
   // Audio goes into the muxer BEFORE the first video frame, and the ordering is
   // not cosmetic. In a fragmented MP4 the muxer interleaves the two tracks: a
@@ -978,7 +1002,7 @@ export async function exportVideo(opts) {
     }
     mark0('frame0: captured');
 
-    const keyFrame = i % keyFrameInterval === 0;
+    const keyFrame = i % keyFrameInterval === 0 || (keyFrameAt ? keyFrameAt(i) === true : false);
     encoder.encode(frame, frameQuantizer ? { keyFrame, [frameQuantizer.kind]: { quantizer: frameQuantizer.quantizer } } : { keyFrame });
     frame.close();
     mark0('frame0: encoded');
@@ -1116,13 +1140,13 @@ export async function exportVideo(opts) {
       + `queue budget ${(queuedOutputBudget / 1e6).toFixed(0)} MB)`);
     if (typeof window !== 'undefined') window.__exportPhase = 'Finishing file';
     onProgress?.(1, totalFrames);
-    return { streamed: true, mime: mimeType, audioWarning };
+    return { streamed: true, mime: mimeType, audioWarning, encoder: encoderInfo };
   }
 
   const bytes = !isWebm && audioPrimingSamples > 0 ? insertAudioEditList(target.buffer, audioPrimingSamples) : target.buffer;
   const blob = new Blob([bytes], { type: mimeType });
   onProgress?.(1, totalFrames);
-  return { blob, audioWarning };
+  return { blob, audioWarning, encoder: encoderInfo };
 }
 
 /**

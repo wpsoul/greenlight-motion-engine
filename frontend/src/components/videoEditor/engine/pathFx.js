@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { getAdjustmentEffect } from '../adjustmentEffects';
 import { hashAlphaSource, sampleAlphaOutline } from '../alphaOutline';
 import { getItemCornerRadii, getItemShadows } from '../clipShader';
+import { withRadiusScaleLock } from '../borderKeyframes';
 import { SHAPE_PATH_KF_KEY, isStrokeShape, resolveLineSettings, sampleShapePathPolyline, shapeBoxSize, shapeCornerRadii, shapePathBounds, strokeReach as lineStrokeReach, unitOutlineFromShape, withShapeSizeKeyframes } from '../shapePath';
 import { PATH_FX_SAMPLES, djb2, mediaContentFrac } from './canvasHelpers';
 import { maskVisibleShape as maskVisibleShapeInEngine } from './layerMasks';
@@ -281,10 +282,11 @@ export function pathFxRelaxAmount(item) {
   return Math.max(0, Math.min(100, relax));
 }
 
-export function getShapePathFxData(rawItem, kf, compW, compH, relax = 0) {
+export function getShapePathFxData(rawItem, kf, compW, compH, relax = 0, layerScale = 1) {
   if (!rawItem) return null;
-  // the outline follows a keyframed size exactly like the drawn plate does
-  const item = withShapeSizeKeyframes(rawItem, kf);
+  // the outline follows a keyframed size and a scale-locked radius exactly like the
+  // drawn plate does (layerMesh.js)
+  const item = withRadiusScaleLock(withShapeSizeKeyframes(rawItem, kf), layerScale);
   const type = item.shapeType || 'rectangle';
   const isPathShape = type === 'path' || type === 'line';
   const isSvgShape = type === 'custom' || type === 'vector';
@@ -536,7 +538,8 @@ export function resolveLayerPathFx(engine, item, clip, kf, layerMesh) {
   const mediaType = clip?.mediaType;
   const { w: compW, h: compH } = engine.videoSize;
   const relax = pathFxRelaxAmount(item);
-  if (mediaType === 'shape') return getShapePathFxData(item, kf, compW, compH, relax);
+  const layerScale = layerMesh?.userData?.layerScale;
+  if (mediaType === 'shape') return getShapePathFxData(item, kf, compW, compH, relax, layerScale);
   const u = layerMesh?.material?.uniforms;
   const canvasSize = u?.uCanvasSize?.value;
   const mediaSize = u?.uResolution?.value;
@@ -598,7 +601,7 @@ export function resolveLayerPathFx(engine, item, clip, kf, layerMesh) {
   } else {
     // Media rect (with the item's corner radii): video, opaque images, and
     // any media kind without a CPU-readable alpha.
-    const radii = getItemCornerRadii(item);
+    const radii = getItemCornerRadii(item, kf, layerScale);
     const radius = Math.max(0, ...radii.map((r) => (Number.isFinite(Number(r)) ? Number(r) : 0)));
     texture = getOrBakePathTexture(`rect:${fit}:${Math.round(radius)}`, (data) => {
       const quad = sampleRoundedRectQuad(cw, ch, radius, plateW, plateH, PATH_FX_SAMPLES);

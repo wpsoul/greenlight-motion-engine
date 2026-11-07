@@ -22,6 +22,7 @@ import { evalCameraRig } from './cameraRig';
 import { getItemKeyframeValues } from './gsapTransitions';
 import { buildParentIndex, resolveItemPrs } from './keyframeParenting';
 import { SMART_ZOOM_MODE, applySmartZoom, smartZoomFrame } from './smartZoomCamera';
+import { getTimelineLayout } from './speedUtils';
 
 // The comp plane exactly fills the frame at this distance — the same constant
 // Player builds its PerspectiveCamera from.
@@ -47,8 +48,9 @@ export const CAMERA_KF_PROPS = [
   { label: 'camY', displayLabel: 'Pan Y', group: 'Motion', placeholder: '0', unit: '%', type: 'number', min: -200, max: 200, step: 0.5 },
   { label: 'camRoll', displayLabel: 'Roll', group: 'Motion', placeholder: '0', unit: 'deg', type: 'number', min: -180, max: 180, step: 0.5 },
   { label: 'camDolly', displayLabel: 'Dolly', group: 'Motion', placeholder: '0', unit: 'px', type: 'number', min: -3000, max: 3000, step: 10 },
-  { label: 'camTiltX', displayLabel: 'Tilt X', group: 'Motion', placeholder: '0', unit: 'deg', type: 'number', min: -60, max: 60, step: 0.5 },
-  { label: 'camTiltY', displayLabel: 'Tilt Y', group: 'Motion', placeholder: '0', unit: 'deg', type: 'number', min: -60, max: 60, step: 0.5 },
+  // No min/max on tilt: an orbit may go past 90° and all the way round; the evaluators hold any angle.
+  { label: 'camTiltX', displayLabel: 'Tilt X', group: 'Motion', placeholder: '0', unit: 'deg', type: 'number', step: 0.5 },
+  { label: 'camTiltY', displayLabel: 'Tilt Y', group: 'Motion', placeholder: '0', unit: 'deg', type: 'number', step: 0.5 },
   { label: 'camDofEnabled', displayLabel: 'Depth of Field', group: 'Depth of Field', placeholder: '0', unit: '', type: 'number', min: 0, max: 1, step: 1 },
   { label: 'camFocusDistance', displayLabel: 'Focus Distance', group: 'Depth of Field', placeholder: '0', unit: 'px', type: 'number', min: 0, max: 20000, step: 10 },
   { label: 'camAperture', displayLabel: 'Aperture', group: 'Depth of Field', placeholder: '24', unit: 'px', type: 'number', min: 0, max: 300, step: 1 },
@@ -82,6 +84,22 @@ export const CAMERA_KF_PROPS = [
 export const CAMERA_PATH_OFFSETS = ['camPathOffsetX', 'camPathOffsetY', 'camPathOffsetZ'];
 
 export const CAMERA_KF_LABELS = CAMERA_KF_PROPS.map((p) => p.label);
+
+/**
+ * The track a camera clip shows on the timeline. The tracks outlive a mode switch, so it has to go by the mode: Path
+ * Progress belongs to Path and Rig, and a Free camera that once had a path must not show that path's keys.
+ */
+export function cameraViewedKfProp(item, explicit) {
+  const has = (prop) => item?.propertyKeyframes?.[prop]?.length > 0;
+  const mode = item?.cameraMoveMode;
+  if (mode === 'path' || mode === 'rig') {
+    if (explicit && has(explicit)) return explicit;
+    if (has('camPathT')) return 'camPathT';
+  } else if (explicit && explicit !== 'camPathT' && has(explicit)) {
+    return explicit;
+  }
+  return CAMERA_KF_LABELS.find((prop) => prop !== 'camPathT' && has(prop)) || null;
+}
 
 /**
  * Fingerprint of a camera clip's keyframed move. The camera remembers the Motion
@@ -201,7 +219,9 @@ export const CAMERA_NEUTRAL = {
 //
 // The path is stored on the camera ITEM, so it saves, undoes and duplicates with
 // the clip like every other camera property.
-export const CAMERA_PATH_AIMS = ['free', 'tangent', 'target'];
+// 'captured': the rotation lives on the anchors (rx, ry, rz = Tilt X, Tilt Y, Roll), set by capturing keys in the
+// preview. Not on the camTilt tracks: Free reads those, and path keys must not keep animating a Free camera.
+export const CAMERA_PATH_AIMS = ['free', 'tangent', 'target', 'captured'];
 
 export const CAMERA_PATH_DEFAULT = {
   points: [],
@@ -234,6 +254,7 @@ export function sanitizeCameraPath(path) {
     if (hIn) point.hIn = hIn;
     if (hOut) point.hOut = hOut;
     if (p.manual === true) point.manual = true;
+    for (const key of ['rx', 'ry', 'rz']) if (Number.isFinite(Number(p[key]))) point[key] = Number(p[key]);
     clean.push(point);
   }
   if (!clean.length) return null;
@@ -251,8 +272,9 @@ export function sanitizeCameraPath(path) {
   };
 }
 
+// A captured path starts life as one key, and the camera holds on it: without this the first capture would snap back.
 export function cameraPathIsLive(path) {
-  return !!path?.follow && Array.isArray(path.points) && path.points.length >= 2;
+  return !!path?.follow && Array.isArray(path.points) && path.points.length >= (path.aim === 'captured' ? 1 : 2);
 }
 
 // Auto tangents for anchors the user hasn't shaped. Derived from the Catmull-Rom
@@ -304,7 +326,11 @@ const bezierDeriv = (a, b, c, d, t) => {
  */
 export function evaluateCameraPath(path, u) {
   const pts = path?.points || [];
-  if (pts.length < 2) return null;
+  if (!pts.length) return null;
+  if (pts.length === 1) {
+    const { x, y, z } = pts[0];
+    return { position: { x, y, z }, tangent: { x: 0, y: 0, z: 0 }, index: 0, t: 0 };
+  }
   const closed = path.closed === true;
   const segments = closed ? pts.length : pts.length - 1;
   const clamped = closed ? ((u % 1) + 1) % 1 : Math.max(0, Math.min(1, u));
@@ -332,7 +358,33 @@ export function evaluateCameraPath(path, u) {
   return {
     position: { x: x.value, y: y.value, z: z.value },
     tangent: { x: x.slope / len, y: y.slope / len, z: z.slope / len },
+    index,
+    t,
   };
+}
+
+/**
+ * The rotation a captured path holds where evaluateCameraPath landed: lerped between the two anchors at the path's own
+ * rate, so rotation and position arrive at a key together. An anchor with no rotation (added later in the 3D view)
+ * takes its neighbour's, so a new point can't swing the camera back to zero.
+ */
+function capturedPathRotation(path, hit) {
+  const pts = path.points;
+  const n = pts.length;
+  const read = (i) => {
+    for (let step = 0; step < n; step += 1) {
+      for (const j of [i - step, i + step]) {
+        const p = pts[j];
+        if (p && Number.isFinite(p.rx)) return { camTiltX: p.rx, camTiltY: num(p.ry), camRoll: num(p.rz) };
+      }
+    }
+    return { camTiltX: 0, camTiltY: 0, camRoll: 0 };
+  };
+  const a = read(hit.index);
+  const b = read((hit.index + 1) % n);
+  const out = {};
+  for (const prop of Object.keys(a)) out[prop] = a[prop] + (b[prop] - a[prop]) * hit.t;
+  return out;
 }
 
 // Props whose motion cannot be represented as a 2D affine on the preview overlay
@@ -465,6 +517,44 @@ export function pinCameraChannelTop(channels) {
   const [cameraChannel] = next.splice(index, 1);
   next.push(cameraChannel);
   return next;
+}
+
+/**
+ * A camera item on the project's camera channel, in place of the camera clips its span overlaps: a .blend's shot takes
+ * over the Camera layer for as long as it lasts, the way it takes over the Scene. Makes the channel when there is none.
+ * The backend's twin (camera_layer.py place_camera) does the same for an agent's import and a saved project.
+ */
+export function placeCameraItem(channels, item, newChannelId) {
+  const existing = findCameraChannel(channels);
+  if (!existing) {
+    return pinCameraChannelTop([...channels, {
+      id: newChannelId, name: 'Camera', kind: CAMERA_CHANNEL_KIND, visible: true, unsnapped: true, items: [item],
+    }]);
+  }
+  const at = getTimelineLayout([item], { unsnapped: true })[0];
+  // Free placement keeps every clip where it was: a snapped channel's are end to end, so that is where they go.
+  const layout = getTimelineLayout(existing.items, { unsnapped: existing.unsnapped });
+  const kept = existing.items
+    .map((it, i) => (existing.unsnapped ? it : { ...it, freeStart: layout[i]?.startTime ?? 0 }))
+    .filter((it, i) => !(layout[i] && layout[i].startTime < at.endTime - 1e-6 && layout[i].endTime > at.startTime + 1e-6));
+  const items = [...kept, item].sort((a, b) => (a.freeStart ?? 0) - (b.freeStart ?? 0));
+  return pinCameraChannelTop(channels.map((ch) => (ch === existing ? { ...ch, unsnapped: true, items } : ch)));
+}
+
+/**
+ * A camera clip and item made `length` seconds long with every key where it was in time: keys sit in % of the clip, so
+ * they close up by the same share, and the last one holds to the new end. A shot shorter than its Scene keeps its last
+ * pose for the rest of the Scene, as the Scene's own camera did. Shorter lengths change nothing.
+ */
+export function holdCameraItem(clip, item, length) {
+  const start = Number(item?.trimStart) || 0;
+  const was = (Number(item?.trimEnd) || 0) - start;
+  if (!(was > 0) || !(length > was + 1e-6)) return { clip, item };
+  const share = was / length;
+  const propertyKeyframes = Object.fromEntries(Object.entries(item.propertyKeyframes || {}).map(([prop, keys]) => [
+    prop, Array.isArray(keys) ? keys.map((k) => ({ ...k, position: Math.round(Number(k.position) * share * 1e6) / 1e6 })) : keys,
+  ]));
+  return { clip: { ...clip, duration: start + length }, item: { ...item, trimEnd: start + length, propertyKeyframes } };
 }
 
 // ── World space ↔ camera props ──
@@ -624,7 +714,10 @@ export function applyCameraPath(item, values, frame) {
     hit.position.z + num(values.camPathOffsetZ)
   );
   let camQuat = null;
-  if (path.aim === 'tangent') {
+  if (path.aim === 'captured') {
+    // Read by cameraPropsForWorldPoint below, the same way Aim Free reads the tilt tracks.
+    Object.assign(values, capturedPathRotation(path, hit));
+  } else if (path.aim === 'tangent') {
     camQuat = cameraAimQuaternion(position, position.clone().add(
       new THREE.Vector3(hit.tangent.x, hit.tangent.y, hit.tangent.z)
     ));

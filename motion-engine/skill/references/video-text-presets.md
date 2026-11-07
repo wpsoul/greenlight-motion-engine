@@ -4,7 +4,7 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Text animation presets: typing reveals, text on shapes, highlights, loops, decoders, voice captions
+# GreenLight Dash — Text animation presets: typing reveals, text on shapes, highlights, loops, decoders, voice captions, classic reveals
 
 > Builds on [video-text.md](video-text.md#advanced-animations--effects-over-a-moving-range-of-characters-words-or-lines) (the `textAnimators` model). Read that for the fields; this file is the app's own preset catalogue as JSON to paste. Energetic in-and-out titles are in [video-text-kinetic.md](video-text-kinetic.md).
 
@@ -14,6 +14,7 @@
 - [Writing a recipe onto a layer](#writing-a-recipe-onto-a-layer)
 - [The catalogue](#the-catalogue)
 - Recipes: [Sweep Reveal](#sweep-reveal) · [Type on Shape](#type-on-shape) · [Emphasis](#emphasis) · [Loop](#loop) · [Characters](#characters) · [Voice](#voice)
+- [Classic](#classic): 29 calm word and letter reveals, highlights, caption bars and randomizer looks
 
 ## Pick a category
 
@@ -29,6 +30,7 @@ animator built from scratch rarely looks as good.
 | keep moving for the whole layer with no keyframes (neon, rainbow, gradient, float, jitter, flicker) | [Loop](#loop) |
 | resolve out of random glyphs, binary or a rolling alphabet, or keep glitching | [Characters](#characters) |
 | follow speech in a caption (karaoke box, word pops, read-along) | [Voice](#voice) |
+| come in calmly word by word or letter by letter, optionally with a highlight, a caption bar or a randomizer look (captions, lower thirds, a typewriter, a ransom note) | [Classic](#classic) |
 
 Recipes combine: a layer holds up to 8 animators, so an entrance plus an Emphasis or Loop recipe on the same text
 works. Append the second recipe with fresh ids (next section).
@@ -45,6 +47,7 @@ first:
 - Voice: [Spoken Box](#spoken-box), [Spoken Pop](#spoken-pop), [Spoken Glow](#spoken-glow),
   [Karaoke Wipe](#karaoke-wipe), [Word Pop](#word-pop), [Rise on Voice](#rise-on-voice),
   [Typed as Spoken](#typed-as-spoken).
+- Classic: [Classic Fade Up](#classic-fade-up), [Classic Rise (Mask)](#classic-rise-mask) (calm lines and captions).
 - Kinetic: see [video-text-kinetic.md](video-text-kinetic.md#when-to-use-them).
 
 Type on Shape has no preferred preset: pick by the shape the text needs.
@@ -53,12 +56,15 @@ Type on Shape has no preferred preset: pick by the shape the text needs.
 
 - **Copy** the recipe's `textAnimators` into the text item, plus `textAnimatorPivotX` / `textAnimatorPivotY` when it
   has them, and merge its `propertyKeyframes` into the item's own (the item's other tracks stay).
-  - To **replace** the layer's animation, delete the old `textAnimators` and every `txa:` track first, so no orphan
-    keys are left behind.
+  - To **replace** the layer's animation, delete the old `textAnimators` and every `txa:` track first, and set both
+    pivots to the recipe's values (0 when it has none): recipes reuse ids like `a1`/`p1`, so a leftover track or pivot
+    would drive the new animator.
   - To **add** on top, give the new animators and effects `aid` / `pid` values the layer does not use yet, and rename
     the recipe's `txa:<aid>:…` / `<pid>.<field>` track keys to match.
-- **Lengths are for `textFontSize` 100.** Multiply every length field listed under [The catalogue](#the-catalogue)
-  by `textFontSize / 100`. Angles, scales, opacities, percentages and timings stay as written.
+- **Lengths are for a 100 px font.** Multiply every length field listed under [The catalogue](#the-catalogue)
+  by the layer's font size in px / 100: `textFontSize`, or in pct mode `textFontSizePct × videoSize.h / 100`. Angles, scales, opacities, percentages and timings stay as written.
+  [Classic](#classic) recipes are the exception: their lengths are px and stay as written, apart from the few each
+  recipe lists.
 - **Keyframe `position` is a % of the layer's length.** Every recipe is written for a **5 s layer**, and each key has
   its time in a comment. For a layer `L` seconds long:
   - `t s` → `position = t / L × 100`
@@ -67,7 +73,9 @@ Type on Shape has no preferred preset: pick by the shape the text needs.
   - If the recipe's longest key time is more than `L`, first divide every key time by `longest / L`, so the motion
     fits the layer. The app does the same.
 
-  Recipes without `propertyKeyframes` (Loop, Voice and the Time-driven parts) fit any layer length as written.
+  Recipes without `propertyKeyframes` (Voice, the Time-driven parts, and every Loop except Gradient Flow, whose keys
+  are layer %) fit any layer length as written.
+- **Strip the `//` time comments** from a recipe's blocks before you send it: they are notes, not JSON.
 - **Faster or slower** by a factor `k`: divide every key time and every `stagger`, `duration`, `delay`, `hold` and
   `fadeOut` by `k`; multiply `flow`, wiggle `rate` and scramble `rate` by `k`.
 - **Colours** in the effects are the recipe's look. The text keeps its own colour, font and size. Some recipes are
@@ -75,13 +83,13 @@ Type on Shape has no preferred preset: pick by the shape the text needs.
   paints the text itself, so it reads on its shape whatever the layer's colour is.
 - **Voice recipes need `textWordTimings`** on the item (captions made from a transcript have them). Without timings
   they run as Time animators, one word after another.
-- **To check it**, render a still in the middle of the motion and one after it settles (video-rendering.md).
+- **To check it**, render a still in the middle of the motion and one after it settles (rendering.md).
 
 ## The catalogue
 
-<!-- PRESETS:BEGIN (generated by tests/text-animators/skill_presets.mjs from presets.js — edit there) -->
+<!-- PRESETS:BEGIN (generated from the app's presets; do not edit by hand) -->
 
-49 recipes in 6 categories. **Lengths** to multiply by `textFontSize / 100`: `blur` `amount`; `box` `padX`, `padY`, `radius`; `glow` `size`; `position` `x`, `y`; `rotate3d` `perspective`; `stroke` `width`.
+54 recipes in 7 categories; the app's 29 Classic recipes follow in [Classic](#classic). **Lengths** to multiply by the font size in px / 100: `blur` `amount`; `box` `padX`, `padY`, `radius`; `glow` `size`; `position` `x`, `y`, `z`; `rotate3d` `perspective`; `stroke` `width`; and the layer's `textAnimatorPerspective`.
 
 **A fade-out exit for an `in` recipe**, ending with the layer: append this animator with unused ids. Set its `basedOn` to the recipe's first animator's, and `stagger` to 0.015 for letters, 0.04 for words or 0.08 for lines.
 
@@ -90,6 +98,8 @@ Type on Shape has no preferred preset: pick by the shape the text needs.
   "range": {"drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.04, "duration": 0.3, "curve": "Ease In"},
   "effects": [{"pid": "p19", "type": "opacity", "opacity": 0}] }
 ```
+
+It is quick by design (0.3 s per unit); raise `duration` when the exit has to be read.
 
 | Recipe | Category | What it does | Unit | Plays |
 |---|---|---|---|---|
@@ -107,6 +117,11 @@ Type on Shape has no preferred preset: pick by the shape the text needs.
 | [Counter Sweep](#counter-sweep) | Sweep Reveal | Letters type in left to right while a pink band runs back against them | letters | in, the first 2.7 s |
 | [Sunset Shrink](#sunset-shrink) | Sweep Reveal | Big letters shrink down into place; a band paints each one top to bottom in sunset colours | letters | in, the first 2.8 s |
 | [Boomerang](#boomerang) | Sweep Reveal | Letters glide down at a slant; a violet band runs out with the typing and swings back | letters | in, the first 3 s |
+| [Rack Focus](#rack-focus) | Depth | Words come forward out of a soft background and snap into focus; at the end they pass the focus toward you | words | in, the first 1.78 s on a 5-word line, then out at the end |
+| [Stand Up](#stand-up) | Depth | Letters slide forward across the floor and stand up one after another, hinged at their feet; at the end they fall forward toward you | letters | in, the first 1.5 s on a 16-letter line, then out at the end |
+| [Strata](#strata) | Depth | Words float in and rest at their own depths while a slow camera drift slides them past each other; at the end they fall back | words | in, the first 1.8 s on a 6-word line (Drift across the whole layer), then out at the end |
+| [Spotlight](#spotlight) | Depth | Words wait set back and dim; each in turn steps forward into the light, and the last one keeps it | words | once, the first 2.85 s on a 5-word line |
+| [Ripple](#ripple) | Depth | Rings of depth spread from the centre of the text to its edges, over and over, like ripples on still water | letters | loops for the whole layer |
 | [Pill Type](#pill-type) | Type on Shape | Letters rise in a soft wave onto a pill that stretches along each line | letters | in, the first 1.6 s |
 | [Card Type](#card-type) | Type on Shape | Letters drop in while a white card widens with them, then grows a line taller | letters | in, the first 2 s |
 | [Word Bars](#word-bars) | Type on Shape | Words pop up one at a time and the red bar stretches to take each one | words | in, the first 1.6 s |
@@ -341,7 +356,7 @@ Letters land glowing hot at the typing edge and cool down behind it. Plays: in, 
 
 ### Focus Type
 
-A long soft wave of letters falls out of a blur under a cool gradient. Plays: in, the first 2.9 s. Designed for left-aligned. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
+A long soft wave of letters falls out of a blur under a cool gradient. Plays: in, the first 2.9 s. Designed for left-aligned text. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
 
 ```jsonc
 {
@@ -368,7 +383,7 @@ A long soft wave of letters falls out of a blur under a cool gradient. Plays: in
 
 ### Tumble Type
 
-Letters tumble down into place, then a lime band runs over the finished text. Plays: in, the first 2.7 s. Designed for left-aligned. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
+Letters tumble down into place, then a lime band runs over the finished text. Plays: in, the first 2.7 s. Designed for left-aligned text. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
 
 ```jsonc
 {
@@ -395,7 +410,7 @@ Letters tumble down into place, then a lime band runs over the finished text. Pl
 
 ### Flap Down
 
-Letters swing down from a hinge at their top edge under an amber band. Plays: in, the first 2.75 s. Designed for left-aligned. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
+Letters swing down from a hinge at their top edge under an amber band. Plays: in, the first 2.75 s. Designed for left-aligned text. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
 
 ```jsonc
 {
@@ -423,7 +438,7 @@ Letters swing down from a hinge at their top edge under an amber band. Plays: in
 
 ### Drop Swell
 
-Letters drop hard into place; a coral band lifts and swells them as it passes. Plays: in, the first 2.7 s. Designed for left-aligned. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
+Letters drop hard into place; a coral band lifts and swells them as it passes. Plays: in, the first 2.7 s. Designed for left-aligned text. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
 
 ```jsonc
 {
@@ -450,7 +465,7 @@ Letters drop hard into place; a coral band lifts and swells them as it passes. P
 
 ### Rain Type
 
-Letters fall in at random like rain while a blue band runs left to right. Plays: in, the first 2.8 s. Designed for left-aligned. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
+Letters fall in at random like rain while a blue band runs left to right. Plays: in, the first 2.8 s. Designed for left-aligned text. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
 
 ```jsonc
 {
@@ -477,7 +492,7 @@ Letters fall in at random like rain while a blue band runs left to right. Plays:
 
 ### Counter Sweep
 
-Letters type in left to right while a pink band runs back against them. Plays: in, the first 2.7 s. Designed for left-aligned. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
+Letters type in left to right while a pink band runs back against them. Plays: in, the first 2.7 s. Designed for left-aligned text. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
 
 ```jsonc
 {
@@ -504,7 +519,7 @@ Letters type in left to right while a pink band runs back against them. Plays: i
 
 ### Sunset Shrink
 
-Big letters shrink down into place; a band paints each one top to bottom in sunset colours. Plays: in, the first 2.8 s. Designed for left-aligned. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
+Big letters shrink down into place; a band paints each one top to bottom in sunset colours. Plays: in, the first 2.8 s. Designed for left-aligned text. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
 
 ```jsonc
 {
@@ -531,7 +546,7 @@ Big letters shrink down into place; a band paints each one top to bottom in suns
 
 ### Boomerang
 
-Letters glide down at a slant; a violet band runs out with the typing and swings back. Plays: in, the first 3 s. Designed for left-aligned. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
+Letters glide down at a slant; a violet band runs out with the typing and swings back. Plays: in, the first 3 s. Designed for left-aligned text. Written for text like “Build a premium, modern sports-tech / landing page for a running performance / app with a full-screen cinematic hero / and a bold white headline about speed”.
 
 ```jsonc
 {
@@ -554,6 +569,114 @@ Letters glide down at a slant; a violet band runs out with the typing and swings
       { "position": 60, "value": "-80", "easing": "Smooth" }  // 3 s
     ]
   }
+}
+```
+
+## Depth
+
+### Rack Focus
+
+Words come forward out of a soft background and snap into focus; at the end they pass the focus toward you. Plays: in, the first 1.78 s on a 5-word line, then out at the end. Written for text like “Pull focus to every word”.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Focus in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.12, "duration": 1.3, "curve": "Expo Out"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 0, "z": -900}, {"pid": "p2", "type": "blur", "amount": 12}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Focus out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.05, "duration": 0.6, "curve": "Ease In"},
+      "effects": [{"pid": "p4", "type": "position", "x": 0, "y": 0, "z": 500}, {"pid": "p5", "type": "blur", "amount": 12}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 1400
+}
+```
+
+### Stand Up
+
+Letters slide forward across the floor and stand up one after another, hinged at their feet; at the end they fall forward toward you. Plays: in, the first 1.5 s on a 16-letter line, then out at the end. Written for text like “Stand up and be seen”.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Stand",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "in", "around": "char", "stagger": 0.04, "duration": 0.9, "curve": "Cubic Out"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 0, "z": -300}, {"pid": "p2", "type": "rotate3d", "x": 90, "y": 0, "perspective": 600}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Fall",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "char", "stagger": 0.025, "duration": 0.6, "curve": "Ease In"},
+      "effects": [{"pid": "p4", "type": "position", "x": 0, "y": 0, "z": 150}, {"pid": "p5", "type": "rotate3d", "x": -90, "y": 0, "perspective": 600}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorPivotY": 100,
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 600
+}
+```
+
+### Strata
+
+Words float in and rest at their own depths while a slow camera drift slides them past each other; at the end they fall back. Plays: in, the first 1.8 s on a 6-word line (Drift across the whole layer), then out at the end. Written for text like “Each word at its own depth”.
+
+```jsonc
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Layers",
+      "range": {"basedOn": "words", "around": "word", "shape": "smooth"},
+      "wiggle": {"enabled": true, "mode": "add", "min": 0, "max": 40, "rate": 0, "corr": 0, "seed": 8},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 0, "z": -700}] },
+    { "aid": "a2", "name": "Drift",
+      "range": {"basedOn": "words", "around": "word"},
+      "effects": [{"pid": "p2", "type": "position", "x": 70, "y": 0, "z": -100}] },
+    { "aid": "a3", "name": "Float in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.12, "duration": 1.2, "curve": "Cubic Out"},
+      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": 0, "z": -1200}, {"pid": "p4", "type": "opacity", "opacity": 0}] },
+    { "aid": "a4", "name": "Fall back",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.05, "duration": 0.6, "curve": "Ease In"},
+      "effects": [{"pid": "p5", "type": "position", "x": 0, "y": 0, "z": -1200}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 1000,
+  "propertyKeyframes": {
+    "txa:a2:amount": [
+      { "position": 0, "value": "100", "easing": "Sine Smooth" },  // layer start
+      { "position": 100, "value": "-100", "easing": "Smooth" }  // layer end
+    ]
+  }
+}
+```
+
+### Spotlight
+
+Words wait set back and dim; each in turn steps forward into the light, and the last one keeps it. Plays: once, the first 2.85 s on a 5-word line. Written for text like “Every word takes the stage”.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Sit back",
+      "range": {"basedOn": "words", "around": "word"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 0, "z": -160}, {"pid": "p2", "type": "fill", "color": "#5d636b"}] },
+    { "aid": "a2", "name": "Spotlight",
+      "range": {"basedOn": "words", "drive": "time", "animate": "active", "around": "word", "delay": 0.3, "stagger": 0.55, "duration": 0.35, "hold": 0, "fadeOut": 0.3, "keepLast": true, "curve": "Cubic Out"},
+      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": 0, "z": 160}, {"pid": "p4", "type": "fill", "color": "#ffffff"}] }
+  ],
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 1200
+}
+```
+
+### Ripple
+
+Rings of depth spread from the centre of the text to its edges, over and over, like ripples on still water. Plays: loops for the whole layer. Written for text like “Ripples from the centre”.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Ripple",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "active", "around": "char", "order": "center", "delay": 0.2, "stagger": 0.1, "duration": 0.14, "hold": 0, "fadeOut": 0.3, "loop": true, "curve": "Sine Out"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 0, "z": 110}, {"pid": "p2", "type": "fill", "color": "#8fe3ff", "mix": 65}] }
+  ],
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 1000
 }
 ```
 
@@ -1172,3 +1295,601 @@ Letters type in at speaking pace behind a caret. Plays: as each letter is spoken
 ```
 
 <!-- PRESETS:END -->
+
+## Classic
+
+<!-- CLASSIC:BEGIN (generated from the app's Classic presets; do not edit by hand) -->
+
+The editor's 29 Classic presets: calm Time-driven reveals by word or letter, highlights on their own clock, caption
+bars and randomizer looks. They are in the same preset picker as the recipes above. Each JSON below is what the app
+writes onto the text item when it applies the preset to a layer with a 100 px font.
+
+They differ from the recipes above in four ways:
+
+- **Lengths are composition px** and stay as written at any font size. The few that follow the font size are listed
+  under the recipe with their formula; the JSON shows them for a 100 px font, so recompute them for the layer's font
+  size in px (`textFontSize`, or in pct mode `textFontSizePct × videoSize.h / 100`).
+- **No keyframes.** Every Classic recipe is Time-driven: the in side starts with the layer and the out side ends with
+  it, so a recipe fits any layer length as written.
+- **Layer fields.** Caption Bar and Randomizer recipes also set `textBg*` / `textBorder*` or `textRandom*` fields on
+  the item (see [video-text.md](video-text.md#caption-bar-look) and [Text Randomizer](video-text.md#text-randomizer-fields)). They
+  stay on the layer when you later switch recipe, so set `textBgEnabled`, `textBorderEnabled` or
+  `textRandomEnabled` to `false` yourself when the new look should not have them.
+- **Voice.** To time a Classic recipe to speech (an item with `textWordTimings`), set `"drive": "voice"` and
+  `"spread": true` on every animator whose `animate` is not `out` or `inOut`. That is what the app's caption presets
+  do when voice sync is on.
+
+| Recipe | Category | What it does | Unit | Plays |
+|---|---|---|---|---|
+| [Classic Fade Up](#classic-fade-up) | Classic · Reveal | Words fade in, rising 50px | words | in and out |
+| [Classic Fade Down](#classic-fade-down) | Classic · Reveal | Words drop in from above | words | in and out |
+| [Classic Rise (Mask)](#classic-rise-mask) | Classic · Reveal | Words rise from behind a mask | words | in and out |
+| [Classic Blur In](#classic-blur-in) | Classic · Reveal | Soft blur-focus reveal | words | in and out |
+| [Classic Slide In](#classic-slide-in) | Classic · Reveal | Words slide in from the left | words | in and out |
+| [Classic Side Mask](#classic-side-mask) | Classic · Reveal | Each word slides sideways out of its own box and leaves through the other side | words | in and out |
+| [Classic Tilt Drop](#classic-tilt-drop) | Classic · Reveal | Words fall in tilted and straighten with a bounce | words | in and out |
+| [Classic Flip Up](#classic-flip-up) | Classic · Character | Characters flip up on the X axis | letters | in and out |
+| [Classic Typewriter](#classic-typewriter) | Classic · Character | Characters reveal one by one behind a blinking caret | letters | in |
+| [Classic Wave Rise](#classic-wave-rise) | Classic · Character | Letters surge up in a rolling wave and settle with one soft overshoot | letters | in and out |
+| [Classic Bounce Letters](#classic-bounce-letters) | Classic · Character | Letters drop from above and bounce to rest | letters | in and out |
+| [Classic Materialize](#classic-materialize) | Classic · Character | Letters condense out of a cold glow, from blurred and large to sharp | letters | in and out, with a highlight |
+| [Classic Neon Runner](#classic-neon-runner) | Classic · Highlight | A glow sweeps across each word | words | in, with a highlight |
+| [Classic Ink Highlight](#classic-ink-highlight) | Classic · Highlight | Each word flashes a colour as it lands | words | in, with a highlight |
+| [Classic Flash Type](#classic-flash-type) | Classic · Highlight | Characters reveal with a running colour flash that trails off | letters | in, with a highlight |
+| [Classic Karaoke Sweep](#classic-karaoke-sweep) | Classic · Highlight | Fast type-in, then a bar walks word by word on its own clock | letters, then words | in, with a highlight |
+| [Classic Chase Loop](#classic-chase-loop) | Classic · Highlight | An accent keeps chasing through the words for as long as the clip runs | words | in and out, then a looping accent |
+| [Classic Sung Words](#classic-sung-words) | Classic · Highlight | Karaoke fill: each word turns gold on its beat and stays gold | words | in and out, with a highlight |
+| [Classic Marker Words](#classic-marker-words) | Classic · Highlight | Words rise from a mask, then a marker stroke lands under each word and stays | words | in, with a highlight |
+| [Classic Pill Grow](#classic-pill-grow) | Classic · Caption Bar | Words rise, then a dot pops at their left and stretches into a pill behind them | words | in and out |
+| [Classic Lower Third](#classic-lower-third) | Classic · Caption Bar | The bar slides in behind a mask while each word slides out of its own box; exits the same way | words | in and out |
+| [Classic Drop Bar](#classic-drop-bar) | Classic · Caption Bar | Bar and words drop in from above behind masks, and fall away below | words | in and out |
+| [Classic Outline Tag](#classic-outline-tag) | Classic · Caption Bar | An outline draws itself open to the right while the letters slide in | letters | in and out |
+| [Classic Prompt Field](#classic-prompt-field) | Classic · Caption Bar | An outlined pill fades in and the text types inside it behind a caret, like a search box | letters | in and out |
+| [Classic Random Pop](#classic-random-pop) | Classic · Randomizer | Words pop in, each with a random size and accent colour | words | in and out |
+| [Classic Chaos Letters](#classic-chaos-letters) | Classic · Randomizer | Characters flip in with scattered sizes and weights | letters | in and out |
+| [Classic Random Rise](#classic-random-rise) | Classic · Randomizer | Masked rise; a wave of size and two colours rolls across the words | words | in and out |
+| [Classic Ransom Note](#classic-ransom-note) | Classic · Randomizer | Cut-out letters: wild sizes, three colours, mixed weights and italics | letters | in |
+| [Classic Editorial Typer](#classic-editorial-typer) | Classic · Randomizer | Word typing behind a caret, set in a wave of weights, sizes and italics | words | in and out |
+
+### Classic Fade Up
+
+Words fade in, rising 50px. App id `classic-fade-up`. Plays: in, words 0.06 s apart, 0.6 s each; out at the end, 0.5 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.06, "duration": 0.6, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 50}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.06, "duration": 0.5, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": -50}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Classic Fade Down
+
+Words drop in from above. App id `classic-fade-down`. Plays: in, words 0.06 s apart, 0.6 s each; out at the end, 0.5 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.06, "duration": 0.6, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": -50}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.06, "duration": 0.5, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": 50}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Classic Rise (Mask)
+
+Words rise from behind a mask. App id `classic-rise-mask`. Plays: in, words 0.08 s apart, 0.7 s each; out at the end, 0.5 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is the larger of 90 px and 1.15 × font px (115 as written, for a 100 px font); Out position `y` is −(the larger of 90 px and 1.15 × font px) (−115 as written, for a 100 px font).
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.08, "duration": 0.7, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 115}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "mask": true, "stagger": 0.08, "duration": 0.5, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p2", "type": "position", "x": 0, "y": -115}] }
+  ]
+}
+```
+
+### Classic Blur In
+
+Soft blur-focus reveal. App id `classic-blur-in`. Plays: in, words 0.07 s apart, 0.6 s each; out at the end, 0.45 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.07, "duration": 0.6, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 12}, {"pid": "p2", "type": "blur", "amount": 14}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.07, "duration": 0.45, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p4", "type": "blur", "amount": 14}, {"pid": "p5", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Classic Slide In
+
+Words slide in from the left. App id `classic-slide-in`. Plays: in, words 0.06 s apart, 0.6 s each; out at the end, 0.5 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.06, "duration": 0.6, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": -60, "y": 0}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.06, "duration": 0.5, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p3", "type": "position", "x": 60, "y": 0}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Classic Side Mask
+
+Each word slides sideways out of its own box and leaves through the other side. App id `classic-side-mask`. Plays: in, words 0.08 s apart, 0.7 s each; out at the end, 0.45 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is 1.15 × font px (115 as written, for a 100 px font); Out position `y` is −1.15 × font px (−115 as written, for a 100 px font).
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.08, "duration": 0.7, "curve": "Expo Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": -300, "y": 115}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "mask": true, "stagger": 0.08, "duration": 0.45, "curve": "Expo In", "spread": false},
+      "effects": [{"pid": "p2", "type": "position", "x": 300, "y": -115}] }
+  ]
+}
+```
+
+### Classic Tilt Drop
+
+Words fall in tilted and straighten with a bounce. App id `classic-tilt-drop`. Plays: in, words 0.09 s apart, 0.75 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.09, "duration": 0.75, "curve": "Back Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": -90}, {"pid": "p2", "type": "rotation", "angle": -14}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.09, "duration": 0.4, "curve": "Ease In", "spread": false},
+      "effects": [{"pid": "p4", "type": "position", "x": 0, "y": 60}, {"pid": "p5", "type": "rotation", "angle": 10}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Classic Flip Up
+
+Characters flip up on the X axis. App id `classic-flip-up`. Plays: in, letters 0.03 s apart, 0.5 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.03, "duration": 0.5, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 10}, {"pid": "p2", "type": "rotate3d", "x": 90, "y": 0}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.03, "duration": 0.4, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p4", "type": "rotate3d", "x": -90, "y": 0}, {"pid": "p5", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Classic Typewriter
+
+Characters reveal one by one behind a blinking caret. App id `classic-typewriter`. Plays: in, letters 0.025 s apart, 0.12 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.025, "duration": 0.12, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "opacity", "opacity": 0}, {"pid": "p2", "type": "caret"}] }
+  ]
+}
+```
+
+### Classic Wave Rise
+
+Letters surge up in a rolling wave and settle with one soft overshoot. App id `classic-wave-rise`. Plays: in, letters 0.03 s apart, 0.9 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.03, "duration": 0.9, "curve": "Smooth Overshoot", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 60}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.03, "duration": 0.4, "curve": "Ease In", "spread": false},
+      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": -40}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Classic Bounce Letters
+
+Letters drop from above and bounce to rest. App id `classic-bounce-letters`. Plays: in, letters 0.04 s apart, 0.9 s each; out at the end, 0.3 s each. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.04, "duration": 0.9, "curve": "Bounce Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": -140}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.04, "duration": 0.3, "curve": "Ease In", "spread": false},
+      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": 40}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Classic Materialize
+
+Letters condense out of a cold glow, from blurred and large to sharp. App id `classic-materialize`. Plays: in, letters 0.035 s apart, 0.7 s each; out at the end, 0.4 s each; a highlight walks the letters 0.035 s apart. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.035, "duration": 0.7, "curve": "Cubic Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "scale", "scale": 135}, {"pid": "p2", "type": "blur", "amount": 18}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.035, "duration": 0.4, "curve": "Ease In", "spread": false},
+      "effects": [{"pid": "p4", "type": "blur", "amount": 12}, {"pid": "p5", "type": "opacity", "opacity": 0}] },
+    { "aid": "a3", "name": "Highlight",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "active", "stagger": 0.035, "duration": 0, "curve": "Linear", "fadeOut": 0.6},
+      "effects": [{"pid": "p6", "type": "glow", "color": "#7ad7ff", "size": 26, "strength": 100}] }
+  ]
+}
+```
+
+### Classic Neon Runner
+
+A glow sweeps across each word. App id `classic-neon-runner`. Plays: in, words 0.16 s apart, 0.35 s each; a highlight walks the words 0.16 s apart. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.16, "duration": 0.35, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Highlight",
+      "range": {"basedOn": "words", "drive": "time", "animate": "active", "stagger": 0.16, "duration": 0, "curve": "Linear"},
+      "effects": [{"pid": "p2", "type": "fill", "color": "#7c5cff"}, {"pid": "p3", "type": "glow", "color": "#7c5cff", "size": 28, "strength": 100}] }
+  ]
+}
+```
+
+### Classic Ink Highlight
+
+Each word flashes a colour as it lands. App id `classic-ink-highlight`. Plays: in, words 0.16 s apart, 0.35 s each; a highlight walks the words 0.16 s apart. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.16, "duration": 0.35, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 14}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Highlight",
+      "range": {"basedOn": "words", "drive": "time", "animate": "active", "stagger": 0.16, "duration": 0, "curve": "Linear"},
+      "effects": [{"pid": "p3", "type": "fill", "color": "#ff5c8a"}] }
+  ]
+}
+```
+
+### Classic Flash Type
+
+Characters reveal with a running colour flash that trails off. App id `classic-flash-type`. Plays: in, letters 0.05 s apart, 0.15 s each; a highlight walks the letters 0.05 s apart from 0.05 s. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.05, "duration": 0.15, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Highlight",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "active", "delay": 0.05, "stagger": 0.05, "duration": 0, "curve": "Linear", "fadeOut": 0.15},
+      "effects": [{"pid": "p2", "type": "fill", "color": "#ff044b"}] }
+  ]
+}
+```
+
+### Classic Karaoke Sweep
+
+Fast type-in, then a bar walks word by word on its own clock. App id `classic-karaoke-sweep`. Plays: in, letters 0.02 s apart, 0.25 s each; a highlight walks the words 0.45 s apart from 0.4 s, the last one stays lit. Lengths are composition px and stay as written at any font size, except: Highlight box `radius` is 10 px + 0.14 × font px (24 as written, for a 100 px font).
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.02, "duration": 0.25, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Highlight",
+      "range": {"basedOn": "words", "drive": "time", "animate": "active", "delay": 0.4, "stagger": 0.45, "duration": 0, "curve": "Linear", "fadeOut": 0.2, "keepLast": true},
+      "effects": [{"pid": "p2", "type": "box", "color": "#ffe74c", "shape": "unit", "padX": 10, "padY": 10, "radius": 24, "grow": false, "withText": true}] }
+  ]
+}
+```
+
+### Classic Chase Loop
+
+An accent keeps chasing through the words for as long as the clip runs. App id `classic-chase-loop`. Plays: in, words 0.03 s apart, 0.3 s each; out at the end, 0.3 s each; a highlight walks the words 0.3 s apart from 0.4 s, on a loop. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.03, "duration": 0.3, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.03, "duration": 0.3, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a3", "name": "Highlight",
+      "range": {"basedOn": "words", "drive": "time", "animate": "active", "delay": 0.4, "stagger": 0.3, "duration": 0.12, "curve": "Linear", "fadeOut": 0.35, "loop": true},
+      "effects": [{"pid": "p3", "type": "fill", "color": "#33efab"}] }
+  ]
+}
+```
+
+### Classic Sung Words
+
+Karaoke fill: each word turns gold on its beat and stays gold. App id `classic-sung-words`. Plays: in, words 0.04 s apart, 0.35 s each; out at the end, 0.3 s each; a highlight walks the words 0.32 s apart from 0.5 s, each stays lit. Lengths are composition px and stay as written at any font size.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.04, "duration": 0.35, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 10}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.04, "duration": 0.3, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a3", "name": "Highlight",
+      "range": {"basedOn": "words", "drive": "time", "animate": "active", "delay": 0.5, "stagger": 0.32, "duration": 0.15, "curve": "Linear", "hold": 10},
+      "effects": [{"pid": "p4", "type": "fill", "color": "#ffd23f"}] }
+  ]
+}
+```
+
+### Classic Marker Words
+
+Words rise from a mask, then a marker stroke lands under each word and stays. App id `classic-marker-lines`. Plays: in, words 0.06 s apart, 0.7 s each; a highlight walks the words 0.12 s apart from 0.9 s, each stays lit. Lengths are composition px and stay as written at any font size, except: In position `y` is the larger of 90 px and 1.15 × font px (115 as written, for a 100 px font); Highlight box `radius` is 6 px + 0.14 × font px (20 as written, for a 100 px font).
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.06, "duration": 0.7, "curve": "Expo Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 115}] },
+    { "aid": "a2", "name": "Highlight",
+      "range": {"basedOn": "words", "drive": "time", "animate": "active", "delay": 0.9, "stagger": 0.12, "duration": 0.25, "curve": "Linear", "hold": 10},
+      "effects": [{"pid": "p2", "type": "box", "color": "#ff3d6e", "shape": "unit", "padX": 6, "padY": 6, "radius": 20, "grow": false, "withText": true}] }
+  ]
+}
+```
+
+### Classic Pill Grow
+
+Words rise, then a dot pops at their left and stretches into a pill behind them. App id `classic-pill-grow`. Plays: in, words 0.07 s apart, 0.5 s each; out at the end, 0.25 s each. Lengths are composition px and stay as written at any font size. Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.07, "duration": 0.5, "curve": "Cubic Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 24}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.07, "duration": 0.25, "curve": "Ease In", "spread": false},
+      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": -16}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ],
+  "textBgEnabled": true, "textBgColor": "#2f6bff", "textBgPaddingX": 40, "textBgPaddingY": 20,
+  "textBgRadius": 200, "textBorderEnabled": false, "textBgInType": "mask-right", "textBgInStyle": "grow",
+  "textBgInDuration": 0.55, "textBgInEasing": "Expo Out", "textBgInDelay": 0.15, "textBgInGrowStart": 0,
+  "textBgInGrowAppear": "scale-in", "textBgInGrowAppearDuration": 0.25, "textBgInGrowAppearEasing": "Back Out", "textBgOutType": "mask-right",
+  "textBgOutStyle": "grow", "textBgOutDuration": 0.3, "textBgOutEasing": "Ease In", "textBgOutGrowStart": 0,
+  "textBgOutGrowAppear": "scale-in", "textBgOutGrowAppearDuration": 0.15, "textBgOutGrowAppearEasing": "Ease In"
+}
+```
+
+### Classic Lower Third
+
+The bar slides in behind a mask while each word slides out of its own box; exits the same way. App id `classic-lower-third`. Plays: in, words 0.06 s apart, 0.7 s each; out at the end, 0.45 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is 1.15 × font px (115 as written, for a 100 px font); Out position `y` is −1.15 × font px (−115 as written, for a 100 px font). Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.06, "duration": 0.7, "curve": "Expo Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": -260, "y": 115}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "mask": true, "stagger": 0.06, "duration": 0.45, "curve": "Expo In", "spread": false},
+      "effects": [{"pid": "p2", "type": "position", "x": 260, "y": -115}] }
+  ],
+  "textBgEnabled": true, "textBgColor": "rgba(10,10,14,0.88)", "textBgPaddingX": 34, "textBgPaddingY": 18,
+  "textBgRadius": 6, "textBorderEnabled": false, "textBgInType": "mask-right", "textBgInStyle": "slide",
+  "textBgInDuration": 0.55, "textBgInEasing": "Expo Out", "textBgInDelay": 0, "textBgOutType": "mask-right",
+  "textBgOutStyle": "slide", "textBgOutDuration": 0.45, "textBgOutEasing": "Expo In"
+}
+```
+
+### Classic Drop Bar
+
+Bar and words drop in from above behind masks, and fall away below. App id `classic-drop-bar`. Plays: in, words 0.05 s apart, 0.6 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is −(the larger of 90 px and 1.15 × font px) (−115 as written, for a 100 px font); Out position `y` is the larger of 90 px and 1.15 × font px (115 as written, for a 100 px font). Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.05, "duration": 0.6, "curve": "Expo Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": -115}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "mask": true, "stagger": 0.05, "duration": 0.4, "curve": "Expo In", "spread": false},
+      "effects": [{"pid": "p2", "type": "position", "x": 0, "y": 115}] }
+  ],
+  "textBgEnabled": true, "textBgColor": "#7c5cff", "textBgPaddingX": 34, "textBgPaddingY": 16,
+  "textBgRadius": 10, "textBorderEnabled": false, "textBgInType": "mask-down", "textBgInStyle": "slide",
+  "textBgInDuration": 0.5, "textBgInEasing": "Expo Out", "textBgInDelay": 0, "textBgOutType": "mask-down",
+  "textBgOutStyle": "slide", "textBgOutDuration": 0.4, "textBgOutEasing": "Expo In"
+}
+```
+
+### Classic Outline Tag
+
+An outline draws itself open to the right while the letters slide in. App id `classic-outline-tag`. Plays: in, letters 0.022 s apart, 0.3 s each; out at the end, 0.2 s each. Lengths are composition px and stay as written at any font size. Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.022, "duration": 0.3, "curve": "Ease Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": -12, "y": 0}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.022, "duration": 0.2, "curve": "Ease In", "spread": false},
+      "effects": [{"pid": "p3", "type": "opacity", "opacity": 0}] }
+  ],
+  "textBgEnabled": false, "textBgColor": "rgba(0,0,0,0.6)", "textBgPaddingX": 36, "textBgPaddingY": 18,
+  "textBgRadius": 14, "textBorderEnabled": true, "textBorderColor": "#33efab", "textBorderWidth": 3,
+  "textBorderStyle": "solid", "textBgInType": "mask-right", "textBgInStyle": "grow", "textBgInDuration": 0.6,
+  "textBgInEasing": "Cubic Out", "textBgInDelay": 0, "textBgInGrowStart": 0, "textBgInGrowAppear": "fade",
+  "textBgInGrowAppearDuration": 0.2, "textBgInGrowAppearEasing": "Ease Out", "textBgOutType": "mask-right", "textBgOutStyle": "grow",
+  "textBgOutDuration": 0.4, "textBgOutEasing": "Ease In", "textBgOutGrowStart": 0, "textBgOutGrowAppear": "none",
+  "textBgOutGrowAppearDuration": 0.4, "textBgOutGrowAppearEasing": "Ease In"
+}
+```
+
+### Classic Prompt Field
+
+An outlined pill fades in and the text types inside it behind a caret, like a search box. App id `classic-prompt-field`. Plays: in, letters 0.04 s apart, 0.05 s each; out at the end, 0.2 s each. Lengths are composition px and stay as written at any font size. Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.04, "duration": 0.05, "curve": "Linear", "spread": false},
+      "effects": [{"pid": "p1", "type": "opacity", "opacity": 0}, {"pid": "p2", "type": "caret"}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.04, "duration": 0.2, "curve": "Ease In", "spread": false},
+      "effects": [{"pid": "p3", "type": "opacity", "opacity": 0}] }
+  ],
+  "textBgEnabled": false, "textBgColor": "rgba(0,0,0,0.6)", "textBgPaddingX": 46, "textBgPaddingY": 28,
+  "textBgRadius": 200, "textBorderEnabled": true, "textBorderColor": "rgba(255,255,255,0.5)", "textBorderWidth": 3,
+  "textBorderStyle": "solid", "textBgInType": "fade", "textBgInStyle": "wipe", "textBgInDuration": 0.35,
+  "textBgInEasing": "Ease Out", "textBgInDelay": 0, "textBgOutType": "fade", "textBgOutStyle": "wipe",
+  "textBgOutDuration": 0.3, "textBgOutEasing": "Ease In"
+}
+```
+
+### Classic Random Pop
+
+Words pop in, each with a random size and accent colour. App id `classic-random-pop`. Plays: in, words 0.05 s apart, 0.45 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size. Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.05, "duration": 0.45, "curve": "Back Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "scale", "scale": 40}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.05, "duration": 0.4, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p3", "type": "scale", "scale": 50}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ],
+  "textRandomEnabled": true, "textRandomScope": "words", "textRandomDist": "uniform", "textRandomNth": 3,
+  "textRandomSeed": 7, "textRandomSizeEnabled": true, "textRandomSizeMin": 85, "textRandomSizeMax": 150,
+  "textRandomColorEnabled": true, "textRandomColors": ["#33efab"], "textRandomCoverage": 40, "textRandomWeightEnabled": true,
+  "textRandomWeights": [400, 800], "textRandomItalicEnabled": false, "textRandomItalicMode": "mix", "textRandomItalicShare": 30
+}
+```
+
+### Classic Chaos Letters
+
+Characters flip in with scattered sizes and weights. App id `classic-chaos-letters`. Plays: in, letters 0.03 s apart, 0.5 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size. Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.03, "duration": 0.5, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 10}, {"pid": "p2", "type": "rotate3d", "x": 90, "y": 0}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.03, "duration": 0.4, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p4", "type": "rotate3d", "x": -90, "y": 0}, {"pid": "p5", "type": "opacity", "opacity": 0}] }
+  ],
+  "textRandomEnabled": true, "textRandomScope": "symbols", "textRandomDist": "gaussian", "textRandomNth": 3,
+  "textRandomSeed": 21, "textRandomSizeEnabled": true, "textRandomSizeMin": 70, "textRandomSizeMax": 160,
+  "textRandomColorEnabled": false, "textRandomColors": [], "textRandomCoverage": 35, "textRandomWeightEnabled": true,
+  "textRandomWeights": [300, 700], "textRandomItalicEnabled": true, "textRandomItalicMode": "mix", "textRandomItalicShare": 25
+}
+```
+
+### Classic Random Rise
+
+Masked rise; a wave of size and two colours rolls across the words. App id `classic-random-rise`. Plays: in, words 0.08 s apart, 0.7 s each; out at the end, 0.5 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is the larger of 90 px and 1.15 × font px (115 as written, for a 100 px font); Out position `y` is −(the larger of 90 px and 1.15 × font px) (−115 as written, for a 100 px font). Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.08, "duration": 0.7, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 115}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "mask": true, "stagger": 0.08, "duration": 0.5, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p2", "type": "position", "x": 0, "y": -115}] }
+  ],
+  "textRandomEnabled": true, "textRandomScope": "words", "textRandomDist": "wave", "textRandomNth": 3,
+  "textRandomSeed": 12, "textRandomSizeEnabled": true, "textRandomSizeMin": 90, "textRandomSizeMax": 140,
+  "textRandomColorEnabled": true, "textRandomColors": ["#7aa2ff", "#ff6b81"], "textRandomCoverage": 45, "textRandomWeightEnabled": true,
+  "textRandomWeights": [500, 900], "textRandomItalicEnabled": false, "textRandomItalicMode": "mix", "textRandomItalicShare": 30
+}
+```
+
+### Classic Ransom Note
+
+Cut-out letters: wild sizes, three colours, mixed weights and italics. App id `classic-ransom-note`. Plays: in, letters 0.025 s apart, 0.4 s each. Lengths are composition px and stay as written at any font size. Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.025, "duration": 0.4, "curve": "Smooth", "spread": false},
+      "effects": [{"pid": "p1", "type": "scale", "scale": 30}, {"pid": "p2", "type": "rotation", "angle": 8}, {"pid": "p3", "type": "opacity", "opacity": 0}] }
+  ],
+  "textRandomEnabled": true, "textRandomScope": "symbols", "textRandomDist": "uniform", "textRandomNth": 3,
+  "textRandomSeed": 33, "textRandomSizeEnabled": true, "textRandomSizeMin": 75, "textRandomSizeMax": 165,
+  "textRandomColorEnabled": true, "textRandomColors": ["#ffd166", "#ff6b81", "#7aa2ff"], "textRandomCoverage": 60, "textRandomWeightEnabled": true,
+  "textRandomWeights": [400, 700, 900], "textRandomItalicEnabled": true, "textRandomItalicMode": "mix", "textRandomItalicShare": 30
+}
+```
+
+### Classic Editorial Typer
+
+Word typing behind a caret, set in a wave of weights, sizes and italics. App id `classic-editorial-typer`. Plays: in, words 0.18 s apart, 0.14 s each; out at the end, 0.25 s each. Lengths are composition px and stay as written at any font size. Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "In",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.18, "duration": 0.14, "curve": "Ease Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 12}, {"pid": "p2", "type": "opacity", "opacity": 0}, {"pid": "p3", "type": "caret", "hide": true, "hideAfter": 1}] },
+    { "aid": "a2", "name": "Out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.18, "duration": 0.25, "curve": "Ease In", "spread": false},
+      "effects": [{"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ],
+  "textRandomEnabled": true, "textRandomScope": "words", "textRandomDist": "wave", "textRandomNth": 3,
+  "textRandomSeed": 5, "textRandomSizeEnabled": true, "textRandomSizeMin": 88, "textRandomSizeMax": 128,
+  "textRandomColorEnabled": false, "textRandomColors": [], "textRandomCoverage": 35, "textRandomWeightEnabled": true,
+  "textRandomWeights": [300, 800], "textRandomItalicEnabled": true, "textRandomItalicMode": "mix", "textRandomItalicShare": 35
+}
+```
+<!-- CLASSIC:END -->

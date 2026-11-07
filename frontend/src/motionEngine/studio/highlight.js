@@ -8,6 +8,7 @@
    source's cuts, and a selection snaps to both. The lab's film uses its keyframes for all three.
    The note box has a mic (voice.js). */
 import { micButton } from './voice.js';
+import { rulerSteps, rulerLabel } from '../rulerSteps.js';
 
 export function install(STUDIO) {
   const $ = s => document.querySelector(s), api = () => window.GreenLightMotion?.page;
@@ -33,7 +34,7 @@ export function install(STUDIO) {
   };
   const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
   const RV = () => window.RV, CFG = window.RV_CONFIG || {};
-  let N = 240, FPS = 30, KEYS = [], tl, panel, ruler, ph, rng, inm, snapg, lanes = {}, tracks = {}, films = {}, sprites = {};
+  let N = 240, FPS = 30, KEYS = [], tl, panel, ruler, secs, ph, rng, inm, snapg, lanes = {}, tracks = {}, films = {}, sprites = {};
   let tlOn = false, hls = [], sel = null, draftNote = '', edit = null, edge = 'b', snapOn = true, pr = null, drag = null, shown = 0, reel = null, isOpen = false, waitPlay = 0;
   const cur = () => RV()?.cur() || 'A';
   const SRC = k => RV()?.sources().find(s => s.k === k) || { k, title: k, col: '#a78bfa', sub: '' };
@@ -185,7 +186,6 @@ export function install(STUDIO) {
     FPS = st().fps || 30; N = Math.round(api().duration * FPS); KEYS = keyFrames();
     const srcs = RV().sources();
     tl = el('section', 'hl-tl'); tl.setAttribute('aria-label', 'Highlight timeline');
-    const sec = []; for (let s = 0; s <= api().duration; s++) sec.push(`<span class="hl-secm" style="left:${(s * FPS / N * 100).toFixed(4)}%">${s}s</span>`);
     const beats = BEATS().map(f => `<i class="hl-beat" style="left:${(f / N * 100).toFixed(4)}%"></i>`).join('');
     tl.innerHTML = `<div class="hl-tlbar"><div class="hl-tltools">
       <button class="hl-tsb" type="button" data-a="in" title="In at the playhead (I)">${IC.in}<span>In · I</span></button>
@@ -196,12 +196,12 @@ export function install(STUDIO) {
       <button class="hl-tsb" type="button" data-a="play" title="Play the range in a loop (P)"><span class="hl-tsb-ic"></span><span class="hl-tsb-l">Play</span></button>
       <button class="hl-tsb hl-on" type="button" data-a="snap" aria-pressed="true" title="${CFG.beats ? 'Snap to the cuts and the beats' : 'Snap to the film\'s keyframes'} (hold Alt to invert)">${IC.snap}<span>Snap</span></button>
       </div><div class="hl-tlhint"></div></div>
-      <div class="hl-tlbody"><div class="hl-rrow"><div class="hl-lab hl-rlab">${CFG.beats ? 'TIME · BEATS' : 'TIME · KEYS'}</div><div class="hl-lane hl-ruler">${sec.join('')}${beats}</div></div>
+      <div class="hl-tlbody"><div class="hl-rrow"><div class="hl-lab hl-rlab">${CFG.beats ? 'TIME · BEATS' : 'TIME · KEYS'}</div><div class="hl-lane hl-ruler"><div class="hl-secs"></div>${beats}</div></div>
       ${(window.RV_PARTS || []).length ? `<div class="hl-prow"><div class="hl-lab hl-rlab">PARTS</div><div class="hl-lane hl-parts">${window.RV_PARTS.map((p, i, all) => { const a = Math.round(p[1] * FPS), b = i + 1 < all.length ? Math.round(all[i + 1][1] * FPS) : N; return `<span class="hl-part" data-i="${i}" title="${p[0]} · ${p[2] || ''} (${(a / FPS).toFixed(2)}–${(b / FPS).toFixed(2)} s)" style="left:${(a / N * 100).toFixed(4)}%;width:${((b - a) / N * 100).toFixed(4)}%"><i></i><span>${p[0]}</span></span>`; }).join('')}</div></div>` : ''}
       ${srcs.map(s => `<div class="hl-track" data-k="${s.k}"><div class="hl-lab" title="${s.title}${srcs.length > 1 ? ' · key ' + (srcs.indexOf(s) + 1) : ''}"><i class="hl-dot" style="background:${s.col}"></i><span class="hl-lab-tx"><b>${s.k}</b><small>${s.title.replace(/^[A-Z]+ · /, '')}</small></span><em class="hl-lab-n"></em></div><div class="hl-lane" data-k="${s.k}"><div class="hl-srcclip"><canvas class="hl-film"></canvas>${CUTS(s.k).map(f => `<i class="hl-cut" style="left:${(f / N * 100).toFixed(4)}%"></i>`).join('')}<span class="hl-srcname">${s.title}</span></div></div></div>`).join('')}
       <div class="hl-phl"><div class="hl-ph"><div class="hl-ph-line"></div><div class="hl-ph-head"></div></div></div></div>`;
     $('.glm-tlwrap').append(tl);
-    ruler = tl.querySelector('.hl-ruler'); ph = tl.querySelector('.hl-ph'); partEls = [...tl.querySelectorAll('.hl-part')]; partOn = -1;
+    ruler = tl.querySelector('.hl-ruler'); secs = tl.querySelector('.hl-secs'); ph = tl.querySelector('.hl-ph'); partEls = [...tl.querySelectorAll('.hl-part')]; partOn = -1;
     tl.querySelectorAll('.hl-track').forEach(t => { tracks[t.dataset.k] = t; lanes[t.dataset.k] = t.querySelector('.hl-lane'); films[t.dataset.k] = t.querySelector('.hl-film'); });
     rng = el('div', 'hl-rng', '<span class="hl-rng-lab"></span><span class="hl-hd hl-hd-a" title="Drag the in (snaps to keyframes, Alt: free)"><i></i></span><span class="hl-hd hl-hd-b" title="Drag the out (snaps to keyframes, Alt: free)"><i></i></span>');
     inm = el('div', 'hl-inm', '<b></b>'); snapg = el('div', 'hl-snapg');
@@ -222,23 +222,38 @@ export function install(STUDIO) {
       <section class="hl-sec hl-sec-list"><div class="hl-sec-h"><span class="hl-sec-ic">${IC.list}</span>Highlights<span class="hl-count">0</span><button class="hl-cta" type="button" data-a="reel" title="Play every highlight in list order, back to back">${IC.play(10)}<span class="hl-reel-l">Play all as a reel</span></button></div>
         <div class="hl-list"><p class="hl-empty"></p></div></section>`;
     $('.glm-side').append(panel);
-    wire(); load(); drawFilms(); loadSprites();
+    wire(); load(); drawView(); loadSprites();
   }
 
   // ── filmstrips: the engine's own frames, pre-rendered per source (strips.js) ──
   function loadSprites() {
     RV().sources().forEach(s => { const d = window.RV_STRIPS?.[s.k]; if (!d) return; const img = new Image(); img.onload = () => { sprites[s.k] = { img, ...d }; drawFilm(s.k); renderList(); }; img.src = d.strip; });
   }
+  // A long film zoomed in is wider than a canvas can be (65,535 px; past that it stays blank) and than a ruler should
+  // have numbers: both draw the view and one view either side [a, b], and again once the scroll leaves that view.
+  const viewAt = () => { const v = Math.max(1, tl.clientWidth); return Math.floor(tl.scrollLeft / v) * v; };
+  function span() { const v = Math.max(1, tl.clientWidth), w = ruler.clientWidth, at = viewAt(); return { w, a: clamp(at - v, 0, w), b: clamp(at + 2 * v, 0, w) }; }
   function drawFilm(k) {
-    const c = films[k]; if (!c) return; const w = c.clientWidth, h = c.clientHeight, dpr = window.devicePixelRatio || 1; if (!w || !h) return;
-    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    const c = films[k]; if (!c) return; const { w, a, b } = span(), cw = b - a, h = c.clientHeight, dpr = window.devicePixelRatio || 1; if (!cw || !h) return;
+    c.style.left = a + 'px'; c.style.width = cw + 'px';
+    c.width = Math.round(cw * dpr); c.height = Math.round(h * dpr); const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, cw, h);
     const sp = sprites[k];
-    if (!sp) { g.fillStyle = SRC(k).values?.background || '#2a2d2f'; g.fillRect(0, 0, w, h); return; }
-    const tw = h * sp.tw / sp.th, n = Math.ceil(w / tw);
-    for (let i = 0; i < n; i++) { const x = i * tw, f = clamp(Math.floor((x + tw / 2) / w * N), 0, N - 1), idx = Math.min(sp.n - 1, Math.floor(f / sp.step)); g.drawImage(sp.img, idx * sp.tw, 0, sp.tw, sp.th, x, 0, tw, h); }
-    g.fillStyle = 'rgba(0,0,0,.35)'; for (let j = 1; j < n; j++) g.fillRect(Math.round(j * tw), 0, 1, h);
+    if (!sp) { g.fillStyle = SRC(k).values?.background || '#2a2d2f'; g.fillRect(0, 0, cw, h); return; }
+    const tw = h * sp.tw / sp.th, i0 = Math.floor(a / tw), n = Math.ceil(b / tw);
+    for (let i = i0; i < n; i++) { const x = i * tw, f = clamp(Math.floor((x + tw / 2) / w * N), 0, N - 1), idx = Math.min(sp.n - 1, Math.floor(f / sp.step)); g.drawImage(sp.img, idx * sp.tw, 0, sp.tw, sp.th, x - a, 0, tw, h); }
+    g.fillStyle = 'rgba(0,0,0,.35)'; for (let j = i0 + 1; j < n; j++) g.fillRect(Math.round(j * tw - a), 0, 1, h);
   }
   function drawFilms() { Object.keys(films).forEach(drawFilm); }
+  // a number a second while they fit (short films), further apart as the film gets longer
+  function drawRuler() {
+    const { w, a, b } = span(), D = api().duration; if (!w) return;
+    const { major } = rulerSteps(D, w, { gap: 40, least: 1 }), secPerPx = D / w;
+    let html = '';
+    for (let k = Math.floor(a * secPerPx / major), s = k * major; s <= D + 1e-6 && s / secPerPx <= b; k++, s = k * major) html += `<span class="hl-secm" style="left:${(s / D * 100).toFixed(4)}%">${rulerLabel(s, major)}</span>`;
+    secs.innerHTML = html;
+  }
+  let drawnAt = 0;
+  function drawView() { drawnAt = viewAt(); drawRuler(); drawFilms(); }
 
   // ── render ──
   const pos = (e, a, b) => { e.style.left = (a / N * 100) + '%'; e.style.width = ((b + 1 - a) / N * 100) + '%'; };
@@ -296,7 +311,7 @@ export function install(STUDIO) {
     T('clear').disabled = !(mode === 'sel' || mode === 'in');
     tl.querySelector('.hl-tlhint').innerHTML = mode === 'edit'
       ? 'Editing #' + (hls.indexOf(edit.h) + 1) + ': drag a handle to trim or expand it'
-      : 'Drag on the filmstrip to select · handles trim it · <kbd class="hl-kbd">Alt</kbd> no snap · click a <b>#</b> tag to edit a highlight';
+      : 'Drag on the filmstrip to select · handles trim it · <kbd class="hl-kbd">Alt</kbd> no snap · click a <b>#</b> tag to edit a highlight · <kbd class="hl-kbd">Ctrl</kbd> + wheel zooms';
   }
   function renderList() {
     const multi = RV().sources().length > 1, list = panel.querySelector('.hl-list'), empty = panel.querySelector('.hl-empty');
@@ -420,7 +435,8 @@ export function install(STUDIO) {
     panel.querySelectorAll('.hl-tph').forEach(b => b.onclick = () => toPlayhead(b.dataset.e));
     panel.querySelectorAll('.hl-edgepick').forEach(b => b.onclick = () => { edge = b.dataset.e; const h = target(); if (h && pr?.kind !== 'range') { pauseAll(); pr = null; seek(edge === 'a' ? h.a : h.b); } renderAll(); });
     tl.querySelectorAll('.hl-track .hl-lab').forEach(l => l.addEventListener('click', () => pick(l.closest('.hl-track').dataset.k)));
-    new ResizeObserver(drawFilms).observe(ruler);
+    new ResizeObserver(drawView).observe(ruler);
+    tl.addEventListener('scroll', () => { if (viewAt() !== drawnAt) drawView(); }, { passive: true });
   }
   document.addEventListener('keydown', e => {
     if (!isOpen || RV()?.mode() !== 'highlight') return;
@@ -442,17 +458,17 @@ export function install(STUDIO) {
   }, true);
   document.addEventListener('keyup', e => { if (isOpen && e.key === ' ' && e.target?.tagName === 'BUTTON') e.preventDefault(); });
 
-  function open() { if (!tl) return; isOpen = true; shown = fr(); requestAnimationFrame(() => { drawFilms(); renderAll(); }); }
+  function open() { if (!tl) return; isOpen = true; shown = fr(); requestAnimationFrame(() => { drawView(); renderAll(); }); }
   function close() { if (!isOpen) return; if (reel) stopReel(); if (edit) doneEdit(true); pr = null; isOpen = false; RV()?.reel(''); }
   function install() {
     if (!api()?.ready || !RV()?.ready() || !$('.glm-tlwrap') || !$('.glm-side')) { setTimeout(install, 100); return; }
     build(); renderAll(); requestAnimationFrame(tick);
-    RV().onChange(() => { if (!tl) return; const was = tlOn; tlOn = ['notes', 'highlight'].includes(RV().mode()); if (tlOn && !was) shown = fr(); renderAll(); requestAnimationFrame(drawFilms); });
+    RV().onChange(() => { if (!tl) return; const was = tlOn; tlOn = ['notes', 'highlight'].includes(RV().mode()); if (tlOn && !was) shown = fr(); renderAll(); requestAnimationFrame(drawView); });
     // a card that opens in Highlight (or Notes): the timeline is on from the start
     tlOn = ['notes', 'highlight'].includes(RV().mode()); if (RV().mode() === 'highlight') open();
     RV().changed();
   }
-  window.addEventListener('rv:remount', () => { if (!tl) return; $('.glm-tlwrap').append(tl); $('.glm-side').append(panel); requestAnimationFrame(() => { drawFilms(); renderAll(); }); });
+  window.addEventListener('rv:remount', () => { if (!tl) return; $('.glm-tlwrap').append(tl); $('.glm-side').append(panel); requestAnimationFrame(() => { drawView(); renderAll(); }); });
   window.LabHighlight = { open, close, pick: k => pick(k), list: () => hls.map(clean), editing: () => !!edit, finishEdit: () => doneEdit(true), state: () => ({ cur: cur(), sel, edit: edit && { i: hls.indexOf(edit.h), a: edit.h.a, b: edit.h.b }, edge, looping: pr?.kind === 'range', itemLoop: pr?.kind === 'item' ? hls.indexOf(pr.h) : -1, reel: reel && reel.i, frame: shown, n: hls.length }) };
   install();
 }

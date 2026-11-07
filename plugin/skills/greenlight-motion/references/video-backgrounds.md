@@ -6,54 +6,104 @@
 
 # GreenLight Dash — Backgrounds and custom shaders
 
-> Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts. Load only the sections needed for the task.
+> Part of the `greenlight-dash` skill. Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts.
 
 ## Contents
 
-- [Backgrounds (project & shape) — solid, gradient, shader, pattern, image](video-backgrounds.md#backgrounds-project--shape--solid-gradient-shader-pattern-image)
-- [Custom GLSL shaders (project OR shape background)](video-backgrounds.md#custom-glsl-shaders-project-or-shape-background)
+- [Backgrounds (project & shape) — solid, gradient, shader, pattern, image](#backgrounds-project--shape--solid-gradient-shader-pattern-image)
+  - [Background fields](#background-fields)
+  - [Gradient and pattern ids](#gradient-and-pattern-ids)
+  - [Shader presets](#shader-presets)
+- [Custom GLSL shaders (project OR shape background)](#custom-glsl-shaders-project-or-shape-background)
 
 ## Backgrounds (project & shape) — solid, gradient, shader, pattern, image
 
-Both the **project background** (the `background` field at the editor `data` root) and any **shape layer** (its `shapeBackground` item field — see [video-shapes.md](video-shapes.md)) take the same `backgroundConfig` object. Only the fields for the active `type` matter; the rest are ignored.
+Both the **project background** (the `background` field at the editor `data` root) and any **shape layer** (its `shapeBackground` item field — see [video-shapes.md](video-shapes.md)) take the same `backgroundConfig` object. Set `type`, then the fields for that type; fields of other types are ignored. Always set `solidColor` too: it is the base shown behind a shader or image while it loads, and the fallback when it fails.
+
+A solid colour:
 
 ```json
-{
-  "type": "solid",                // solid | gradient | shader | pattern | image | transparent
-  "solidColor": "#0b0b12",        // solid fill; also the base colour shown behind a shader/media while it loads or on failure
-
-  // gradient:
-  "gradientCss": "linear-gradient(135deg, #ff6164 0%, #b00012 100%)",  // freeform gradient string (preferred)
-  "gradientId": "sunburn",        // OR a named preset id (used only when gradientCss is absent)
-  "gradientAnimated": false,      // loop by ping-pong panning the gradient
-  "gradientAnimSpeed": 1,         // 0.1–4
-
-  // shader (GLSL — see "Custom GLSL shaders" below):
-  "shaderId": "silk",             // a preset id below, or custom
-  "shaderCode": "void mainImage(out vec4 o, in vec2 fc){ vec2 uv = fc / iResolution.xy; o = vec4(uv, 0.0, 1.0); }",
-  "shaderSpeed": 1,               // 0–4 (iTime multiplier)
-  "shaderScale": 1,               // 1 | 0.5 | 0.25 | 0.125 (Full/Half/Quarter/Eighth detail)
-  "shaderZoom": 1,                // 0.25–4 pattern zoom (scales the shader's coordinates around centre; >1 = bigger features)
-  "shaderLook": "graphite",       // optional: a named look of the preset (ids below) — resolves defaults → look → shaderParams
-  "shaderParams": { "uFlameTint": "#ffffff", "uFlameHeight": 1.4 },  // per-preset tweakables (see preset params below); {} = defaults (or the look)
-
-  // pattern:
-  "patternId": "…", "patternColor": "#ffffff", "patternScale": 1,
-
-  // image:
-  "mediaUrl": "/media/admin/{board_id}/bg.jpg", "mediaType": "image",
-  "bgFit": "cover",               // cover | contain | custom
-  "bgScale": 1, "bgPosX": 0, "bgPosY": 0, "bgRepeat": "no-repeat"
-}
+{ "type": "solid", "solidColor": "#0b0b12" }
 ```
 
-**`type` values.** `solid` fills with `solidColor`. `gradient` renders `gradientCss` (or the `gradientId` preset). `shader` runs a GLSL fragment shader. `pattern` tiles a named pattern. `image` shows media (`mediaUrl` + fit/scale/position). `transparent` clears to nothing (alpha exports / overlay compositing). For a moving project background, use a normal full-frame video layer; for moving footage inside a shape, put the video below a shape clipping mask.
+A gradient — a freeform CSS gradient (preferred) or a preset `gradientId`, optionally animated:
+
+```json
+{ "type": "gradient", "solidColor": "#0b0b12",
+  "gradientCss": "linear-gradient(135deg, #ff6164 0%, #b00012 100%)",
+  "gradientAnimated": true, "gradientAnimSpeed": 1 }
+```
+
+A shader preset with one of its looks and one colour changed. Leave `shaderCode` out: a preset id always runs the current preset source.
+
+```json
+{ "type": "shader", "solidColor": "#0b0b12",
+  "shaderId": "silkdrift", "shaderLook": "graphite", "shaderParams": { "uGlint": "#ffe9c4" },
+  "shaderSpeed": 1, "shaderScale": 1, "shaderZoom": 1 }
+```
+
+Your own shader (see [Custom GLSL shaders](#custom-glsl-shaders-project-or-shape-background)):
+
+```json
+{ "type": "shader", "solidColor": "#0b0b12", "shaderId": "custom",
+  "shaderCode": "void mainImage(out vec4 o, in vec2 fc){ vec2 uv = fc / iResolution.xy; o = vec4(uv, 0.0, 1.0); }" }
+```
+
+A pattern:
+
+```json
+{ "type": "pattern", "solidColor": "#0b0b12", "patternId": "dots", "patternColor": "#ffffff", "patternScale": 100 }
+```
+
+An image, centred and covering the frame:
+
+```json
+{ "type": "image", "solidColor": "#0b0b12", "mediaUrl": "/media/admin/{board_id}/bg.jpg", "mediaType": "image",
+  "bgFit": "cover", "bgPosX": 50, "bgPosY": 50, "bgRepeat": "no-repeat" }
+```
+
+`{ "type": "transparent" }` clears to nothing (alpha exports, overlay compositing). For a moving project background, use a normal full-frame video layer; for moving footage inside a shape, put the video below a shape clipping mask.
 
 **Renderer reach.** In the mockup generator and HTML-card renderers a `type: "shader"` background falls back to `solidColor` and an animated gradient renders as a **static** gradient — **shaders and animated gradients render only inside the Video Editor** (and its full renders). Author those only where the target is a video project; elsewhere prefer `solid`, `gradient` (non-animated), `pattern`, or `image`.
 
-**Gradient preset ids** (`gradientId`): `sunburn`, `flamingo`, `aqua-lime`, `sunset-dusk`, `rose-mist`, `violet-dream`, `orchid`, `neon-punch`, `grape-soda`, `magenta-pop`, `tropic`, `spectrum`, `sky-deep`, `bubblegum`, `pastel-sky`, `ember-steps`, `blush-steps`, `earth-sea`, `indigo-sand`, `cotton-candy`. Prefer a freeform `gradientCss` for an exact look — a preset id is used only when `gradientCss` is absent.
+### Background fields
 
-**Shader presets** (`shaderId`) — or `custom` with your own `shaderCode`. Selecting a preset id fills `shaderCode` with that preset's source; once you edit the code the id becomes `custom`. Pick by look:
+| Field | Values | Meaning |
+|---|---|---|
+| `type` | `solid` · `gradient` · `shader` · `pattern` · `image` · `transparent` | Which fields below are read |
+| `solidColor` | `#rrggbb` | The fill for `solid`; the base and fallback for every other type |
+| `gradientCss` | CSS gradient string | Freeform gradient (preferred) |
+| `gradientId` | a gradient id ([below](#gradient-and-pattern-ids)) | Used only when `gradientCss` is absent |
+| `gradientAnimated` | `true` · `false` (default) | Loops by ping-pong panning the gradient |
+| `gradientAnimSpeed` | 0.1–4, default 1 | Speed of that loop |
+| `shaderId` | a preset id ([below](#shader-presets)) or `custom` | Which shader runs |
+| `shaderLook` | a look id of that preset | Named colour set; resolves preset defaults → look → `shaderParams` |
+| `shaderParams` | `{ "<uniform>": value }` | Per-preset tweakables: colours as `"#rrggbb"`, numbers as numbers; `{}` = defaults (or the look) |
+| `shaderCode` | GLSL string | Runs only with `shaderId: "custom"` (see [Shader presets](#shader-presets)) |
+| `shaderSpeed` | 0–30, default 1 | Multiplies the time fed to `iTime`; `0` freezes it |
+| `shaderScale` | `1` · `0.5` · `0.25` · `0.125` | Render buffer: Full / Half / Quarter / Eighth detail |
+| `shaderZoom` | 0.25–4, default 1 | Zooms the pattern around the frame centre; above 1 = bigger features |
+| `patternId` | a pattern id ([below](#gradient-and-pattern-ids)) | Which pattern tiles |
+| `patternColor` | `#rrggbb`, default `#ffffff` | Pattern colour, drawn over `solidColor` |
+| `patternScale` | 10–500 (%), default 100 | Tile size |
+| `mediaUrl` / `mediaType` | a board media URL / `"image"` | The picture |
+| `bgFit` | `cover` (default) · `contain` · `custom` | How the image fills the frame or shape |
+| `bgScale` | 10–400 (%), default 100 | Image size; read only when `bgFit` is `custom` |
+| `bgPosX` / `bgPosY` | 0–100 (%), default 50 | Image position; `50` / `50` centres it |
+| `bgRepeat` | `no-repeat` (default) · `repeat` · `repeat-x` · `repeat-y` | Tiling |
+
+### Gradient and pattern ids
+
+**Gradient ids** (`gradientId`): `sunburn`, `flamingo`, `aqua-lime`, `sunset-dusk`, `rose-mist`, `violet-dream`, `orchid`, `neon-punch`, `grape-soda`, `magenta-pop`, `tropic`, `spectrum`, `sky-deep`, `bubblegum`, `pastel-sky`, `ember-steps`, `blush-steps`, `earth-sea`, `indigo-sand`, `cotton-candy`. Prefer a freeform `gradientCss` for an exact look.
+
+**Pattern ids** (`patternId`): `dots`, `grid`, `diagonal`, `zigzag`, `crosses`, `triangles`, `hexagons`, `diamonds`, `waves`, `circles`, `squares`, `stars`, `stripes-h`, `stripes-v`, `checkers`, `confetti`, `plus`, `arrows`, `hearts`, `noise`, `scallops`, `brick`, `leaf`, `spiral`, `cross-hatch`, `rings`, `fish-scale`, `moon`, `dashes`, `polka-ring`.
+
+### Shader presets
+
+Pick a preset `shaderId` by look, or use `custom` with your own `shaderCode`:
+
+- **With a preset id, leave `shaderCode` out.** The render always runs the current preset source, so its `shaderParams` always reach the shader.
+- **To run your own code, set `shaderId: "custom"`.** While `shaderId` names a preset, `shaderCode` is used only when its first line differs from the preset's, so an edited copy of a preset that keeps the preset's first line is silently replaced by the preset. Copying a preset's code into `custom` keeps working with the same `shaderParams`, because the copied code declares the same uniforms.
 
 | `shaderId` | Name | Look | Mood / use | `shaderParams` (defaults reproduce the original look) |
 |---|---|---|---|---|
@@ -119,11 +169,11 @@ The vignette / footlight family (`blueplanet` through `spectrumdrift`) is the da
 | `icehalo` | `ice`, `dusk`, `sage`, `sand`, `steel`, `midnight` |
 | `windowhaze` | `haze`, `golden`, `morning`, `dusk`, `linen`, `charcoal` |
 
-**Shader preset params** (`shaderParams`, editor: controls under the preset preview). Each preset declares tweakable uniforms — **every colour a preset draws is one of them, background included** (`uBgColor` on every preset with a visible background; additive under the light on `fire` / `spacetravel` / `glitters`); store UI-native values keyed by uniform name — colours as `"#rrggbb"` hex strings, numbers as numbers. Omitted keys use the preset defaults, and every default reproduces the preset's original look (to within 1/255). A built-in `shaderId` always runs the CURRENT preset source, even when the saved `shaderCode` is an older copy of it, so its params always reach the shader; `shaderCode` only drives the render for `custom` (or code that is not a copy of the named preset). The `uTint`-style tints (`uTint`, `uFlameTint`, `uStarColor`, `uGlitterColor`, `uSparkColor`) read pure black `#000000` as unset (white) — use a near-black like `#010101` to darken through them. Where the table says *hue only*, the shader keeps its original HDR brightness multiplier and takes only the hue from the colour, because a 0–1 picker cannot express intensities above 1. Editing preset code into `custom` keeps the current `shaderParams` (the copied code still declares the uniforms).
+**Shader preset params** (`shaderParams`). Each preset declares tweakable uniforms — **every colour a preset draws is one of them, background included** (`uBgColor` on every preset with a visible background; additive under the light on `fire` / `spacetravel` / `glitters`); store plain values keyed by uniform name — colours as `"#rrggbb"` hex strings, numbers as numbers. Omitted keys use the preset defaults, and every default reproduces the preset's original look (to within 1/255). The `uTint`-style tints (`uTint`, `uFlameTint`, `uStarColor`, `uGlitterColor`, `uSparkColor`) read pure black `#000000` as unset (white) — use a near-black like `#010101` to darken through them. Where the table says *hue only*, the shader keeps its original HDR brightness multiplier and takes only the hue from the colour, because a `#rrggbb` colour cannot express intensities above 1.
 
-### Custom GLSL shaders (project OR shape background)
+## Custom GLSL shaders (project OR shape background)
 
-Custom shader backgrounds are **GLSL**, Shadertoy-shaped, and they are rasterised in their own WebGL context and handed to the compositor as a canvas — so they render identically on either engine the app is set to (`GET /api/video-editor/engine`), and they are the one place custom shading is not tied to it. `iTime` is driven by the **timeline** (not wall-clock), so output is deterministic and identical in preview and export.
+Custom shader backgrounds are **GLSL**, Shadertoy-shaped, and they are rasterised in their own WebGL context and handed to the compositor as a canvas — so they render identically on either engine the app is set to (`GET /api/video-editor/engine`), and they are the one place custom shading is not tied to it. `iTime` is driven by the **timeline** (not wall-clock), so output is deterministic and identical in preview and export. Send them with `shaderId: "custom"`.
 
 - **Entry point:** `void mainImage(out vec4 fragColor, in vec2 fragCoord)`. Code that defines its own `main()` is used almost as-is instead.
 - **In scope:** the Shadertoy uniforms — `iResolution` (vec3; `.xy` is the shader buffer size, which `shaderScale` sets and which is capped at **1280 px on its long side for a shape's background** and 2048 for the project background: a full-frame 1920×1080 shape renders at 1280×720, and a small shape's buffer follows the preview's raster density, so preview and export can differ — compute in `fragCoord / iResolution.xy`, never in composition pixels), `iTime` (seconds: on a shape, from that layer's start; on the project background, the timeline's), `iTimeDelta`, `iFrameRate`, `iFrame`, `iMouse` (zero), `iDate` — plus any uniform the shader declares itself, fed from `shaderParams` (see below).
@@ -144,6 +194,4 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 }
 ```
 
-`shaderSpeed` multiplies the time fed to `iTime` (`0` freezes it, `4` = 4×). `shaderScale` controls the shader render buffer: `1` Full, `0.5` Half, `0.25` Quarter, `0.125` Eighth. Reduced detail is softer but keeps pixel-measured dots, lines and sparkles from shrinking away on a large/4K composition; it is part of the saved background config so preview and export use the same buffer scale. `shaderZoom` (0.25–4, editor: **Scale**) is different: it scales the *coordinates* fed to the shader (`fragCoord`) around the frame centre at full sharpness, so `2` doubles the size of the pattern's features. A param in `shaderParams` is fed to the uniform of the same name that the shader code declares (`"#rrggbb"` strings become `vec3`, numbers become `float`), so a shader's controls are whatever uniforms it declares.
-
-* * *
+`shaderSpeed` multiplies the time fed to `iTime` (`0` freezes it, `2` runs twice as fast; up to 30). `shaderScale` controls the shader render buffer: `1` Full, `0.5` Half, `0.25` Quarter, `0.125` Eighth. Reduced detail is softer but keeps pixel-measured dots, lines and sparkles from shrinking away on a large/4K composition; it is part of the saved background config so preview and export use the same buffer scale. `shaderZoom` (0.25–4, editor: **Scale**) is different: it scales the *coordinates* fed to the shader (`fragCoord`) around the frame centre at full sharpness, so `2` doubles the size of the pattern's features. A param in `shaderParams` is fed to the uniform of the same name that the shader code declares (`"#rrggbb"` strings become `vec3`, numbers become `float`), so a shader's controls are whatever uniforms it declares.

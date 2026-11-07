@@ -338,6 +338,10 @@ export const materials = {
     const n = nodes();
     return n ? n.comp.createDepthStampNodeMaterial() : null;
   },
+  worldPlate: (units) => {
+    const n = nodes();
+    return n ? n.comp.createWorldPlateNodeMaterial(units) : null;
+  },
   depthComposite: () => {
     const n = nodes();
     return n ? n.comp.createDepthCompositeNodeMaterial() : null;

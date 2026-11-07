@@ -56,11 +56,14 @@ import { prePoseWorldModels, renderChannel as renderChannelInEngine } from './ch
 import { getChannelsBottomToTop, isClipMaskItem, orderChannelsForComposite, resolveActiveIndex, resolveGlassLayer } from './compositeHelpers';
 import { clamp01 } from './layerHelpers';
 import { isTexturePinned as isTexturePinnedInEngine } from './mediaTextures';
-import { resolveParenting as resolveParentingInEngine } from './meshTransform';
+import { layerPoseScale, resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
 import { PASS_POOL_IDLE_MS, sweepPassPool as sweepPassPoolInEngine } from './passPool';
 import { releaseUnusedPreTransitionFxTargets as releaseUnusedPreTransitionFxTargetsInEngine } from './transitions';
 import { PERF_SAMPLE_MS } from './compositeHelpers';
 import { scheduleWarmUp } from './warmUp';
+import { PHONE_LOOK_AHEAD_S, phoneMode } from './phoneMode';
+import { lookAheadPictures, sweepPhonePlates, sweepPhoneSequences, trimPhonePictures } from './phoneMedia';
+import { getImageTexture } from './mediaTextures';
 import { prepareWorldLayerFx, restoreWorldLayerFx } from './worldLayerFx';
 
 export function renderFrame(engine, env) {
@@ -175,6 +178,13 @@ export function renderFrame(engine, env) {
     }
   }
   const afterScene = performance.now();
+  if (phoneMode() && !engine.warmUp?.hidden) {
+    // a cached stretch needs no pictures, until it is about to end
+    if (!rcTexture || !engine.renderCache?.entryAt(engine.currentTime + PHONE_LOOK_AHEAD_S)) lookAheadPictures(engine, env, getImageTexture);
+    trimPhonePictures(engine, isTexturePinnedInEngine);
+    sweepPhoneSequences(engine);
+    sweepPhonePlates(engine, env);
+  }
 
   // Sweep textures that were queued for disposal once they left the screen.
   // (Disposing a still-displayed texture would draw a black/garbage frame.)
@@ -738,7 +748,11 @@ export function renderFrame(engine, env) {
       // Glass: shape layers whose outline the pass can bevel (glassEffect.js).
       if (isGlassLayer(item, clip) && !isCameraBaked3dPlate(clip, item)) {
         const { w: compW, h: compH } = engine.videoSize;
-        glassLayers.set(channel.id, resolveGlassLayer(item, overlayLiveAt(item, layout[ai]).kf, compW, compH));
+        const { kf } = overlayLiveAt(item, layout[ai]);
+        const poseScale = item.borderRadiusScaleLock
+          ? layerPoseScale(item, kf, compW, compH, resolveParentingInEngine(engine, env.parentIndex, item, tNow), resolveFollowInEngine(engine, env.parentIndex, item, tNow))
+          : 1;
+        glassLayers.set(channel.id, resolveGlassLayer(item, kf, compW, compH, poseScale));
       }
       if (isDepthPlate(item, clip)) depthPlates.set(channel.id, item);
       // The Scene Rig's backdrop is a 3D pass too. With no model beside it the frame
@@ -846,7 +860,10 @@ export function renderFrame(engine, env) {
       || drosteLayers.size > 0 || pryzmLayers.size > 0 || chromaKeyLayers.size > 0 || depthScanLayers.size > 0 || frRimLayers.size > 0
       || meshWarpLayers.size > 0 || bezierWarpLayers.size > 0 || mockupFrameLayers.size > 0
       || layerMaskLayers.size > 0 || backdropLayers.size > 0 || glassLayers.size > 0 || shaderBlendLayers.size > 0
-      || trackMatteLayers.size > 0 || mixedCameraLock || modelLayers.size > 0)
+      || trackMatteLayers.size > 0 || mixedCameraLock || modelLayers.size > 0
+      // The world's picture lands through the compositor. On WebGPU the direct path below has the other parity, so a Scene with no
+      // model layer came out upside down.
+      || engine.worldFrameReady)
     && renderAdjustmentCompositeInEngine(engine, env, adjustments)) {
     // Adjustment/mask effects and camera DOF share this alpha-aware compositor.
   } else {

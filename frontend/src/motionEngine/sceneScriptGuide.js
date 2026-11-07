@@ -4,7 +4,7 @@
 // reference (a tool or a file) and where pictures come from.
 import { FORMATS, CROSS_TRANSITIONS, SHADERS, CAMERAS, presetCatalog, cameraCatalog } from './sceneScript.js';
 // bundled as text (motion-engine/scripts/build-script.mjs)
-import DESIGN from '../../../skills/greenlight-dash/references/video-design.md';
+import DESIGN from '../../../skills/greenlight-dash/references/video/design.md';
 
 export const PREFERRED = {
   text: ['glide-text', 'ember-type', 'marker', 'outline-pass', 'neon-flow', 'glitch', 'swing-pop', 'pendulum', 'fan-deal', 'whip', 'word-swing', 'letter-vortex'],
@@ -115,7 +115,7 @@ matte, masks, particles, 3D) goes on from \`project.json\`: SKILL.md, "Beyond th
 `;
 }
 
-/** The design rules — the app skill's references/video-design.md, the ONE text the app's agents, the CLI's skill and the
+/** The design rules — the app skill's references/video/design.md, the ONE text the app's agents, the CLI's skill and the
  *  chat read — with its headings one level down, to sit inside a guide. */
 export function designGuide() {
   return `${DESIGN.replace(/^(#+) /gm, '#$1 ').trim()}\n\n`;

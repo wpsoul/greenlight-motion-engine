@@ -4,6 +4,7 @@
  * frame at a time and returns it as a PNG data URL; exportVideo renders the project frame by frame into a video file
  * (WebCodecs mp4 / webm, alpha, motion blur, audio mix). The Player's handle keeps the same keys and calls these.
  */
+import { settleWorldFrame } from '../world3dLayer';
 import { posterizedTimeInClip } from '../posterizeTime';
 import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 import { prepareLocalEffectsFor } from '../adjustmentEffects';
@@ -18,7 +19,7 @@ import { describeGpuLoad, gpuResetCount } from '../gpuReset';
 import { getItemKeyframeValues, itemHasKeyframes } from '../gsapTransitions';
 import { disposeHtmlLiveExportPages, htmlBlankCanvas, htmlLiveExportCanvas, htmlLiveSettleUsed, htmlLiveSupported } from '../htmlLive';
 import { preloadImagePlate } from '../imagePlate';
-import { preloadVideoPlate } from '../videoPlate';
+import { preloadVideoPlate, videoPlateUrl } from '../videoPlate';
 import { getParenting, localPrs } from '../keyframeParenting';
 import { motionBlurLevelForShutter } from '../motionBlurLevels';
 import { ensureMotionTemplate, motionMediaPending, pumpMotionMedia } from '../motionTemplates';
@@ -42,13 +43,20 @@ import { resolveFollow as resolveFollowInEngine, resolveParenting as resolvePare
 import { ensureModel3dModule as ensureModel3dModuleInEngine, ensureParticleModule as ensureParticleModuleInEngine } from './modules3d';
 import { getMotionBlurPipeline as getMotionBlurPipelineInEngine } from './motionPasses';
 import { awaitShapeSvgImages, finiteNumber, preloadShapeSvgs } from './mediaHelpers';
+import { phoneMode } from './phoneMode';
+import { clipsBetween, dropPhonePictures } from './phoneMedia';
+
+// The clips a still reads the sizes of: every top-level one (on a phone, what is on screen at that time, ./phoneMedia.js).
+function stillClips(env, time) {
+  return phoneMode() ? clipsBetween(env.channels, env.clipsMap, time, time) : env.channels.flatMap((ch) => ch.items.map((it) => env.clipsMap.get(it.clipId)));
+}
 
 // Every top-level video's real-size source (videoPlate.js reads the original, not the proxy).
-function videoPlateUrls(env) {
+function videoPlateUrls(env, time = null) {
   return [...new Set(
-    env.channels.flatMap((ch) => ch.items.map((it) => env.clipsMap.get(it.clipId)))
+    (time == null ? env.channels.flatMap((ch) => ch.items.map((it) => env.clipsMap.get(it.clipId))) : stillClips(env, time))
       .filter((clip) => clip?.mediaType === 'video' && !clip.htmlSource && (clip.url || clip.proxyUrl))
-      .map((clip) => clip.url || clip.proxyUrl),
+      .map((clip) => videoPlateUrl(clip)),
   )];
 }
 
@@ -148,18 +156,21 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
     preloadShapeSvgs(env.channels, env.clipsMap);
     await awaitShapeSvgImages();
     await Promise.all([...new Set(
-      env.channels.flatMap((ch) => ch.items.map((it) => env.clipsMap.get(it.clipId)))
+      stillClips(env, time)
         .filter((clip) => clip?.mediaType === 'image' && clip.url)
         .map((clip) => clip.url),
     )].map((url) => Promise.all([preloadImagePlate(url), preloadAnimatedImage(url)]).catch(() => null)));
-    await Promise.all(videoPlateUrls(env).map((url) => preloadVideoPlate(url).catch(() => null)));
+    await Promise.all(videoPlateUrls(env, time).map((url) => preloadVideoPlate(url).catch(() => null)));
     await seekAllVideosForTimeInEngine(engine, env, time);
     markTexturesFresh();
     engine.renderFrame();
+    if (await settleWorldFrame(engine)) engine.renderFrame();
     // That render is what ASKS for the image textures (getImageTexture runs
     // inside it), so only now can the capture wait for them. A texture that
     // lands after the readback is a black layer in the still, never repainted.
     if (await awaitImageTexturesInEngine(engine)) engine.renderFrame();
+    // On a phone nothing was decoded ahead: a nested scene asks for its pictures only once its parent has drawn.
+    if (phoneMode()) for (let i = 0; i < 3 && await awaitImageTexturesInEngine(engine); i += 1) engine.renderFrame();
     // Sequence/grid members' SVGs are first requested by that pass.
     if (await awaitShapeSvgImages()) engine.renderFrame();
     // Html clips drawn live (htmlLive.js): that render only stepped each page
@@ -445,6 +456,27 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     }
   }
   const isPartial = rangeStart > 0 || exportDuration < totalDuration - 1e-6;
+  // Render only what changed (reuseRender.js, a server job with `reuse`): these
+  // timeline frames [from, to), encoded back to back, each piece opening a GOP so
+  // the backend can cut the file there; the sound is the whole film's.
+  const totalFilmFrames = Math.max(1, Math.ceil(totalDuration * clampedFps));
+  const pieces = !isPartial && Array.isArray(encodeOpts?.frameRanges)
+    ? encodeOpts.frameRanges
+      .map((r) => ({ from: Math.max(0, Math.floor(Number(r?.from))), to: Math.min(totalFilmFrames, Math.floor(Number(r?.to))) }))
+      .filter((r) => Number.isFinite(r.from) && Number.isFinite(r.to) && r.to > r.from)
+    : null;
+  let pieceFrames = null;
+  let pieceStarts = null;
+  if (pieces?.length) {
+    const count = pieces.reduce((n, r) => n + r.to - r.from, 0);
+    pieceFrames = new Int32Array(count);
+    pieceStarts = new Set();
+    let at = 0;
+    for (const r of pieces) {
+      pieceStarts.add(at);
+      for (let f = r.from; f < r.to; f += 1) pieceFrames[at++] = f;
+    }
+  }
   window.__exportPhase = "Setting up encoder";
   console.warn("[export-phase] Player.exportVideo: setup done, duration=" + totalDuration.toFixed(2) + "s"
     + (isPartial ? (", range=" + rangeStart.toFixed(2) + "s.." + (rangeStart + exportDuration).toFixed(2) + "s") : "")
@@ -1088,6 +1120,8 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       }
     }
     engine.renderFrame();
+    // A world Scene lands late on its first frame, and a Final render traces every frame to its samples.
+    if (await settleWorldFrame(engine)) engine.renderFrame();
     // An image layer that first appears mid-timeline asks for its texture in the
     // pass above. Encoded before it lands, the frame has no picture for that layer
     // (or, before the draw-side guard, two opaque black letterbox bars). Wait and
@@ -1346,6 +1380,8 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   }
 
   engine.exportActive = true; // renderFrame skips <video> seeks; uses decode canvases
+  // A phone previews pictures small (./phoneMedia.js); a real render draws them at its own size.
+  if (phoneMode() && !previewCacheRender) { engine.phonePictureEdge = Math.max(W, H); dropPhonePictures(engine); }
   try {
     console.warn("[export-phase] Player.exportVideo: calling runExport, audioClips=" + exportAudioClips.length);
 
@@ -1355,7 +1391,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     // clips all start at 0 pays for all of them at once; the flat 15s
     // watchdog then fails a project that was merely slow to start, three
     // frames in. Budget per concurrent decoder, with a floor.
-    const primeTime = isPartial ? rangeStart : 0;
+    const primeTime = isPartial ? rangeStart : (pieceFrames ? pieceFrames[0] / clampedFps : 0);
     let primeVideoCount = 0;
     for (const channel of env.channels) {
       if (channel.visible === false) continue;
@@ -1377,7 +1413,9 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       // evaluates for the same instant — see the note where rangeStart is set.
       renderFrameAtTime: isPartial
         ? (t) => renderExportFrame((rangeStartFrames + Math.round(t * clampedFps)) / clampedFps)
-        : renderExportFrame,
+        : pieceFrames
+          ? (t) => renderExportFrame(pieceFrames[Math.min(pieceFrames.length - 1, Math.round(t * clampedFps))] / clampedFps)
+          : renderExportFrame,
       canvas,
       // A camera-sized buffer between output and composition takes the filtered
       // resample (frameResampler.js) and is encoded at the output size as it is;
@@ -1389,7 +1427,13 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           return resampleFrame(canvas, OW, OH) || canvas;
         }
         : undefined,
-      duration: exportDuration,
+      duration: pieceFrames ? pieceFrames.length / clampedFps : exportDuration,
+      ...(pieceFrames ? {
+        frameCount: pieceFrames.length,
+        keyFrameAt: (i) => pieceStarts.has(i),
+        audioDuration: exportDuration,
+      } : {}),
+      encoderConfig: encodeOpts?.encoderConfig || null,
       fps: clampedFps,
       width: OW,
       height: OH,
@@ -1491,13 +1535,15 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     // audioWarning names clips whose sound could not be read. It rides all the
     // way out because the file itself is finished and looks fine — nothing
     // downstream can tell it went out partly silent unless we say so.
-    if (out?.streamed) return { streamed: true, ext, audioWarning: out?.audioWarning || null, segmentDecodeFailures };
-    return { blob: out?.blob, ext, audioWarning: out?.audioWarning || null, segmentDecodeFailures };
+    const encoder = out?.encoder || null;
+    if (out?.streamed) return { streamed: true, ext, audioWarning: out?.audioWarning || null, segmentDecodeFailures, encoder };
+    return { blob: out?.blob, ext, audioWarning: out?.audioWarning || null, segmentDecodeFailures, encoder };
   } finally {
     // Tear down the fast-decode session: stop skipping seeks, free decoders +
     // their canvas textures, and detach decode canvases from the video elements.
     engine.exportActive = false;
     engine.exporting = false;
+    if (engine.phonePictureEdge) { engine.phonePictureEdge = 0; dropPhonePictures(engine); }
     for (const d of allDecoders) { try { d.close(); } catch { /* ignore */ } }
     disposeHtmlLiveExportPages();
     sourceCache.clear(); // drop demuxed sample tables (can hold GBs for long 4K sources)

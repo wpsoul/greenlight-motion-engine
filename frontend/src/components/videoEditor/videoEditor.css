@@ -976,6 +976,7 @@ background: none;
   margin: 0 auto;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
 /* Pan/zoom surface. Also the size container the frame fits itself into, so
@@ -1927,15 +1928,23 @@ background: none;
   cursor: grabbing;
 }
 
+/* A selected Free camera with Capture off: the frame moves the camera, no ring, because nothing is being recorded. */
+.ve-cam-capture-overlay.is-move { cursor: grab; }
+.ve-cam-capture-overlay.is-move:active { cursor: grabbing; }
+
 /* The instructions strip sits in the player column above the viewport, never
    over the frame. */
 .ve-cam-capture-bar {
-  flex: none;
-  width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
   display: flex;
   justify-content: center;
   padding: 8px 12px 0;
   box-sizing: border-box;
+  pointer-events: none;
 }
 
 .ve-cam-capture-hint {
@@ -1952,6 +1961,12 @@ background: none;
   box-shadow: inset 0 0 0 1px rgba(142, 164, 255, 0.5);
   pointer-events: none;
 }
+
+.ve-cam-capture-bar.is-quiet .ve-cam-capture-hint { color: #aeb3bb; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
+
+/* Said for 3 s, then out of the way of the picture; a new message shows again. */
+.ve-cam-capture-bar { transition: opacity 0.48s cubic-bezier(0.645, 0.045, 0.355, 1); }
+.ve-cam-capture-bar.is-faded { opacity: 0; }
 
 .ve-cam-capture-hint kbd {
   display: inline-block;
@@ -2356,6 +2371,8 @@ background: none;
 
 .ve-cam-path-check input { accent-color: #edf1ee; cursor: pointer; }
 .ve-cam-path-check:has(input:disabled) { opacity: 0.4; cursor: default; }
+/* Border radius ▸ "Keep size when scaled", under the radius fields. */
+.ve-radius-scale-lock { margin: 8px 0 0; }
 
 /* The selected point's block closes the section, so it carries its own bottom
    padding — the last button (Delete point) otherwise sits flush against the next
@@ -2698,14 +2715,6 @@ body.gl-tablet .ve-tl-ripple-btn {
 
 /* Add Zoom ON changes what a click on the camera layer does, so it wears that
    layer's sand (the zoom blocks' colour), the way armed Ripple wears its amber. */
-.ve-tl-zoom-add-btn.is-on,
-.ve-tl-zoom-add-btn.is-on:hover:not(:disabled) {
-  background: rgb(196 173 120 / 14%);
-  color: #d6c08c;
-  border-color: rgb(214 192 140 / 45%);
-  box-shadow: none;
-}
-
 .ve-timeline-hint {
   font-size: 10px;
   color: #555;
@@ -3802,6 +3811,12 @@ body.gl-tablet .ve-tl-ripple-btn {
   box-shadow: 0 0 0 2px rgba(170, 150, 106, 0.55) !important;
 }
 
+.ve-channel-label-camera .ve-channel-name { white-space: nowrap; }
+.ve-scene-fold { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin: 0 3px 0 -3px; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; vertical-align: -2px; transition: transform .2s cubic-bezier(.4, 0, .2, 1); }
+.ve-scene-fold.is-folded { transform: rotate(-90deg); }
+.ve-channel-label-child .ve-channel-name { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ve-channel-label-built, .ve-track-row-built { cursor: pointer; }
+.ve-scene-built-bar { position: absolute; top: 4px; bottom: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.06); pointer-events: none; }
 .ve-channel-label-camera .ve-channel-type {
   color: #7e7460;
 }
@@ -11857,6 +11872,27 @@ button:focus-visible {
   background: #fff;
 }
 
+.ve-voice-pause-bars {
+  box-sizing: border-box;
+  width: 9px;
+  height: 10px;
+  border-left: 3px solid currentColor;
+  border-right: 3px solid currentColor;
+}
+
+/* Pause / Resume beside Stop while a take is running */
+.ve-record-control-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ve-record-control-row .ve-voice-action {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
 @keyframes ve-voice-pulse {
   0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6); }
   70% { box-shadow: 0 0 0 7px rgba(255, 255, 255, 0); }
@@ -12592,6 +12628,37 @@ button:focus-visible {
   font-size: 12px;
   border-radius: 7px;
 }
+/* Quiet fill in every state (Generate voice = Generate video); disabled only dims */
+.ve-voice-action.primary.ve-vp-cta {
+  background: rgba(237, 241, 238, 0.08);
+  border-color: rgba(237, 241, 238, 0.24);
+}
+
+/* Dashed CTA — same look as the media sidebar's Upload button (.media-upload-toggle).
+   Voice clip panel: Transcribe this take, Generate voice, Generate video. */
+.ve-dashed-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  height: 32px;
+  margin-top: 9px;
+  padding: 0 10px;
+  background: none;
+  border: 1px dashed var(--border-light);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition), background-color var(--transition);
+}
+.ve-dashed-cta:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.ve-dashed-cta:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Generated-voice result inset */
 .ve-vp-result {
@@ -14398,6 +14465,15 @@ button:focus-visible {
   border-bottom: 0;
 }
 
+/* `stacked: true` on an ordered card's colour param: the label on its own line, the picker
+   under it, so a long name is not cut off beside the swatch and hex value. */
+.ve-fx-color.ve-fx-color-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 6px 0 5px;
+}
+
 
 /* Palette shortcuts above a multi-stop effect's colour pickers. The swatch
    carries the colour, so the chip itself stays neutral (no accent highlight). */
@@ -15302,7 +15378,6 @@ body.ve-layer-picking .ve-timeline-clip:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   padding: 8px;
   background: repeating-linear-gradient(
       45deg,
@@ -15313,7 +15388,6 @@ body.ve-layer-picking .ve-timeline-clip:hover {
     ),
     rgba(36, 36, 36, 0.95);
   color: #edf1ee;
-  font-size: 12px;
   overflow: hidden;
 }
 
@@ -17341,6 +17415,10 @@ color: var(--accent, #33efab);
    "Prev Layer" / "Next Layer" divider has nothing to collapse. */
 .ve-trans-optgroup-plain { cursor: default; }
 .ve-trans-optgroup-plain:hover .ve-trans-optgroup-title { color: var(--ve-text-dim, #8d93a3); }
+/* A section's named presets sit right under its header, across the whole grid. */
+.ve-fx-presets.ve-trans-presets { grid-column: 1 / -1; margin: 0 0 4px; }
+/* …and in the picker's flat option wrap, on a line of their own. */
+.ve-fx-presets.ve-trp-option-presets { flex: 1 0 100%; margin-top: 0; }
 
 .ve-motion-group { display: flex; flex-direction: column; }
 /* SHAPE section groups (shapeOptionGroup): a group title already opens the space,
@@ -18082,6 +18160,9 @@ color: var(--accent, #33efab);
 .ve-mockup-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .ve-mockup-panel-head { padding: 10px 12px 2px; }
 .ve-mockup-panel-hint { margin: 0; font-size: 11px; line-height: 1.5; color: var(--text-tertiary, #8a8a8a); }
+.ve-mockup-full { flex: none; width: calc(100% - 24px); margin: 8px 12px 12px; padding: 9px 10px; border: 1px solid var(--border-toolbar, #2a2e30); border-radius: 8px; background: none; color: #ededf0; font: 500 12px system-ui, -apple-system, sans-serif; text-align: left; cursor: pointer; }
+.ve-mockup-full span { display: block; margin-top: 2px; font-size: 10.5px; font-weight: 400; color: #7c7c8a; }
+.ve-mockup-full:hover { border-color: rgb(218 220 224 / 28%); }
 .ve-mockup-grid {
   flex: 1; min-height: 0; overflow-y: auto;
   padding: 10px 12px 16px;
@@ -19419,7 +19500,6 @@ color: var(--accent, #33efab);
 
 /* Thumbs keep the type tint; text that can't fit a 16px band goes. */
 .ve-rows-compact .ve-clip-text-thumb span,
-.ve-rows-compact .ve-clip-sequence-thumb span,
 .ve-rows-compact .ve-clip-motion-thumb span,
 .ve-rows-compact .ve-clip-camera-thumb > span,
 .ve-rows-compact .ve-clip-transcript-text,
@@ -20022,23 +20102,17 @@ color: var(--accent, #33efab);
   background: rgba(255, 255, 255, 0.015);
 }
 
-/* Timeline clip body for a grid layer — same shape as the sequence pill. */
+/* Timeline clip body for a grid layer — same shape as the sequence pill: one centred
+   glyph, the name rides .ve-clip-name. */
 .ve-clip-grid-thumb {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   width: 100%;
   height: 100%;
   padding: 0 8px;
   color: rgba(255, 255, 255, 0.82);
   overflow: hidden;
-}
-.ve-clip-grid-thumb span {
-  font-size: 10px;
-  font-weight: 550;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .ve-clip-grid {
   background: linear-gradient(135deg, rgba(56, 189, 248, 0.24), rgba(14, 116, 144, 0.3));
@@ -27410,6 +27484,68 @@ label.ve-scene-row { margin: 6px -6px 0; }
 .ve-scene-pick-btn.active { background: #2b3034; color: #fff; box-shadow: inset 0 0 0 1px #4a5257; }
 
 /* Camera: the movement type above the map, three short labels. */
+/* The camera map (cameraMoveMap.jsx). The gizmo stays out of the picture until the pointer is on the map. */
+.ve-cam-map { overflow: hidden; }
+.ve-cam-map > svg { cursor: grab; touch-action: none; }
+.ve-cam-map > svg:active { cursor: grabbing; }
+.ve-cam-map-axis { cursor: move; }
+.ve-cam-map-gizmo { opacity: 0.4; transition: opacity 0.16s cubic-bezier(0.45, 0, 0.2, 1); }
+.ve-cam-map:hover .ve-cam-map-gizmo { opacity: 0.9; }
+/* Capture keys and the key stepper sit on the map's bottom edge, in the Presets button's look. */
+.ve-cam-map-over {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  pointer-events: none;
+}
+.ve-cam-map-over svg { width: auto; height: auto; } /* .ve-scene-map svg is the picture's width: 100% */
+.ve-cam-capture-btn,
+.ve-cam-keys { pointer-events: auto; }
+.ve-cam-capture-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: #1f2326;
+  color: #d4d8d6;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.ve-cam-capture-btn:hover { background: #272c2f; color: #fff; }
+.ve-cam-capture-btn svg { flex: none; color: #8a918f; }
+.ve-cam-capture-btn[aria-pressed='true'] { color: #fff; }
+.ve-cam-capture-btn[aria-pressed='true'] svg { color: #74ceae; }
+.ve-cam-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  min-width: 0;
+  padding: 0 2px 0 7px;
+  border-radius: 6px;
+  background: #1f2326;
+}
+.ve-cam-key-count { color: #8a918f; font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ve-cam-keys .ve-act-step { border: 0; }
+.ve-cam-keys .ve-act-step button { width: 18px; }
+.ve-cam-keys .ve-act-step svg { width: 10px; height: 10px; }
+/* Add Zoom mode, on: the gold of the zoom blocks it adds */
+.ve-act-ghost.ve-cam-zoom-on,
+.ve-act-ghost.ve-cam-zoom-on:hover { background: rgb(196 173 120 / 14%); color: #d6c08c; border-color: rgb(214 192 140 / 45%); box-shadow: none; }
+
 .ve-cam-panel .ve-cam-mode-seg { margin: 8px 0 2px; }
 .ve-cam-panel .ve-cam-mode-seg button span { overflow: hidden; text-overflow: ellipsis; }
 .ve-rig-panel .ve-rig-obj-tabs { margin: 2px 0 0; }
@@ -27503,3 +27639,62 @@ label.ve-scene-row { margin: 6px -6px 0; }
 .ve-variants-notice button:hover { background: #2c2c37; }
 .ve-variants-notice .ve-variants-notice-x { border: none; width: 24px; padding: 0; color: #8b8b96; font-size: 15px; }
 @keyframes veVariantsNoticeIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translateX(-50%); } }
+
+/* Draft 3D / Final 3D in the player bar. Progress is words here, never a badge on the picture. */
+.ve-world-final { position: relative; display: flex; align-items: center; gap: 4px; }
+.ve-world-final-btn { display: flex; align-items: center; gap: 6px; }
+.ve-world-final-btn i { width: 7px; height: 7px; border-radius: 50%; background: #5b5b64; transition: background .2s cubic-bezier(.4, 0, .2, 1); }
+.ve-world-final-btn.on { color: #fff; }
+.ve-world-final-btn.on i { background: #35d6a0; }
+.ve-world-final-status { font-size: 12px; color: #8a8a93; font-variant-numeric: tabular-nums; white-space: nowrap; margin-right: 4px; }
+.ve-world-final-status[data-done="1"] { color: #35d6a0; }
+/* A 3D Scene that is loading, over the preview (WorldLoadBadge). */
+.ve-world-load-badge {
+  position: absolute; left: 50%; top: 50%; z-index: 5; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-width: 180px; padding: 10px 18px 12px; overflow: hidden; border-radius: 10px;
+  background: rgba(12, 14, 20, 0.86); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  pointer-events: none; animation: ve-world-load-in 0.48s cubic-bezier(0.645, 0.045, 0.355, 1) both;
+}
+.ve-world-load-title { font-size: 12.5px; font-weight: 600; color: #e8ecf2; white-space: nowrap; }
+.ve-world-load-stage { font-size: 11px; color: #aeb3bb; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ve-world-load-badge i { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: #35d6a0; transform-origin: left; transition: transform 0.2s cubic-bezier(0.645, 0.045, 0.355, 1); }
+@keyframes ve-world-load-in { from { opacity: 0; } to { opacity: 1; } }
+.ve-world-final-menu { min-width: 190px; }
+.ve-world-final-pop { position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 200; width: 280px; max-height: 70vh; overflow: auto; padding: 10px 12px; border-radius: 10px; background: #1b1b1f; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.ve-world-quality.ve-editor-panel { display: block; width: auto; height: auto; min-width: 0; padding: 0; border: 0; background: none; overflow: visible; }
+.vrs-world .ve-world-quality { margin-top: 10px; }
+.ve-world-final-needs { min-width: 240px; padding: 10px 12px; white-space: normal; }
+.ve-world-final-needs p { margin: 0 0 8px; color: #d6d9dc; font-size: 12px; line-height: 1.4; }
+.ve-world-final-link { padding: 0; border: 0; background: none; color: #74ceae; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.ve-world-final-link:hover { color: #a2e6cc; }
+
+.vrs-world-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.vrs-world-row .vrs-btn.on { color: #fff; border-color: #35d6a0; }
+
+/* An object's nodes in the Scene panel: the app's own rows, with a gutter for the wires. */
+.ve-world-nodes { display: flex; flex-direction: column; gap: 6px; }
+.ve-world-nodes-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 2px 4px 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ve-field-label, rgba(255, 255, 255, 0.6));
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.ve-world-nodes-back:hover { color: var(--ve-field-value); }
+.ve-world-node-list { position: relative; margin-top: 2px; }
+.ve-world-node-list .ve-scene-rows { margin-top: 0; }
+.ve-world-node-wires { position: absolute; left: -6px; top: 0; pointer-events: none; z-index: 1; }
+.ve-world-node-wires path { fill: none; stroke: rgba(255, 255, 255, 0.24); stroke-width: 1.25; }
+.ve-world-node-wires circle { fill: rgba(255, 255, 255, 0.5); }
+.ve-world-node-wires circle.is-sel { fill: #fff; }
+.ve-world-node-list .ve-world-node { height: 30px; padding-left: calc(var(--ve-node-gutter) + 2px); }
+.ve-world-node.is-off .ve-scene-row-name { opacity: 0.45; }
+.ve-world-node-more { align-self: flex-start; }
+.ve-rig-obj-nodes { margin-left: auto; }

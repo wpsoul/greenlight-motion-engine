@@ -265,6 +265,14 @@ export function kernBetween(ctx, a, b) {
   return k;
 }
 
+// 3D Text: the letters a placeholder character shows right now (a word cycle or a
+// Text Morph poses its own — textPlaceholders.js run.glyphs), or null for any other
+// character or a unit without letters of its own.
+export function placeholderGlyphs(ctx, ch, letterSpacing) {
+  if (!activeTextRun?.holds(ch) || !activeTextRun.glyphs) return null;
+  return activeTextRun.glyphs(ctx, ch, letterSpacing, measurePlainText);
+}
+
 export function measureTextWithLetterSpacing(ctx, text, letterSpacing) {
   if (!text) return 0;
   if (activeTextRun?.holds(text)) return activeTextRun.measure(ctx, text, letterSpacing, measurePlainText);
@@ -594,9 +602,22 @@ export function buildShapePath(item, type, w, h, cx, cy, pathPoints = null, line
 // Border and drop shadows are drawn HERE, following the actual shape outline —
 // the shader's box framing is disabled for shape items (see setupMesh). Shadow
 // `spread`/`inset` and borders on custom SVGs are not supported for shapes.
-// Shared scratch for rasterizing a shape's background (gradient / shader /
-// pattern / image) at bbox size, then anchoring it under the shape as a pattern.
+// Shared scratch for rasterizing a shape's background (shader / pattern / image) at
+// bbox size. It only grows, so two shapes of different sizes painted in turn (every
+// motion-blur sample) do not reallocate its backing store on every paint.
 export let shapeFillScratch = null;
+
+// A raster fill — a shader, pattern or image background rasterized into
+// shapeFillScratch — is drawn with drawImage, never handed out as a CanvasPattern.
+// A pattern made from a canvas holds a snapshot of it until the pattern object is
+// garbage collected, and these fills repaint the scratch on every paint: each paint
+// left a full-size snapshot in GPU memory (two world-sized shader shapes under
+// 8-sample motion blur: ~350 MB per frame, tens of GB before a collection). drawImage
+// copies the scratch and keeps nothing.
+const isRasterFill = (f) => !!(f && typeof f === 'object' && f.raster);
+function drawRasterFill(c, f) {
+  c.drawImage(f.raster, 0, 0, f.sw, f.sh, f.x, f.y, f.w, f.h);
+}
 
 export function resolveShapeFill(ctx, item, bbox, time, rasterScale = 1, fillOverride = null) {
   const bg = item.shapeBackground;
@@ -621,29 +642,23 @@ export function resolveShapeFill(ctx, item, bbox, time, rasterScale = 1, fillOve
   }
   const bw = Math.max(1, Math.round(bbox.w * rasterScale));
   const bh = Math.max(1, Math.round(bbox.h * rasterScale));
-  if (!shapeFillScratch) shapeFillScratch = document.createElement('canvas');
+  if (!shapeFillScratch) { shapeFillScratch = document.createElement('canvas'); shapeFillScratch.width = 1; shapeFillScratch.height = 1; }
   const sc = shapeFillScratch;
-  if (sc.width !== bw) sc.width = bw;
-  if (sc.height !== bh) sc.height = bh;
+  if (sc.width < bw) sc.width = bw;
+  if (sc.height < bh) sc.height = bh;
   const fctx = sc.getContext('2d');
+  fctx.setTransform(1, 0, 0, 1, 0, 0);
+  fctx.globalCompositeOperation = 'source-over';
   // Reuse a renderer for shapes that use identical shader code. Rendering is
   // synchronous, so sharing is safe and avoids consuming one WebGL context per
   // shape (browsers commonly cap the number of live contexts).
   const shaderKey = `shape-shader:${bg.shaderCode || bg.shaderId || 'default'}`;
   drawEditorBackground(fctx, bw, bh, bg, time, { shaderKey, maxDim: 1280 });
-  const pattern = ctx.createPattern(sc, 'no-repeat');
-  if (!pattern) return null;
-  // Anchor the rasterized fill to the shape's logical bounding box. Oversized
-  // shapes may use a lower-resolution backing canvas; scale the pattern back to
-  // logical composition pixels so the fill still covers the complete geometry.
-  try {
-    pattern.setTransform(
-      new DOMMatrix()
-        .translateSelf(bbox.x, bbox.y)
-        .scaleSelf(1 / rasterScale, 1 / rasterScale)
-    );
-  } catch { /* no setTransform */ }
-  return pattern;
+  scheduleStrokeRelease(); // the grow-only scratches go back to 1×1 when painting stops
+  // Anchored to the shape's logical bounding box: the scratch's bw×bh pixels cover
+  // it at the plate's raster scale (oversized shapes use a lower-resolution
+  // backing), so it is drawn back at logical composition size.
+  return { raster: sc, sw: bw, sh: bh, x: bbox.x, y: bbox.y, w: bw / rasterScale, h: bh / rasterScale };
 }
 
 // Dash pattern for the card BORDER, from `borderStyle`. `double` is handled by the
@@ -675,7 +690,7 @@ export function applyStrokeDash(ctx, dash, width, cap) {
 // plate shares them, which is safe because the paint is synchronous.
 // Returns { canvas, w, h }, `false` when there is nothing to draw, or null when
 // WebGL2 is unavailable (the caller falls back to the plain Canvas 2D stroke).
-export const strokeScratches = [null, null, null];
+export const strokeScratches = [null, null, null, null]; // 3: a raster-filled shape outline (drawShapeToCanvas)
 
 // Grow-only while painting; a static plate paints once and is cached, so after a
 // few idle seconds the scratches and the GPU targets go back to 1×1 (a 4K plate
@@ -689,6 +704,7 @@ export function scheduleStrokeRelease() {
   strokeReleaseTimer = setTimeout(() => {
     strokeReleaseTimer = null;
     for (const c of strokeScratches) if (c) { c.width = 1; c.height = 1; }
+    if (shapeFillScratch) { shapeFillScratch.width = 1; shapeFillScratch.height = 1; }
     releaseStrokeRenderer();
   }, STROKE_RELEASE_MS);
 }
@@ -771,8 +787,11 @@ export function paintEngineStroke(ctx, item, layout, time, override, fill) {
       blit(res, tctx);
       tctx.globalCompositeOperation = 'source-in';
       tctx.setTransform(layout.rasterScale, 0, 0, layout.rasterScale, 0, 0);
-      tctx.fillStyle = fillStyle;
-      tctx.fillRect(0, 0, layout.plateWidth, layout.plateHeight);
+      if (isRasterFill(fillStyle)) drawRasterFill(tctx, fillStyle);
+      else {
+        tctx.fillStyle = fillStyle;
+        tctx.fillRect(0, 0, layout.plateWidth, layout.plateHeight);
+      }
       tctx.setTransform(1, 0, 0, 1, 0, 0);
       tctx.globalCompositeOperation = 'source-over';
       if (card?.core) {
@@ -872,11 +891,44 @@ export function drawShapeToCanvas(ctx, item, layout, time = 0, fillOverride = nu
       layout.rasterScale,
       override
     ) || fill;
-    if (openStroke) {
+    if (openStroke && !((layout.line || LINE_DEFAULTS).width > 0)) return;
+    if (isRasterFill(fillStyle)) {
+      // A raster fill (shader / pattern / image): the outline is filled — or, for an
+      // open path, stroked — once into a plate-size layer and the raster painted into
+      // it; every base draw (the shadow passes and the crisp copy) then draws that
+      // layer, so a shadow is cast by exactly the filled outline, as before.
+      const cw = ctx.canvas.width;
+      const ch = ctx.canvas.height;
+      const layer = strokeScratch(3, cw, ch);
+      const lc = layer.getContext('2d');
+      lc.setTransform(ctx.getTransform());
+      if (openStroke) {
+        const line = layout.line || LINE_DEFAULTS;
+        lc.strokeStyle = '#000';
+        lc.lineWidth = line.width;
+        lc.lineJoin = line.join;
+        lc.lineCap = line.cap;
+        applyStrokeDash(lc, line.dash, line.width, line.cap);
+        lc.stroke(path);
+        lc.setLineDash([]);
+      } else {
+        lc.fillStyle = '#000';
+        lc.fill(path);
+      }
+      lc.globalCompositeOperation = 'source-in';
+      drawRasterFill(lc, fillStyle);
+      lc.globalCompositeOperation = 'source-over';
+      lc.setTransform(1, 0, 0, 1, 0, 0);
+      drawBase = (c) => {
+        c.save();
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        c.drawImage(layer, 0, 0, cw, ch, 0, 0, cw, ch);
+        c.restore();
+      };
+    } else if (openStroke) {
       // The stroke takes the shape's own fill — solid, gradient, shader or image —
       // as its paint, so a line can carry a gradient exactly like a filled shape.
       const line = layout.line || LINE_DEFAULTS;
-      if (!(line.width > 0)) return;
       drawBase = (c) => {
         c.save();
         c.strokeStyle = fillStyle;

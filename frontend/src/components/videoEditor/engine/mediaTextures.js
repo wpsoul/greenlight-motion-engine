@@ -13,6 +13,8 @@
 import * as THREE from 'three';
 import { isWebmUrl } from '../webmFrameCache';
 import { preparedVideoTexturePrimeState, shouldPrimePreparedVideoTexture } from '../previewMediaLifecycle';
+import { phoneMode } from './phoneMode';
+import { phonePictureTexture } from './phoneMedia';
 
 export function normalizeUrl(url) {
   try {
@@ -48,7 +50,11 @@ export function getImageTexture(engine, url, onLoad) {
   if (!url) return null;
   const key = normalizeUrl(url);
   const cached = engine.imageTextureCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    if (phoneMode()) cached.userData.used = engine.passFrame;
+    return cached;
+  }
+  if (phoneMode()) return phonePictureTexture(engine, key, onLoad);
   const loader = new THREE.TextureLoader();
   loader.setCrossOrigin('anonymous');
   let settle = null;

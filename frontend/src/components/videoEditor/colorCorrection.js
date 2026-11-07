@@ -1,6 +1,7 @@
 /*
  * Color Correction — a Lumetri-style per-layer fix: White Balance → Tone → Levels → Color →
- * Shadows/Midtones/Highlights wheels → HSL, in one per-pixel stage.
+ * Shadows/Midtones/Highlights wheels → HSL, in one per-pixel stage. Details + Sharpen
+ * (luminance detail read from the plate's neighbours) feed that stage its input.
  *
  * Ported verbatim from the verdicted lab `html/color-correction-lab.html` (2026-10-02); the
  * lab's probe `tests/layer-effect-labs/probe_color_correction.js` holds the maths gates.
@@ -18,7 +19,7 @@ export const CC_HSL_BANDS = [
   { name: 'Red', hue: 0 }, { name: 'Orange', hue: 30 }, { name: 'Yellow', hue: 60 }, { name: 'Green', hue: 120 },
   { name: 'Aqua', hue: 180 }, { name: 'Blue', hue: 240 }, { name: 'Purple', hue: 270 }, { name: 'Magenta', hue: 300 },
 ];
-export const CC_SECTIONS = ['wb', 'tone', 'levels', 'color', 'wheels', 'hsl'];
+export const CC_SECTIONS = ['wb', 'tone', 'levels', 'color', 'wheels', 'hsl', 'detail'];
 export const CC_LEVEL_CHANNELS = ['rgb', 'r', 'g', 'b'];
 
 export const ccLevelsDefault = () => ({ inB: 0, inW: 255, gamma: 1, outB: 0, outW: 255 });
@@ -32,6 +33,7 @@ export const ccDefault = () => ({
   color: { on: true, saturation: 100, vibrance: 0 },
   wheels: { on: true, shadows: { x: 0, y: 0, l: 0 }, midtones: { x: 0, y: 0, l: 0 }, highlights: { x: 0, y: 0, l: 0 } },
   hsl: { on: true, hue: zeros8(), sat: zeros8(), lum: zeros8() },
+  detail: { on: true, details: 0, sharpen: 0 },
 });
 export const ccSectionDefault = (sec) => ccDefault()[sec];
 
@@ -46,7 +48,7 @@ export function sanitizeColorCorrection(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const d = ccDefault();
   const s = (o) => (o && typeof o === 'object' && !Array.isArray(o) ? o : {});
-  const wb = s(raw.wb), tone = s(raw.tone), lv = s(raw.levels), col = s(raw.color), wh = s(raw.wheels), hsl = s(raw.hsl);
+  const wb = s(raw.wb), tone = s(raw.tone), lv = s(raw.levels), col = s(raw.color), wh = s(raw.wheels), hsl = s(raw.hsl), dt = s(raw.detail);
   const level = (o) => {
     o = s(o);
     const inB = Math.round(num(o.inB, 0, 0, 253));
@@ -77,6 +79,7 @@ export function sanitizeColorCorrection(raw) {
     color: { on: bool(col.on, true), saturation: num(col.saturation, 100, 0, 200), vibrance: num(col.vibrance, 0, -100, 100) },
     wheels: { on: bool(wh.on, true), shadows: wheel(wh.shadows), midtones: wheel(wh.midtones), highlights: wheel(wh.highlights) },
     hsl: { on: bool(hsl.on, true), hue: arr8(hsl.hue), sat: arr8(hsl.sat), lum: arr8(hsl.lum) },
+    detail: { on: bool(dt.on, true), details: num(dt.details, 0, -100, 100), sharpen: num(dt.sharpen, 0, 0, 100) },
   };
 }
 
@@ -129,6 +132,8 @@ export const CC_KF_FIELDS = [
   ]),
   ...Object.entries(HSL_PROP_NAMES).flatMap(([prop, name]) => CC_HSL_BANDS.map((band, i) => (
     { path: `hsl.${prop}.${i}`, label: `HSL ${band.name} · ${name}`, ...pm100 }))),
+  { path: 'detail.details', label: 'Details', ...pm100 },
+  { path: 'detail.sharpen', label: 'Sharpen', min: 0, max: 100, step: 1 },
 ];
 const CC_KF_BY_PATH = new Map(CC_KF_FIELDS.map((f) => [f.path, f]));
 export const CC_KF_GROUP = 'Color Correction';
@@ -142,7 +147,8 @@ export const ccKfFieldMeta = (path) => CC_KF_BY_PATH.get(path) || null;
 export function ccGetPath(cc, path) {
   let o = cc || ccDefault();
   for (const part of path.split('.')) o = o == null ? undefined : o[part];
-  return o;
+  // A section this object predates reads as its default.
+  return o === undefined && cc ? ccGetPath(null, path) : o;
 }
 /** Immutable set along `path` (copies every object / array on the way down). */
 export function ccSetPath(cc, path, value) {
@@ -280,6 +286,8 @@ export function ccUniformValues(cc) {
   const L = cc?.levels || ccDefault().levels;
   const W = cc?.wheels || ccDefault().wheels;
   const H = cc?.hsl || ccDefault().hsl;
+  const D = cc?.detail || ccDefault().detail;
+  const detOn = live && ccSectionLive(cc, 'detail');
   return {
     live,
     wb: wbOn ? ccWbGains(cc.wb.temp, cc.wb.tint) : [1, 1, 1],
@@ -300,6 +308,8 @@ export function ccUniformValues(cc) {
     whS: ccWheelOffset(W.shadows), whM: ccWheelOffset(W.midtones), whH: ccWheelOffset(W.highlights),
     hslOn: live && ccSectionLive(cc, 'hsl'),
     hslH: H.hue.map((v) => v / 100), hslS: H.sat.map((v) => v / 100), hslL: H.lum.map((v) => v / 100),
+    // Details (-1..1) and Sharpen (0..1); both 0 = the shader reads no neighbours.
+    det: detOn ? [(D.details || 0) / 100, (D.sharpen || 0) / 100] : [0, 0],
     mix: live ? (cc.mix ?? 100) / 100 : 0,
   };
 }
@@ -308,6 +318,8 @@ export function ccUniformValues(cc) {
    CPU grade (JS twin, display-referred 0..1 rgb) — used for analysis, never for rendering
    ══════════════════════════════════════════════════════════════════════════ */
 // stage 'pre' = the input to Levels (after WB, exposure, tone); 'out' = the whole grade.
+// Details / Sharpen read neighbours, so this twin (and every analysis built on it: Auto,
+// the pickers, the Levels histogram) sees the picture without them — as the pickers' probe does.
 export function ccGradePixel(rgb, cc, stage = 'out', U = ccUniformValues(cc)) {
   if (!U.live) return rgb.slice();
   let c = rgb.map((v, i) => l2s(s2l(v) * U.wb[i] * U.expo));

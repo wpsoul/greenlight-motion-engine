@@ -5,7 +5,9 @@
 import { flattenClips } from "./sequenceUtils";
 import { isVectorMediaUrl, preloadVectorMedia } from "./vectorMedia";
 import { preloadImagePlate } from "./imagePlate";
-import { preloadVideoPlate } from "./videoPlate";
+import { phoneMode } from "./engine/phoneMode";
+import { clipsBetween } from "./engine/phoneMedia";
+import { preloadVideoPlate, videoPlateUrl } from "./videoPlate";
 import { preloadAnimatedImage } from "./animatedImage";
 import { getTimelineLayout } from "./speedUtils";
 import { RIG_MEDIA_TYPE } from "./rig3d";
@@ -131,10 +133,15 @@ export async function waitForMediaReady({ channels, clips, getPlayer, range = nu
   await nextPaint();
   await nextPaint();
   const seen = new Set();
+  const seenPlates = new Set();
   const warmups = [];
   // Include media nested inside sequence (compound) clips, recursively.
   let hasModel = false;
-  for (const clip of flattenClips(clips)) {
+  // A phone: only the media of the time asked about, one file at a time (every file at once is what closed the page).
+  const phone = phoneMode();
+  const inTurn = [];
+  const asked = phone && range ? clipsBetween(channels, clips, range.start, range.end) : flattenClips(clips);
+  for (const clip of asked) {
     if (!clip) continue;
     // A model layer's asset is parsed by model3dLayer, not decoded as media — and a
     // preset's url is a sentinel, not a fetchable file. Warm it through that module
@@ -148,10 +155,18 @@ export async function waitForMediaReady({ channels, clips, getPlayer, range = nu
       warmups.push(Promise.race([loadRecordingCursorTrack(clip.recordingTrackUrl), new Promise((resolve) => setTimeout(resolve, 15000))]));
     }
     const url = clip.mediaType === "video" ? (clip.url || clip.proxyUrl) : (clip.proxyUrl || clip.url);
+    // A render-sized copy decodes, but the plate's size is the original's (videoPlate.js): its header too.
+    const plateUrl = clip.mediaType === "video" ? videoPlateUrl(clip) : "";
+    if (plateUrl && plateUrl !== url && !seenPlates.has(plateUrl)) {
+      seenPlates.add(plateUrl);
+      warmups.push(preloadVideoPlate(plateUrl, 15000));
+    }
     if (!url || seen.has(url)) continue;
     seen.add(url);
-    warmups.push(warmMediaUrl(url, clip.mediaType));
+    if (phone) inTurn.push([url, clip.mediaType]);
+    else warmups.push(warmMediaUrl(url, clip.mediaType));
   }
+  if (inTurn.length) warmups.push(inTurn.reduce((last, [url, type]) => last.then(() => warmMediaUrl(url, type)), Promise.resolve()));
   // The text layers' web fonts. The Player requests them from an effect AFTER mount,
   // and document.fonts.ready below only covers loads that already started — so a
   // still / the first export frames came out in the fallback face whenever the
@@ -232,6 +247,7 @@ export async function waitForMediaReady({ channels, clips, getPlayer, range = nu
   if (hasModel) {
     try {
       const { modelResourcesSettled, modelResourcesPending } = await import("./model3dLayer");
+      const { worldSettled } = await import("./world3dLayer");
       const primeAt = model3dPrimeTimes(channels, clips, Math.max(0, Number(range?.start) || 0),
         Number(range?.end) > 0 ? Number(range.end) : Infinity);
       for (let round = 0; round < 6; round += 1) {
@@ -240,6 +256,7 @@ export async function waitForMediaReady({ channels, clips, getPlayer, range = nu
         await new Promise((resolve) => setTimeout(resolve, 150));
         const hadPending = modelResourcesPending();
         await modelResourcesSettled();
+        await worldSettled();
         if (!hadPending && round > 0) break;
       }
       await getPlayer()?.captureFrameAtTime?.(primeAt[0]);

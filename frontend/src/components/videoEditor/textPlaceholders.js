@@ -3,6 +3,7 @@
 //   COUNTER   {{{COUNTER:0-100}}}           a number rolling between two values
 //   TIMER     {{{TIMER:05:00-00:00}}}       a clock counting down or up
 //   CYCLE     {{{CYCLE:fast|simple|yours}}} words taking turns, each held, then rolled
+//             (style=morph: the letters they share travel — textMorph.js)
 //   SCRAMBLE  {{{SCRAMBLE:Access granted}}} random characters decoding into the text
 //   VAR       {{{VAR:product}}}             a project variable (set once, used anywhere)
 //   MARKER    {{{MARKER}}}                  the name of the last timeline marker passed
@@ -22,6 +23,10 @@
 // A token that doesn't parse — or a VAR with no value — stays visible as typed.
 // Everything is a pure function of (text, settings, time): export renders frames out
 // of order, so nothing may carry from one frame to the next.
+//
+// LINE STATES (`item.textLineStates`, parseLineStates): the layer's lines ARE the
+// states of one cycle — "Connect\nGenerate\nTalk\nPost" plays as
+// {{{CYCLE:Connect|Generate|Talk|Post}}} would, with the field's own options.
 import {
   COUNTER_DEFAULTS,
   createNumberUnit,
@@ -31,6 +36,7 @@ import {
   parseTimerRange,
   resolveCounterSettings,
 } from './textCounter.js';
+import { MORPH_DEFAULTS, layoutState, morphAt, morphPose, planMorph, restingGlyphs, stateOf } from './textMorph.js';
 
 const SENTINEL_BASE = 0xF0000;
 // High surrogate shared by every sentinel (U+F0000..U+F03FF): the cheap "might this
@@ -52,7 +58,11 @@ export const PLACEHOLDER_CATALOG = Object.freeze([
   },
   {
     id: 'CYCLE', label: 'Word cycle', example: '{{{CYCLE:fast|simple|yours}}}',
-    description: 'Words separated by | take turns in the sentence: each one holds, then rolls or fades to the next.',
+    description: 'Words or phrases separated by | take turns in the sentence: each one holds, then rolls, fades or morphs to the next (Morph: the letters they share travel to their new place). Pace: add hold=2 (seconds each word stays) and duration=0.6 (seconds the change takes), or set Hold and Duration in its card.',
+  },
+  {
+    id: 'MORPH', label: 'Text Morph', example: '{{{CYCLE:fast|simple|yours; style=morph; hold=1.2; duration=0.8}}}',
+    description: 'A word cycle whose letters travel: the letters two words share slide to their new place, the others rise out and in. Pace: hold = seconds each word stays, duration = seconds the morph takes (Hold and Travel in its card). Whole lines instead of words: write each on its own line and turn on Each line is a state.',
   },
   {
     id: 'SCRAMBLE', label: 'Scramble', example: '{{{SCRAMBLE:Access granted}}}',
@@ -87,7 +97,7 @@ const num = (v, fallback, lo, hi) => {
 
 // ── Settings ──
 
-export const CYCLE_STYLES = ['roll', 'fade', 'blur'];
+export const CYCLE_STYLES = ['roll', 'fade', 'blur', 'morph'];
 export const CYCLE_DEFAULTS = Object.freeze({
   textCycleStyle: 'roll',
   textCycleDelay: 0,
@@ -175,7 +185,7 @@ export const PLACEHOLDER_OPTIONS = Object.freeze({
     kf: { kf: true },
   },
   cycle: {
-    style: { values: ['roll', 'fade', 'blur'] },
+    style: { values: CYCLE_STYLES },
     start: { num: [0, 3600] },
     hold: { num: [0, 60] },
     duration: { num: [0.05, 10] },
@@ -183,6 +193,14 @@ export const PLACEHOLDER_OPTIONS = Object.freeze({
     width: { values: ['fit', 'fixed'] },
     direction: { values: ['up', 'down'] },
     loop: { values: ['on', 'off'] },
+    // Morph only (textMorph.js): how letters pair up, the letter stagger (s), the
+    // travel's arc (0–1), how the unpaired letters leave / arrive, the rank order.
+    match: { values: ['order', 'any'] },
+    case: { values: ['ignore', 'keep'] },
+    stagger: { num: [0, 2] },
+    arc: { num: [0, 1] },
+    leave: { values: ['mask', 'fade', 'blur', 'scale'] },
+    order: { values: ['left', 'center', 'centre', 'all'] },
   },
   scramble: {
     start: { num: [0, 3600] },
@@ -371,18 +389,29 @@ export function resolveUnitSettings(unit, item) {
     };
   }
   if (unit.type === 'cycle') {
-    const base = resolveCycleSettings(item);
+    // Line states have no legacy layer fields: their base is the plain default.
+    const base = resolveCycleSettings(unit.lineStates ? {} : item);
+    const style = o.style ?? base.style;
+    // A morph travels longer and on its own curve unless told otherwise (the lab's
+    // tuning); the morph-only fields read their defaults on every style.
+    const morph = style === 'morph';
     return {
       ...base,
       stagger: 0,
-      style: o.style ?? base.style,
+      style,
       delay: o.start ?? base.delay,
       hold: o.hold ?? base.hold,
-      duration: o.duration ?? base.duration,
-      easing: o.easing ? easingKey(o.easing) : base.easing,
+      duration: o.duration ?? (morph ? MORPH_DEFAULTS.duration : base.duration),
+      easing: o.easing ? easingKey(o.easing) : (morph ? MORPH_DEFAULTS.easing : base.easing),
       fit: o.width ? o.width === 'fit' : base.fit,
       direction: o.direction ? (o.direction === 'down' ? -1 : 1) : base.direction,
       loop: o.loop ? o.loop === 'on' : base.loop,
+      match: o.match ?? MORPH_DEFAULTS.match,
+      ignoreCase: o.case ? o.case === 'ignore' : MORPH_DEFAULTS.ignoreCase,
+      letterStagger: o.stagger ?? MORPH_DEFAULTS.letterStagger,
+      arc: o.arc ?? MORPH_DEFAULTS.arc,
+      leave: o.leave ?? MORPH_DEFAULTS.leave,
+      order: o.order === 'centre' ? 'center' : (o.order ?? MORPH_DEFAULTS.order),
     };
   }
   if (unit.type === 'scramble') {
@@ -433,6 +462,7 @@ export function placeholderSummary(unit) {
 
 export const PLACEHOLDER_LABELS = Object.freeze({
   COUNTER: 'Counter', TIMER: 'Timer', CYCLE: 'Word cycle', SCRAMBLE: 'Scramble', TIMECODE: 'Timecode', FRAME: 'Frame number',
+  LINES: 'Line states',
 });
 
 /** The builder rows for the text's keyframed placeholders (VEKeyframeBuilder extraKfProps). */
@@ -535,6 +565,84 @@ export function parsePlaceholderText(text) {
   return units.length ? { text: out, units } : null;
 }
 
+// ── Line states ──
+//
+// `item.textLineStates` makes every line of the text one state of a cycle: the layer
+// shows its first line, then turns into the next one, and so on — the effect follows
+// whatever each next line says, no token needed. The field holds the CYCLE token's
+// options, JSON-typed: { style: 'morph' | 'roll' | 'fade' | 'blur', start, hold,
+// duration, easing ('EXPO_IN_OUT' — a TransitionEasing key), loop (boolean), width,
+// direction, match, case, stagger, arc, leave, order }. Only `style` is required; a
+// left-out option plays its default. Absent / null = off (the lines are just lines).
+
+export const LINE_STATE_STYLES = Object.freeze(['morph', 'roll', 'fade', 'blur']);
+const LINE_STATE_KEYS = ['start', 'hold', 'duration', 'easing', 'width', 'direction', 'match', 'case', 'stagger', 'arc', 'leave', 'order'];
+
+/**
+ * The stored form of `textLineStates`, or null (off). `isEasing(KEY)` may narrow the
+ * easing to real curves (editorState passes TransitionEasing's keys).
+ */
+export function sanitizeLineStates(raw, { isEasing = null } = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const style = String(raw.style ?? '').trim().toLowerCase();
+  if (!LINE_STATE_STYLES.includes(style)) return null;
+  const schema = PLACEHOLDER_OPTIONS.cycle;
+  const out = { style };
+  for (const key of LINE_STATE_KEYS) {
+    if (raw[key] === undefined || raw[key] === null || raw[key] === '') continue;
+    const clean = cleanOption(schema[key], raw[key]);
+    if (clean === null) continue;
+    if (key === 'easing') {
+      const k = clean.toUpperCase();
+      if (!isEasing || isEasing(k)) out.easing = k;
+    } else {
+      out[key] = key === 'order' && clean === 'centre' ? 'center' : clean;
+    }
+  }
+  if (typeof raw.loop === 'boolean') out.loop = raw.loop;
+  else if (raw.loop === 'on' || raw.loop === 'off') out.loop = raw.loop === 'on';
+  return out;
+}
+
+/** The token-style options of line states (what resolveUnitSettings reads). */
+export function lineStateOptions(cfg) {
+  const options = {};
+  for (const [k, v] of Object.entries(cfg || {})) {
+    if (k === 'loop') options.loop = v ? 'on' : 'off';
+    else if (k === 'easing') options.easing = String(v).toLowerCase();
+    else options[k] = v;
+  }
+  return options;
+}
+
+/** The lines a text's line states take turns between (blank lines skipped). */
+export function lineStatesOf(text) {
+  if (typeof text !== 'string') return [];
+  // An animated token inside a line shows its resting value: states are plain text.
+  return text.replace(/\r/g, '').split('\n').map((l) => resolvePlaceholderText(l).trim()).filter(Boolean);
+}
+
+/**
+ * Line states → the same parse result as parsePlaceholderText: the text becomes ONE
+ * cycle unit (a single sentinel), so wrapping, alignment, Text Animators, the
+ * randomizer and text on path see one glyph. Null when off or fewer than two lines.
+ */
+export function parseLineStates(text, cfg) {
+  const s = sanitizeLineStates(cfg);
+  if (!s) return null;
+  const lines = lineStatesOf(text);
+  if (lines.length < 2) return null;
+  return {
+    text: String.fromCodePoint(SENTINEL_BASE),
+    units: [{ type: 'cycle', words: lines, tokenType: 'LINES', main: lines.join('|'), options: lineStateOptions(s), lineStates: true }],
+  };
+}
+
+/** The line-states unit for the panel (null when the text has fewer than two lines). */
+export function lineStatesUnit(text, cfg) {
+  return parseLineStates(text, cfg || { style: 'morph' })?.units[0] || null;
+}
+
 export function sentinelIndex(ch) {
   const cp = ch.codePointAt(0);
   return cp >= SENTINEL_BASE && cp < SENTINEL_BASE + MAX_UNITS ? cp - SENTINEL_BASE : -1;
@@ -629,7 +737,127 @@ function cellsWidth(M, str, ls) {
   return w + ls * Math.max(0, chars.length - 1);
 }
 
+// A state laid out with the run's own measure (kerning, letter spacing), cached per
+// font + spacing + text. The key carries the whole string's measured width, so a
+// webfont that lands after a first fallback measure gets a fresh layout.
+const LAYOUTS = new Map();
+function layoutOf(ctx, M, ls, state) {
+  const width = state.str ? M.measure(state.str, ls) : 0;
+  const key = `${ctx.font}\u0001${ls}\u0001${width}\u0001${state.str}`;
+  let L = LAYOUTS.get(key);
+  if (!L) {
+    L = layoutState(state, (str) => M.measure(str, ls), M.charW);
+    if (LAYOUTS.size > 512) LAYOUTS.clear();
+    LAYOUTS.set(key, L);
+  }
+  return L;
+}
+
+// The schedule is strings + timing only (textMorph.planMorph), the same every frame.
+const PLANS = new Map();
+function morphPlanOf(words, s) {
+  const key = JSON.stringify([words, s.hold, s.duration, s.loop, s.match, s.ignoreCase, s.letterStagger, s.order]);
+  let plan = PLANS.get(key);
+  if (!plan) {
+    plan = planMorph(words, s);
+    if (PLANS.size > 128) PLANS.clear();
+    PLANS.set(key, plan);
+  }
+  return plan;
+}
+
+const ALIGN = { left: 0, center: 0.5, right: 1 };
+
+// The line mask a roll / masked morph clips to: the line's ink box with a 10 % pad.
+function maskBand(M) {
+  const h = M.lineBottom - M.lineTop;
+  const pad = h * 0.1;
+  return { top: M.lineTop - pad, h: h + pad * 2 };
+}
+
+function blurFilter(ctx, b) {
+  const prev = ctx.filter;
+  return prev && prev !== 'none' ? `${prev} blur(${b.toFixed(2)}px)` : `blur(${b.toFixed(2)}px)`;
+}
+
+// style=morph (textMorph.js): the shared letters travel, the others leave / arrive.
+function createMorphUnit(unit, s, clock, transform) {
+  const words = unit.words.map(transform);
+  const ease = clock.easeFor ? clock.easeFor(s.easing) : (p) => p;
+  const ms = { ...s, easing: ease };
+  const plan = morphPlanOf(words, s);
+  const at = morphAt(plan, clock.tSec - s.delay);
+  // The point that stays put while a Fit unit changes width is the line's alignment
+  // anchor, so letters travel exactly between where each text sits on its own.
+  const align = ALIGN[clock.align] ?? 0.5;
+  const poses = new Map();
+  const poseFor = (ctx, ls, M) => {
+    const key = `${ctx.font}\u0001${ls}`;
+    let P = poses.get(key);
+    if (!P) {
+      const lay = (i) => layoutOf(ctx, M, ls, plan.states[i]);
+      const box = s.fit ? null : Math.max(...plan.states.map((_, i) => lay(i).width));
+      P = morphPose(plan, at, ms, lay, { align, box, em: M.em, travel: maskBand(M).h });
+      P.lay = lay;
+      poses.set(key, P);
+    }
+    return P;
+  };
+  return {
+    // Constant through every hold, so the plate is only repainted while letters move.
+    key: at.held != null ? `${at.held}` : `${at.step.k}>${at.tau.toFixed(4)}`,
+    width: (ctx, ls, M) => poseFor(ctx, ls, M).width,
+    draw(ctx, x, y, ls, paint, M) {
+      const P = poseFor(ctx, ls, M);
+      if (P.held != null) {
+        // At rest: the whole string in one draw, exactly like typed text.
+        paint.text(words[P.held], x + P.heldX, y);
+        return;
+      }
+      // Scale turns a glyph around its ink centre (a digit's: cap height's middle).
+      const mid = M.inkMid * M.em;
+      const one = (g) => drawWithAlpha(ctx, g.alpha, () => {
+        const gx = x + g.x;
+        const gy = y + g.y;
+        const scaled = Math.abs(g.scale - 1) > 1e-3;
+        if (!scaled && g.blur < 0.3) { paint.glyph(g.ch, gx, gy); return; }
+        ctx.save();
+        if (g.blur >= 0.3) ctx.filter = blurFilter(ctx, g.blur);
+        if (scaled) {
+          ctx.translate(gx + g.w / 2, gy + mid);
+          ctx.scale(g.scale, g.scale);
+          paint.glyph(g.ch, -g.w / 2, -mid);
+        } else {
+          paint.glyph(g.ch, gx, gy);
+        }
+        ctx.restore();
+      });
+      let masked = false;
+      for (const g of P.glyphs) { if (g.clip) masked = true; else one(g); }
+      if (!masked) return;
+      // Leaving / arriving letters rise out of and into the line's own box; the
+      // travelling ones stay unclipped, so an arc can leave the line.
+      const band = maskBand(M);
+      const reach = P.width + M.em * 4;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x - reach, y + band.top, P.width + reach * 2, band.h);
+      ctx.clip();
+      for (const g of P.glyphs) if (g.clip) one(g);
+      ctx.restore();
+    },
+    // 3D text films letters, not a painted plate: every glyph with its pose. No clip
+    // or blur there, so a masked or blurred letter fades by how far it has gone.
+    glyphs(ctx, ls, M) {
+      const P = poseFor(ctx, ls, M);
+      if (P.held != null) return restingGlyphs(plan.states[P.held], P.lay(P.held), P.heldX);
+      return P.glyphs.map((g) => (g.clip || g.blur > 0 ? { ...g, alpha: g.alpha * (1 - g.q), clip: false, blur: 0 } : g));
+    },
+  };
+}
+
 function createCycleUnit(unit, s, clock, index, transform) {
+  if (s.style === 'morph') return createMorphUnit(unit, s, clock, transform);
   const words = unit.words.map(transform);
   const n = words.length;
   const ease = clock.easeFor ? clock.easeFor(s.easing) : (p) => p;
@@ -689,11 +917,26 @@ function createCycleUnit(unit, s, clock, index, transform) {
           const b = blurOf(a);
           if (b < 0.3) { paint.text(w, x, y); return; }
           const prevFilter = ctx.filter;
-          ctx.filter = prevFilter && prevFilter !== 'none' ? `${prevFilter} blur(${b.toFixed(2)}px)` : `blur(${b.toFixed(2)}px)`;
+          ctx.filter = blurFilter(ctx, b);
           paint.text(w, x, y);
           ctx.filter = prevFilter;
         });
       }
+    },
+    // 3D text (see createMorphUnit): the words' letters, crossfading; a roll slides
+    // them a line up / down while they fade, since 3D has no line mask.
+    glyphs(ctx, ls, M) {
+      const letters = (w, a, dy) => {
+        const st = stateOf(w);
+        return restingGlyphs(st, layoutOf(ctx, M, ls, st)).map((g) => ({ ...g, y: dy, alpha: a }));
+      };
+      if (!moving) return letters(words[shown], 1, 0);
+      const stepPx = maskBand(M).h;
+      const roll = s.style === 'roll';
+      return [
+        ...letters(words[i], 1 - q, roll ? -q * stepPx * s.direction : 0),
+        ...letters(words[j], q, roll ? (1 - q) * stepPx * s.direction : 0),
+      ].filter((g) => g.alpha > 0.002);
     },
   };
 }
@@ -794,7 +1037,9 @@ function inkBox(ctx, sample) {
  *                since the layer started, rootSec: the timeline time, fps,
  *                track(key) → { now, prev } — a keyframe track's value now and one
  *                frame earlier (0–100), or null when the item has no such track,
- *                easeFor(key) → (p) → eased, transform(str) → the layer's letter case }
+ *                easeFor(key) → (p) → eased, transform(str) → the layer's letter case,
+ *                align: the line's alignment 'left' | 'center' | 'right' — a morph's
+ *                letters travel around its anchor }
  */
 export function buildPlaceholderRun(parsed, item, clock) {
   if (!parsed) return null;
@@ -877,6 +1122,14 @@ export function buildPlaceholderRun(parsed, item, clock) {
         (idx) => { total += units[idx].width(ctx, ls, M); segs += 1; },
       );
       return total + ls * Math.max(0, segs - 1);
+    },
+    // 3D text: the glyphs a unit character shows right now, relative to its left edge
+    // and the draw y — [{ ch, x, y, w, alpha, scale }] — or null (the unit has none).
+    glyphs(ctx, ch, ls, measurePlain) {
+      const idx = sentinelIndex(ch);
+      const u = idx >= 0 ? units[idx] : null;
+      if (!u?.glyphs) return null;
+      return u.glyphs(ctx, ls, metricsFor(ctx, measurePlain));
     },
     // drawPlain(str, x, y) paints a plain run with letter spacing; glyph(ch, x, y)
     // paints one glyph — both in the caller's current style (fill or stroke).

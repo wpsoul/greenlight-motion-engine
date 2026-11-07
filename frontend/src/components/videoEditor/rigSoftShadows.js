@@ -27,6 +27,7 @@
  */
 
 import * as THREE from 'three';
+import { encodePcssRadius } from './pcssRadius.js';
 
 const PCSS_DIR = `#else
 
@@ -242,12 +243,7 @@ export const PCSS_INSTALLED = installPcss();
 /** The shadow type the WebGL renderer should run for soft rig shadows. */
 export const SOFT_SHADOW_MAP_TYPE = PCSS_INSTALLED ? THREE.BasicShadowMap : THREE.PCFShadowMap;
 
-/** Pack the per-light PCSS parameters into `shadow.radius` (see header). */
-export function encodePcssRadius(capTexels, kTexelsPerDepth) {
-  const capq = Math.max(0, Math.min(1023, Math.round((Number.isFinite(capTexels) ? capTexels : 4) * 4)));
-  const kq = Math.max(0, Math.min(8191, Math.round(Math.log2(1 + Math.max(0, Number.isFinite(kTexelsPerDepth) ? kTexelsPerDepth : 0)) * 256)));
-  return kq * 1024 + capq;
-}
+export { encodePcssRadius };
 
 /**
  * A light's apparent size from the rig's `shadowSoftness` (0..10, default 1):

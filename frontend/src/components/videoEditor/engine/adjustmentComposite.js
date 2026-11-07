@@ -14,7 +14,6 @@ import { normalizeBlendMode } from '../blendModes';
 import { layerPlane, layerQuad, layerSortDepth } from '../compositeSortDepth';
 import { getItemKeyframeValues, getItemPeakKeyframeScale } from '../gsapTransitions';
 import { isLayerMaskEnabled } from '../layerMask';
-import { buildMockupDevice, layoutMockupFrame, mockupSeatTransform } from '../mockupFrame';
 import { depthFromViewDistance, modelDofParams } from '../modelDof';
 import { getCameraCoCRadius, getCameraDofSettings } from '../projectCamera';
 import { isCameraBaked3dPlate } from '../rig3d';
@@ -25,17 +24,20 @@ import { cameraForChannel } from './camera';
 import { _dofView, _dofWorld, getChannelsBottomToTop, isUprightIsolatePlate, orderChannelsForComposite, resumeChannelBlend, suspendChannelBlend } from './compositeHelpers';
 import { applyAdjustmentMask as applyAdjustmentMaskInEngine, applyShaderBlend as applyShaderBlendInEngine, ensurePictureRefPlate as ensurePictureRefPlateInEngine } from './compositeOps';
 import { runEffectChain as runEffectChainInEngine, runLayerOverlayEffects as runLayerOverlayEffectsInEngine } from './effectChain';
-import { resolveMockupStageParams as resolveMockupStageParamsInEngine } from './gridMockup';
+import { seatMockupLayer as seatMockupLayerInEngine } from './gridMockup';
 import { maskSilhouetteFraming } from './layerHelpers';
 import { applyChromaKey as applyChromaKeyInEngine, applySilhouetteFraming as applySilhouetteFramingInEngine, plateToCameraAxis as plateToCameraAxisInEngine, renderLayerAutoFill as renderLayerAutoFillInEngine, renderLayerDepthScan as renderLayerDepthScanInEngine, renderLayerFresnelRim as renderLayerFresnelRimInEngine } from './layerPasses';
 import { applyBackdropBlur as applyBackdropBlurInEngine, applyGlass as applyGlassInEngine, applyLayerMask as applyLayerMaskInEngine, renderLayerRig as renderLayerRigInEngine, runLayerGeometryStages as runLayerGeometryStagesInEngine } from './layerStages';
-import { computeLayerBox, layerPlaneBox } from './layerWarps';
+import { computeLayerBox } from './layerWarps';
 import { applyMeshTransform, resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
 import { measureMotionBlur as measureMotionBlurInEngine, renderLayerAccumBlur as renderLayerAccumBlurInEngine, renderLayerGlow as renderLayerGlowInEngine, renderLayerMotionBlur as renderLayerMotionBlurInEngine, renderLayerTrail as renderLayerTrailInEngine } from './motionPasses';
 import { ensureMipPassTarget as ensureMipPassTargetInEngine, ensurePassTarget as ensurePassTargetInEngine } from './passPool';
 import { ensureAdjustmentTargets as ensureAdjustmentTargetsInEngine, ensureDepthProbeTarget as ensureDepthProbeTargetInEngine } from './renderTargets';
-import { _platePos, seatLayerMesh, unseatLayerMesh, resolveActiveIndex } from './compositeHelpers';
+import { _platePos, unseatLayerMesh, resolveActiveIndex } from './compositeHelpers';
 import { isPosterizeTimeEnabled, posterizedLayerTime } from '../posterizeTime';
+
+// What a floor's shadow may fall on, or has no effect on: a Scene and its models are in the world, where the floor already gives way to them.
+const UNDER_THE_FLOOR = new Set(['image', 'video', 'rig', 'model3d', 'camera']);
 
 export function setLayerDepthMode(engine, on) {
   if (engine.layerDepthMode === on) return;
@@ -425,6 +427,8 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   };
   const cocForChannel = (channel, cs, chCam) => {
     if (!(dof.enabled && dof.aperture > 0 && dof.blurLevel > 0) || channel.cameraLocked) return 0;
+    // A traced Scene already went through a real lens.
+    if (engine.worldTracing && channel.kind === 'rig') return 0;
     const perPixel = modelDofFor(channel, 1);
     if (perPixel) return perPixel.peakPx;
     const modelDist = engine.modelDepth.get(channel.id);
@@ -536,21 +540,8 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     let seatSaved = null;
     if (mockupFrame && !accumRan) {
       seatMesh = cs.currMesh?.visible ? cs.currMesh : (cs.prevMesh?.visible ? cs.prevMesh : null);
-      if (seatMesh) {
-        const mfParams = resolveMockupStageParamsInEngine(engine, mockupFrame, t);
-        const mfDev = buildMockupDevice(mfParams);
-        const mfBox = computeLayerBox(seatMesh, chCam, rt.c.width, rt.c.height);
-        const mfPlane = mfBox ? layerPlaneBox(seatMesh, chCam, rt.c.height) : null;
-        if (mfDev && mfDev.w > 0 && mfDev.h > 0 && mfPlane?.sizePlane) {
-          const [bw, bh] = mfPlane.sizePlane;
-          const mfLayout = layoutMockupFrame(mfDev, Math.max(1, bw), Math.max(1, bh), mfParams);
-          if (mfLayout.scale > 1e-6) {
-            seatSaved = seatLayerMesh(seatMesh,
-              mockupSeatTransform(mfDev, mfParams, mfLayout, Math.max(1, bw), Math.max(1, bh)), mfPlane.pxPerWorld);
-            mockupSeated = !!seatSaved;
-          }
-        }
-      }
+      seatSaved = seatMockupLayerInEngine(engine, mockupFrame, seatMesh, chCam, rt.c.width, rt.c.height, t);
+      mockupSeated = !!seatSaved;
     }
     if (!accumRan) {
       renderer.setRenderTarget(rt.c);
@@ -890,8 +881,23 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
       && !engine.backdropLayers.has(ch.id) && !engine.glassLayers.has(ch.id));
   deferredCards.length = 0;
 
+  // A catcher's shadow, laid over what is in the stack so far, where it can only ever darken. It has no surface to stand at, and given a
+  // depth it becomes a wall: the footage behind it is rejected, and only the black stays. So it goes by kind: footage and stills are what
+  // the floor lies on, and the first thing that stands in front of the floor, text or a shape, comes after it.
+  let shadowLaid = !engine.worldShadowTexture || !overBlitMaterial;
+  const layShadow = () => {
+    shadowLaid = true;
+    overBlitMaterial.uniforms.uTexture.value = engine.worldShadowTexture;
+    renderer.setRenderTarget(read);
+    renderer.render(overBlitScene, orthoCamera);
+  };
+
   // Depth order, not channel order — see orderChannelsForComposite.
   for (const channel of compositeOrder) {
+    if (!shadowLaid) {
+      const type = env.clipsMap.get(engine.layerItems.get(channel.id)?.clipId)?.mediaType;
+      if (type && !UNDER_THE_FLOOR.has(type)) layShadow();
+    }
     if (deferLead && !leadPlate && !lockedLead.has(channel)) {
       leadPlate = ensurePassTargetInEngine(engine, 'lockedBackdrop', read.width, read.height, false);
       if (leadPlate) {
@@ -1229,6 +1235,8 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   // the project background, which the per-channel loop above never draws (it
   // renders channel groups, not `scene`). Skipped for alpha exports, where the
   // transparency IS the deliverable and the PNG-frame route handles it correctly.
+  if (!shadowLaid) layShadow();
+
   const flattenScene = engine.flattenScene;
   const flattened = !engine.alphaExport && !!flattenScene && !!overBlitMaterial && !!overBlitScene;
   if (flattened) {

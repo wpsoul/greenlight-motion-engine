@@ -35,10 +35,13 @@ import { FILM_STOCK_PASS_BODIES } from './filmStockNodes.js';
 import { OBJECT_EFFECT_BODIES } from './objectEffectNodes.js';
 import { FAST_BLUR_PASS_BODIES } from './fastBlurNodes.js';
 import { DEEP_GLOW_PASS_BODIES } from './deepGlowNodes.js';
+import { GOOEY_PASS_BODIES } from './gooeyNodes.js';
+import { GRADIENT_GLOW_PASS_BODIES } from './gradientGlowNodes.js';
 import { RADIAL_FAST_BLUR_PASS_BODIES } from './radialFastBlurNodes.js';
 import { ASCII_PASS_BODIES } from './asciiNodes.js';
 import { PIXELATE_PASS_BODIES } from './pixelateNodes.js';
 import { POSTERIZE_BODIES } from './posterizeNodes.js';
+import { LIGHT_SWEEP_BODIES } from './lightSweepNodes.js';
 import { STRIP_BODIES } from './stripNodes.js';
 import { GRID_LINES_BODIES } from './gridLinesNodes.js';
 import { srCoverage } from './shapeRulersNodes.js';
@@ -2499,6 +2502,7 @@ Object.assign(BODIES, OBJECT_EFFECT_BODIES);
 Object.assign(BODIES, GRID_LINES_BODIES);
 Object.assign(BODIES, POSTERIZE_BODIES);
 Object.assign(BODIES, STRIP_BODIES);
+Object.assign(BODIES, LIGHT_SWEEP_BODIES);
 
 // Effects with a def.prePass / def.pyramidPass. Their MAIN pass fades back to
 // uSource — the effect's original input — not to the half-built intermediate the
@@ -2706,6 +2710,8 @@ const PASS_BODIES = {
   ...ASCII_PASS_BODIES,
   ...PIXELATE_PASS_BODIES,
   ...DEEP_GLOW_PASS_BODIES,
+  ...GRADIENT_GLOW_PASS_BODIES,
+  ...GOOEY_PASS_BODIES,
 };
 for (const key of BLUR_PASS_KEYS) {
   if (!PASS_BODIES[key]) PASS_BODIES[key] = blurPassBody;

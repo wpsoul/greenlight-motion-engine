@@ -5,6 +5,7 @@ import { Model3DThumbnail } from "./Model3DViewerLazy";
 import AudioPlayButton from "./AudioPlayButton";
 import { useHoverTip } from "../hooks/useHoverTip";
 import { cachedAudioDuration, requestAudioDuration } from "../utils/audioDurationProbe";
+import { useAudioRecording } from "./videoEditor/useAudioRecording";
 
 const MEDIA_BASE = "";
 const DEFAULT_UPSCALE_PROMPT = "Upscale this image while preserving composition, style, and details.";
@@ -254,88 +255,46 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
   const [siteError, setSiteError] = useState("");
 
   // --- Voice recording (audio fields) ---
-  const [recording, setRecording] = useState(false);
-  const [recordError, setRecordError] = useState("");
-  const [recordSeconds, setRecordSeconds] = useState(0);
   const [recordedUrl, setRecordedUrl] = useState(null);
   const [recordUploading, setRecordUploading] = useState(false);
-  const recorderRef = useRef(null);
-  const recordStreamRef = useRef(null);
-  const recordChunksRef = useRef([]);
-  const recordTimerRef = useRef(null);
+  const [recordUploadError, setRecordUploadError] = useState("");
+  const recordedUrlRef = useRef(null);
+  recordedUrlRef.current = recordedUrl;
   const recordedBlobRef = useRef(null);
   const recordExtRef = useRef("webm");
+  const {
+    recording, paused: recordPaused, recordSeconds, recordError,
+    startRecording: startMicRecording, pauseRecording, resumeRecording, stopRecording,
+  } = useAudioRecording({
+    onStopped: (blob, ext) => {
+      recordedBlobRef.current = blob;
+      recordExtRef.current = ext;
+      setRecordedUrl(URL.createObjectURL(blob));
+    },
+  });
+  const recordingRef = useRef(false);
+  recordingRef.current = recording;
 
   useEffect(() => {
     const handler = (e) => {
+      // A take in progress, paused or not, only ends with Stop or Back.
+      if (recordingRef.current) return;
       if (ref.current && !ref.current.contains(e.target)) onClose();
     };
     window.addEventListener("mousedown", handler);
     return () => window.removeEventListener("mousedown", handler);
   }, [onClose]);
 
-  // Release the mic + timer + object URL if the popover unmounts mid-recording.
-  useEffect(() => {
-    return () => {
-      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-      try { recorderRef.current?.state === "recording" && recorderRef.current.stop(); } catch { /* ignore */ }
-      recordStreamRef.current?.getTracks().forEach((t) => t.stop());
-      if (recordedUrl) URL.revokeObjectURL(recordedUrl);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Release the object URL when the popover unmounts (the hook releases the mic + timer).
+  useEffect(() => () => {
+    if (recordedUrlRef.current) URL.revokeObjectURL(recordedUrlRef.current);
   }, []);
 
-  const pickRecordingFormat = () => {
-    const candidates = [
-      { mime: "audio/mp4", ext: "m4a" },
-      { mime: "audio/ogg;codecs=opus", ext: "ogg" },
-      { mime: "audio/webm;codecs=opus", ext: "webm" },
-      { mime: "audio/webm", ext: "webm" },
-    ];
-    const supported = typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported;
-    for (const c of candidates) {
-      if (!supported || MediaRecorder.isTypeSupported(c.mime)) return c;
-    }
-    return { mime: "", ext: "webm" };
-  };
-
-  const startRecording = async () => {
-    setRecordError("");
-    setRecordSeconds(0);
+  const startRecording = () => {
     if (recordedUrl) { URL.revokeObjectURL(recordedUrl); setRecordedUrl(null); }
     recordedBlobRef.current = null;
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setRecordError("Recording isn't supported here.");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      recordStreamRef.current = stream;
-      const fmt = pickRecordingFormat();
-      recordExtRef.current = fmt.ext;
-      const mr = fmt.mime ? new MediaRecorder(stream, { mimeType: fmt.mime }) : new MediaRecorder(stream);
-      recordChunksRef.current = [];
-      mr.ondataavailable = (e) => { if (e.data && e.data.size) recordChunksRef.current.push(e.data); };
-      mr.onstop = () => {
-        const blob = new Blob(recordChunksRef.current, { type: mr.mimeType || "audio/webm" });
-        recordedBlobRef.current = blob;
-        setRecordedUrl(URL.createObjectURL(blob));
-        recordStreamRef.current?.getTracks().forEach((t) => t.stop());
-        recordStreamRef.current = null;
-      };
-      mr.start();
-      recorderRef.current = mr;
-      setRecording(true);
-      recordTimerRef.current = setInterval(() => setRecordSeconds((s) => s + 1), 1000);
-    } catch {
-      setRecordError("Microphone access was denied or unavailable.");
-    }
-  };
-
-  const stopRecording = () => {
-    if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
-    setRecording(false);
-    try { recorderRef.current?.stop(); } catch { /* ignore */ }
+    setRecordUploadError("");
+    startMicRecording();
   };
 
   const enterRecordMode = () => {
@@ -346,6 +305,7 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
   const useRecording = async () => {
     const blob = recordedBlobRef.current;
     if (!blob) return;
+    setRecordUploadError("");
     setRecordUploading(true);
     try {
       const file = new File([blob], `recording-${recordSeconds}s.${recordExtRef.current}`, { type: blob.type });
@@ -354,7 +314,7 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
       onRecorded?.(result);
       onSelect(`${MEDIA_BASE}${result.url}`);
     } catch {
-      setRecordError("Upload failed. Try again.");
+      setRecordUploadError("Upload failed. Try again.");
       setRecordUploading(false);
     }
   };
@@ -920,8 +880,6 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
             className="generation-popover-back"
             onClick={() => {
               stopRecording();
-              recordStreamRef.current?.getTracks().forEach((t) => t.stop());
-              recordStreamRef.current = null;
               if (recordedUrl) { URL.revokeObjectURL(recordedUrl); setRecordedUrl(null); }
               recordedBlobRef.current = null;
               setMode(null);
@@ -941,14 +899,29 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
             </>
           ) : recording ? (
             <>
-              <div className="generation-record-timer"><span className="generation-record-dot" />{mm}:{ss}</div>
-              <button className="generation-record-btn stop" onClick={stopRecording}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
-                Stop
-              </button>
+              <div className="generation-record-timer">
+                <span className={`generation-record-dot${recordPaused ? " paused" : ""}`} />{mm}:{ss}
+              </div>
+              <div className="generation-record-actions">
+                {recordPaused ? (
+                  <button className="generation-record-btn ghost" onClick={resumeRecording}>
+                    <span className="generation-record-dot" /> Resume
+                  </button>
+                ) : (
+                  <button className="generation-record-btn ghost" onClick={pauseRecording}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+                    Pause
+                  </button>
+                )}
+                <button className="generation-record-btn stop" onClick={stopRecording}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                  Stop
+                </button>
+              </div>
             </>
           ) : recordedUrl ? (
             <>
+              {recordUploadError && <div className="generation-record-error">{recordUploadError}</div>}
               <audio className="generation-record-preview" src={recordedUrl} controls />
               <div className="generation-record-actions">
                 <button className="generation-record-btn ghost" onClick={startRecording} disabled={recordUploading}>Re-record</button>

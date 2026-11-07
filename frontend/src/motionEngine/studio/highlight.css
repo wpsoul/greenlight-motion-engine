@@ -38,11 +38,12 @@ body.rv-mode-highlight .lab-inspector,body.rv-mode-highlight .glm-track{visibili
 .hl-lane{position:relative;flex:1;min-width:0}
 .hl-ruler{height:30px;cursor:pointer;border-bottom:1px solid rgb(218 220 224 / 5%);overflow:hidden}
 .hl-secm{position:absolute;bottom:0;height:13px;padding-left:4px;border-left:1px solid rgb(218 220 224 / 16%);font-size:10px;line-height:12px;color:#7d8480;white-space:nowrap;pointer-events:none}
+.hl-secs{position:absolute;inset:0;pointer-events:none}
 .hl-beat{position:absolute;bottom:0;width:1px;height:6px;background:rgb(218 220 224 / 34%);pointer-events:none}
 .hl-track .hl-lane{border-bottom:1px solid rgb(218 220 224 / 5%);background:#111;cursor:pointer}
 .hl-track.hl-on .hl-lane{background:#151718;cursor:crosshair}
 .hl-srcclip{position:absolute;left:0;right:0;top:2px;bottom:2px;overflow:hidden;background:#1e1e1e;box-shadow:0 0 0 1px #333}
-.hl-film{position:absolute;inset:0;width:100%;height:100%;opacity:.4;filter:grayscale(.8) brightness(.7)}
+.hl-film{position:absolute;top:0;left:0;height:100%;opacity:.4;filter:grayscale(.8) brightness(.7)}   /* its left and width: drawFilm */
 .hl-track.hl-on .hl-film{opacity:.95;filter:none}
 .hl-track:not(.hl-on) .hl-lane:hover .hl-srcclip{box-shadow:0 0 0 1px #555}
 .hl-cut{position:absolute;top:0;bottom:0;width:1px;margin-left:-.5px;background:rgba(255,255,255,.14);pointer-events:none}
@@ -204,3 +205,9 @@ body:not(.rv-mode-notes) .hl-tl .mn-toolbar{display:none}
 .hl-voice{position:relative;display:block}
 .hl-voice .hl-note{padding-right:32px}
 .hl-voice .hl-mic{position:absolute;top:5px;right:5px}
+/* zoomed (timelineZoom.js): the lanes run past the view and scroll under the labels and the tools, which stay at the left */
+body.rv-tlzoom .hl-tl,body.rv-tlzoom .cl-lanes{overflow-x:auto;overflow-y:hidden;overscroll-behavior:none;scrollbar-width:thin;scrollbar-color:#363a3b transparent}
+body.rv-tlzoom:not(.original) #app .glm-bar{width:var(--rv-barw,100%)}
+body.rv-tlzoom .hl-tlbody{width:var(--rv-hlw,auto);flex:none}
+body.rv-tlzoom .hl-tlbar{position:sticky;left:0;width:var(--rv-hlvw,auto);box-sizing:border-box;z-index:72;background:#111}
+body.rv-tlzoom .hl-lab{position:sticky;left:0;z-index:71;box-shadow:-12px 0 0 #111}   /* over the strip's own side padding too */

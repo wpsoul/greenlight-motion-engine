@@ -12,7 +12,7 @@ import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 import { buildCanvasGradient, gradientFirstStopColor, isCssGradient } from '../../../utils/cssGradient';
 import { effectWindowAt } from '../adjustmentEffects';
 import { isAnimatedImageCandidate, requestAnimatedImageFrame } from '../animatedImage';
-import { withBorderKeyframes } from '../borderKeyframes';
+import { withBorderKeyframes, withRadiusScaleLock } from '../borderKeyframes';
 import { isChromaKeyEnabled } from '../chromaKeyLayer';
 import { applyBlendMode, applyDepthUniforms, applyFilterUniforms, resetMaterialUniforms } from '../clipShader';
 import { readTextureImagePixels } from '../colorCorrectionBroker';
@@ -32,12 +32,13 @@ import { isText3dLayer, resolveText3d } from '../text3d';
 import { GLYPH_RASTER_PX } from '../text3dGlyphConstants';
 import { strokeCopyDelays, strokeEngineMoves } from '../pathStroke';
 import { densityBytes, RASTER_DENSITY_BUCKETS, resolveDensity, VECTOR_DENSITY_BUCKETS } from '../rasterDensity';
+import { PHONE_PLATE_BUCKETS, phonePreview } from './phoneMode';
 import { measureScreenScale } from '../rasterDensityProject';
 import { isCameraBaked3dPlate, RIG_MEDIA_TYPE } from '../rig3d';
 import { isStrokeShape, resolveLineSettings, SHAPE_PATH_KF_KEY, withShapeSizeKeyframes } from '../shapePath';
-import { animatorsMove as txaAnimatorsMove, boxRects as txaBoxRects, caretRect as txaCaretRect, evaluate as txaEvaluate, glyphFor as txaGlyphFor, grainOf as txaGrainOf, groupBoxes as txaGroupBoxes, hToCanvas as txaHToCanvas, KF_PREFIX as TXA_KF_PREFIX, layerSettings as txaLayerSettings, liveAnimators as txaLiveAnimators, maskedXf as txaMaskedXf, motionKey as txaMotionKey, needsLayout as txaNeedsLayout, paintCss as txaPaintCss, rgbCss as txaRgbCss, unitTransform as txaUnitTransform, unitTransform3d as txaUnitTransform3d, m4Mul as txaM4Mul, warpBegin as txaWarpBegin, warpEnd as txaWarpEnd } from '../textAnimators';
+import { animatorsMove as txaAnimatorsMove, boxRects as txaBoxRects, caretRect as txaCaretRect, evaluate as txaEvaluate, glyphFor as txaGlyphFor, grainOf as txaGrainOf, groupBoxes as txaGroupBoxes, hToCanvas as txaHToCanvas, KF_PREFIX as TXA_KF_PREFIX, layerSettings as txaLayerSettings, liveAnimators as txaLiveAnimators, maskedXf as txaMaskedXf, motionKey as txaMotionKey, needsLayout as txaNeedsLayout, paintCss as txaPaintCss, rgbCss as txaRgbCss, unitTransform as txaUnitTransform, unitTransform3d as txaUnitTransform3d, unitTransformCam as txaUnitTransformCam, m4Mul as txaM4Mul, warpBegin as txaWarpBegin, warpEnd as txaWarpEnd } from '../textAnimators';
 import { clearTextFootprint, getTextFootprint, setTextFootprint } from '../textFootprint';
-import { buildPlaceholderRun, expandStaticPlaceholders, parsePlaceholderText } from '../textPlaceholders';
+import { buildPlaceholderRun, expandStaticPlaceholders, parseLineStates, parsePlaceholderText } from '../textPlaceholders';
 import { DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT, resolveTextFontSize, TEXT_BG_GROW_APPEAR, TEXT_BG_REVEAL_STYLES, TEXT_BG_REVEAL_TYPES, TEXT_BORDER_STYLES, TransitionEasing } from '../types';
 import { getVectorAsset, isVectorMediaUrl } from '../vectorMedia';
 import { setVideoPlate, videoPlateScale } from '../videoPlate';
@@ -46,10 +47,10 @@ import { inverseVideoStabilizationSample, sampleVideoStabilization } from '../vi
 import { ensureTextTexture } from './canvasHelpers';
 import { calculateVideoTime, maskSilhouetteFraming } from './layerHelpers';
 import { animatedFrameTexture as animatedFrameTextureInEngine, getClipPlaybackUrl, getImageTexture as getImageTextureInEngine, getVideoTexture as getVideoTextureInEngine, normalizeUrl } from './mediaTextures';
-import { applyMeshTransform } from './meshTransform';
+import { applyMeshTransform, layerPoseScale } from './meshTransform';
 import { RECORDING_CURSOR_FLIP_ON_WEBGPU, bakeRecordingCursor } from './recordingCursorPass';
 import { getShapeSvgImage, getShapeTextureLayout, MAX_SHAPE_TEXTURE_DIM } from './pathFx';
-import { SHAPE_PAINT_KEY_RE, TEXT_PAINT_KEY_RE, activeTextRun, applyTextLetterCase, buildTextRandomPlan, buildWrappedTokens, clamp, densityMotionCtx, drawShapeToCanvas, drawTextBgRevealBar, drawTextDecorationLine, getPlaceholderTexture, getTextPathArcTable, itemPaintFieldSignature, kernBetween, measureTextWithLetterSpacing, motionCtmSafe, paintTextWithLetterSpacing, probeMotionCtx, setActiveTextRun, strokeTextWithLetterSpacing, txaBaseRgb, txaHasTrack, txaScratch } from './textPaint';
+import { SHAPE_PAINT_KEY_RE, TEXT_PAINT_KEY_RE, activeTextRun, applyTextLetterCase, buildTextRandomPlan, buildWrappedTokens, clamp, densityMotionCtx, drawShapeToCanvas, drawTextBgRevealBar, drawTextDecorationLine, getPlaceholderTexture, getTextPathArcTable, itemPaintFieldSignature, kernBetween, measureTextWithLetterSpacing, motionCtmSafe, paintTextWithLetterSpacing, placeholderGlyphs, probeMotionCtx, setActiveTextRun, strokeTextWithLetterSpacing, txaBaseRgb, txaHasTrack, txaScratch } from './textPaint';
 import { TEXT_GLOW_FLIP_ON_WEBGPU, TEXT_GLOW_MAX_PLATES, TEXT_GLOW_PLATE_MAX, renderTextDeepGlow, textGlowPlate } from './textDeepGlow';
 
 export function setupMesh(engine, env, mesh, material, item, clip, video, progress, durationSec = 0, cs = null, overrideTexture = null, parentXform = null, itemFollow = null) {
@@ -192,7 +193,9 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       markers: placeholderEnv.markers,
       timeSec: engine.currentTime,
     });
-    const placeholderParsed = parsePlaceholderText(staticText);
+    // Line states (item.textLineStates): every line is one state of a single cycle /
+    // Text Morph unit, so the text is that one unit.
+    const placeholderParsed = parseLineStates(staticText, item.textLineStates) || parsePlaceholderText(staticText);
     setActiveTextRun(null);
     if (placeholderParsed) {
       // A keyframed placeholder reads its own progress track (`ph:<id>`), now and
@@ -214,6 +217,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         track,
         easeFor: (key) => (p) => applyGsapEasing(p, key),
         transform: (str) => applyTextLetterCase(str, textLetterCase),
+        // A Text Morph's letters travel around the line's alignment anchor.
+        align: textAlign,
       }));
     }
     const text = applyTextLetterCase(placeholderParsed ? placeholderParsed.text : staticText, textLetterCase);
@@ -545,6 +550,29 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // path placement, footprint, caption bar, caret). Without a Tracking effect the
     // evaluation waits for the paint, so a cached plate costs nothing.
     let txaEval = null;
+    // A shared Text Animator camera (layer field Camera ▸ Layer / Project): its eye in
+    // plate px, set before the paint signature; and the units' paint order, far to near.
+    let txaCam = null;
+    let txaDrawOrder = null;
+    // The composition camera's distance (the Player films at FOV 28°, compositeHelpers
+    // CAMERA_FOV): a shared camera's Perspective when the layer sets none.
+    const txaCompD = (canvasH * 0.5) / Math.tan((14 * Math.PI) / 180);
+    // The project camera's eye in plate px: the plate posed exactly as it will render
+    // (as the density probe poses it), the eye brought into it. A plate px keeps the
+    // layer's own scale on every axis, so a Z px is as long as an X px. Null when the
+    // eye is at or behind the plate.
+    const txaProjectEye = (plateW) => {
+      const camera = cs?.rigged ? engine.posedCamera : engine.camera;
+      if (!camera?.position) return null;
+      applyMeshTransform(mesh, item, keyframeProps, W, H, parentXform, clip, itemFollow);
+      mesh.scale.x *= plateW / W;
+      mesh.updateWorldMatrix(true, false);
+      const eye = mesh.worldToLocal(camera.position.clone());
+      const s = Math.sqrt(Math.abs(mesh.scale.x) * (W / plateW) * Math.abs(mesh.scale.y)) || 1;
+      const d = eye.z / s;
+      if (!(d > 1) || !Number.isFinite(eye.x) || !Number.isFinite(eye.y)) return null;
+      return { x: (eye.x / W + 0.5) * plateW, y: (0.5 - eye.y / H) * canvasH, d };
+    };
     // The engine's view of the units, built once per frame for the evaluation and
     // the plate's motion key. Voice animators read the caption's spoken windows
     // (wordWinSec: one per word, null when they don't fit the text) on the same
@@ -690,6 +718,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
           interactive,
           maxDensity: env.interactivePreviewEnabled ? 2 : Infinity,
           supersample: engine.rasterSupersample,
+          ...(phonePreview(engine) ? { buckets: PHONE_PLATE_BUCKETS } : null),
         });
         const budget = env.getRasterBudget();
         while (textDensity > 1) {
@@ -700,7 +729,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         if (textDensity > 1) budget.note(item.id, densityBytes(texW, canvasH, textDensity));
         else budget.release(item.id);
         engine.rasterDensity.set(item.id, textDensity);
-      }
+      } else if (phonePreview(engine)) textDensity = PHONE_PLATE_BUCKETS[0];   // a grid's cells: not measured, and small
       // Recreates the canvas + texture only when the size actually changed
       // (see ensureTextTexture); a stable overflow reuses last frame's canvas.
       textPaintPlate = ensureTextTexture(
@@ -731,9 +760,23 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
           voice: txaVoice,
         })
         : null;
+      // Shared camera (textAnimators.js unitTransformCam). 'layer': an eye in front of
+      // the plate centre at the layer's Perspective — 0 = the composition camera's
+      // distance, so a letter's Z reads exactly like a layer's translateZ. 'project': the
+      // eye of the camera that films this channel (the Camera layer's pose), brought into
+      // plate px through the plate's real pose, so a dolly or tilt films the letters in
+      // depth. 3D Text skips it: its letters are real 3D in the scene already.
+      if (txaActive && !text3dOn && drawUnits.length) {
+        const camLay = txaLayerSettings(item);
+        if (camLay.camera !== 'unit') {
+          txaCam = { x: texW / 2, y: canvasH / 2, d: camLay.perspective > 0 ? camLay.perspective : txaCompD };
+          if (camLay.camera === 'project') txaCam = txaProjectEye(texW) || txaCam;
+        }
+      }
       textPaintSig = [
         itemPaintFieldSignature(item, TEXT_PAINT_KEY_RE),
         textPaintClock, txaClock === null ? '' : txaClock, durationSec || 0,
+        txaCam ? `${txaCam.x.toFixed(2)},${txaCam.y.toFixed(2)},${txaCam.d.toFixed(2)}` : '',
         letterSpacing, textColor, textOutlineColor, bgColor,
         textPathSpread, textPathSpacingPx, textPathTrimA, textPathTrimB, textPathOffY, textPathT,
         // The outline itself moves on a keyed path while the item object stays the same.
@@ -1035,6 +1078,20 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         const gy = -lineHeightPx * 0.5 + glyphDrop;
         for (const ch of Array.from(drawStr)) {
           const adv = measureTextWithLetterSpacing(ctx, ch, 0);
+          // A word cycle / Text Morph character hands over its own letters, each posed
+          // at this instant (x from the unit's left, y, alpha, a scale around its centre).
+          const unitGlyphs = placeholderGlyphs(ctx, ch, letterSpacing);
+          if (unitGlyphs) {
+            unitGlyphs.forEach((g, gi) => {
+              const s = g.scale ?? 1;
+              const ox = gx + g.x; const oy = gy + g.y;
+              const px = ox + g.w * 0.5; const py = gy + tokFontSize * 0.5;
+              const local = [k * s, 0, 0, px + s * (ox - px), 0, -k * s, 0, py + s * (oy - py), 0, 0, -k * s, 0, 0, 0, 0, 1];
+              glyphs.push({ font, ch: g.ch, color, alpha: alpha * g.alpha, index: Math.max(0, du.sIdx) + gi, fv: engine.fontLoadVersion, m: txaM4Mul(base, local) });
+            });
+            gx += measureTextWithLetterSpacing(ctx, ch, letterSpacing) + letterSpacing;
+            continue;
+          }
           if (ch.trim()) {
             const local = [k, 0, 0, gx, 0, -k, 0, gy, 0, 0, -k, 0, 0, 0, 0, 1];
             glyphs.push({ font, ch, color, alpha, index: Math.max(0, du.sIdx), fv: engine.fontLoadVersion, m: txaM4Mul(base, local) });
@@ -1056,6 +1113,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       // Text Animator state (evaluated above): opacity and blur; its paint replaces
       // the unit's colour; scramble / character offset swap the text.
       const txa = du._txa || null;
+      // At or behind a shared camera (it flew past the lens): not drawn.
+      if (du._txaHidden) return;
       if (txa) {
         tokenAlpha *= txa.alpha;
         tokenBlur += txa.blur;
@@ -1188,6 +1247,9 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       if (!txaEval) txaEval = txaRun();
       const lay = txaLayerSettings(item);
       const pivot = { x: lay.pivotX / 100, y: lay.pivotY / 100 };
+      // Each unit's own camera: a Z move's distance when its Rotate 3D has no Perspective
+      // (the layer's Perspective, else the composition camera's).
+      const txaZPersp = lay.perspective > 0 ? lay.perspective : txaCompD;
       // Pivot boxes span each unit's ink: a word unit's trailing space is not part of
       // what turns (drawn letter by letter, that space is a unit of its own).
       const boxOf = txaEval.states.some((st) => st.xf || st.mask)
@@ -1262,16 +1324,29 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         if (st.xf) {
           if (du._path) {
             const own = { x0: -du.w / 2, y0: -lineHeightPx / 2, x1: du.w / 2, y1: lineHeightPx / 2 };
-            const tf = txaUnitTransform(st.xf, () => own, pivot);
+            const tf = txaUnitTransform(st.xf, () => own, pivot, txaZPersp);
             if (tf.projective) du._txaLocalH = tf.H;
             else du._txaLocal = txaHToCanvas(tf.H);
             if (text3dOn) du._txaLocalM4 = txaUnitTransform3d(st.xf, () => own, pivot);
           } else {
             // Under a mask a rise travels at least the mask box, so it starts hidden.
             const mb = du._txaMaskBox;
-            const tf = txaUnitTransform(mb ? txaMaskedXf(st, mb.y1 - mb.y0) : st.xf, (lv) => boxOf(i, lv), pivot);
-            if (tf.projective) du._txaH = tf.H;
-            else du._txaM = txaHToCanvas(tf.H);
+            const xfIn = mb ? txaMaskedXf(st, mb.y1 - mb.y0) : st.xf;
+            if (txaCam) {
+              // One camera for every unit: its real 3D pose seen from the shared eye;
+              // a unit at or behind the camera is not drawn; depth sets the paint order.
+              const tf = txaUnitTransformCam(xfIn, (lv) => boxOf(i, lv), pivot, txaCam);
+              if (tf) {
+                du._txaDepth = tf.depth;
+                if (tf.hidden) du._txaHidden = true;
+                else if (tf.projective) du._txaH = tf.H;
+                else du._txaM = txaHToCanvas(tf.H);
+              }
+            } else {
+              const tf = txaUnitTransform(xfIn, (lv) => boxOf(i, lv), pivot, txaZPersp);
+              if (tf.projective) du._txaH = tf.H;
+              else du._txaM = txaHToCanvas(tf.H);
+            }
             if (text3dOn) du._txaM4 = txaUnitTransform3d(st.xf, (lv) => boxOf(i, lv), pivot);
           }
         }
@@ -1287,6 +1362,13 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
           du._txaOverlays = (du._txaOverlays || []).concat(st.overlays.map((o) => ({ css: txaPaintCss(o), alpha: o.alpha, unit: o.span === 'unit' })));
         }
       });
+      // Under one camera nearer units cover farther ones: paint far to near (a unit at
+      // the same depth keeps its place, so flat text paints exactly as before).
+      if (txaCam && drawUnits.some((du) => du._txaDepth)) {
+        txaDrawOrder = drawUnits.map((du, i) => i)
+          .sort((a, b) => (drawUnits[b]._txaDepth || 0) - (drawUnits[a]._txaDepth || 0) || a - b)
+          .map((i) => drawUnits[i]);
+      }
     }
     // Background pass first, so every line's bar sits behind the glyphs.
     // On a path there is no straight row to bar — the caption background is
@@ -1447,7 +1529,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     } else {
       // The randomizer and text on path draw per unit even without animators — no
       // animation state applies then, so drawToken is a styled static draw.
-      for (const du of drawUnits) drawToken(du);
+      for (const du of txaDrawOrder || drawUnits) drawToken(du);
       // Text Animator glows: one glow-source plate per distinct glow size (the strongest
       // TEXT_GLOW_MAX_PLATES), each painted by the same drawToken — masks, paths, the
       // randomizer and warps come along — into a plate the size of this one.
@@ -1473,7 +1555,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
             ctx.textBaseline = textCtx.textBaseline;
             ctx.textAlign = textCtx.textAlign;
             txaGlowPlate = { size };
-            for (const du of drawUnits) drawToken(du);
+            for (const du of txaDrawOrder || drawUnits) drawToken(du);
             txaGlowPlate = null;
           });
           ctx = textCtx;
@@ -1545,8 +1627,12 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
   } else if (clip.mediaType === 'shape') {
     // Keyframed Width / Height / Radius (shapePath.js withShapeSizeKeyframes) and
     // Border width / colour (borderKeyframes.js) size the plate and the draw; the
-    // same item object comes back when none is keyed.
-    const shapeItem = withBorderKeyframes(withShapeSizeKeyframes(item, keyframeProps), keyframeProps);
+    // same item object comes back when none is keyed. A scale-locked radius is
+    // divided by the scale the plate is about to be posed at (withRadiusScaleLock).
+    const shapeItem = withRadiusScaleLock(
+      withBorderKeyframes(withShapeSizeKeyframes(item, keyframeProps), keyframeProps),
+      item.borderRadiusScaleLock ? layerPoseScale(item, keyframeProps, W, H, parentXform, itemFollow) : 1,
+    );
     // A keyframed `shapePath` track carries a whole point list per key, morphed
     // point-by-point; it wins over the item's static path for this frame. Both it
     // and the stroke/trim tracks resolve BEFORE the layout, because the plate has
@@ -1625,6 +1711,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         // preview and every export get the full ladder.
         maxDensity: env.interactivePreviewEnabled ? 2 : Infinity,
         supersample: engine.rasterSupersample,
+        ...(phonePreview(engine) ? { buckets: PHONE_PLATE_BUCKETS } : null),
       });
       // Stay inside the texture-memory budget: step down until the plate fits
       // alongside everything else already magnified.
@@ -1646,7 +1733,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         budget.release(item.id);
       }
       engine.rasterDensity.set(item.id, shapeDensity);
-    }
+    } else if (phonePreview(engine)) shapeDensity = PHONE_PLATE_BUCKETS[0];
     const layout = shapeDensity === 1
       ? logicalLayout
       : getShapeTextureLayout(shapeItem, W, H, {
@@ -1693,7 +1780,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       shapeLine ? JSON.stringify(shapeLine) : '',
       layout.rasterWidth, layout.rasterHeight, layout.rasterScale,
       layout.plateWidth, layout.plateHeight, layout.shapeWidth, layout.shapeHeight,
-      // keyframed corner radius (withShapeSizeKeyframes) — not on the raw item
+      // keyframed or scale-locked corner radius — not on the raw item
       shapeItem === item ? '' : `${shapeItem.borderRadius},${shapeItem.borderRadiusTL},${shapeItem.borderRadiusTR},${shapeItem.borderRadiusBR},${shapeItem.borderRadiusBL},${shapeItem.borderWidth},${shapeItem.borderColor}`,
       shapeSvgEntry ? (shapeSvgEntry.ready ? 1 : 0) : -1,
       canvas.width, canvas.height,
@@ -2065,8 +2152,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     if (cs) cs.lastGoodTexture = texture; // remember the most recent on-screen frame
 
     if (texture.image) {
-      let tw = texture.image.videoWidth || texture.image.width || W;
-      let th = texture.image.videoHeight || texture.image.height || H;
+      let tw = texture.userData?.fullW || texture.image.videoWidth || texture.image.width || W;
+      let th = texture.userData?.fullH || texture.image.videoHeight || texture.image.height || H;
       // Shape and SVG-vector plates are rasterized at round(plate × rasterScale). The
       // clip shader's fit-contain compares aspect ratios with an ABSOLUTE 0.01
       // tolerance, so on a thin plate that half-pixel rounding reads as a mismatch
@@ -2265,6 +2352,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
   const ccProbe = engine.ccProbe;
   applyFilterUniforms(material, item, keyframeProps, {
     reducedMotionPreview: env.interactivePreviewEnabled,
+    layerScale: mesh.userData.layerScale,
     disableFraming: clip.mediaType === 'shape' || clip.mediaType === 'model3d' || (clip.mediaType === 'text' && !!item?.textClipMask),
     silhouetteFraming: isChromaKeyEnabled(item) || maskSilhouetteFraming(item, clip),
     disableLetterSpacing: clip.mediaType === 'text',

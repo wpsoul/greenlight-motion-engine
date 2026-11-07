@@ -43,6 +43,7 @@ import { hasVideoStabilization } from '../videoStabilization';
 import { applyCameraRig } from './camera';
 import { ensureSequenceState as ensureSequenceStateInEngine } from './channelStates';
 import { _platePos, resolveActiveIndex } from './compositeHelpers';
+import { modelKeepsOwnPass, prepareWorldFrame, worldLayerResult } from '../world3dLayer';
 import { bakeableLayerStack, calculateVideoTime, layerContentBox } from './layerHelpers';
 import { playbackRateTrim } from './mediaClock';
 import { getClipPlaybackUrl, normalizeUrl, primePreparedVideoTexture as primePreparedVideoTextureInEngine } from './mediaTextures';
@@ -406,6 +407,13 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // null when there is nothing to draw yet.
   const resolveModelTexture = (mItem, mClip, mTimeInClip) => {
     if (mClip?.mediaType !== 'model3d') return null;
+    // Only what the world really took: a camera-locked channel is not in it, and suppressing its pass makes the model vanish.
+    if (engine.worldFrameReady && !channel.cameraLocked && !modelKeepsOwnPass(mItem)) {
+      // In the Scene layer's picture already.
+      engine.modelDepth.delete(channel.id);
+      engine.modelDepthTex.delete(channel.id);
+      return null;
+    }
     const mod = engine.model3d;
     if (!mod) {
       // The frame that triggered this import drew nothing for the layer; redraw once it lands.
@@ -484,6 +492,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // draw (no live particles at this time — a legitimate, common state).
   const resolveParticleTexture = (pItem, pClip, pTimeInClip) => {
     if (pClip?.mediaType !== PARTICLE_MEDIA_TYPE || !pItem?.particleSystem) return null;
+    if (engine.worldFrameReady && pItem.particleLook === '3d') return null;   // objects in the world now, in the Scene's picture
     const mod = engine.particle;
     if (!mod) {
       // The frame that triggered this import drew nothing for the layer; repaint
@@ -786,6 +795,17 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // the same mechanism that lets a model cut the layers behind it.
   const resolveRigTexture = (rItem, rClip) => {
     if (rClip?.mediaType !== RIG_MEDIA_TYPE) return null;
+    if (engine.worldFrameReady) {
+      const res = worldLayerResult(engine);
+      engine.modelDepth.set(channel.id, res.viewDistance);
+      if (res.viewRange) engine.modelDepthRange.set(channel.id, res.viewRange);
+      else engine.modelDepthRange.delete(channel.id);
+      engine.modelDepthTex.set(channel.id, res.depthTexture);
+      engine.modelTransparentDepthTex.delete(channel.id);
+      engine.modelSpillDepth.delete(channel.id);
+      engine.worldShadowTexture = res.shadowTexture;
+      return res.texture;
+    }
     const mod = engine.model3d;
     if (!mod) {
       requestModel3dModule(engine, () => { if (!engine.exporting && !engine.isPlaying) engine.renderFrame(); });
@@ -1515,6 +1535,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
  * poses nothing.
  */
 export function prePoseWorldModels(engine, env, time) {
+  engine.worldFrameReady = false;
   const mod = engine.model3d;
   if (!mod?.poseModelLayer || engine.worldActive || engine.rcMediaOnly) return;
   const rig = engine.activeRigAt(time);
@@ -1537,4 +1558,5 @@ export function prePoseWorldModels(engine, env, time) {
       time: Math.max(0, timeInClip), rig, frameToken: engine.frameToken,
     });
   }
+  prepareWorldFrame(engine, env, time);
 }

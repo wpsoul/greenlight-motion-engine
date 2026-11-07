@@ -43,6 +43,8 @@ import { checkTemplate } from './template';
 import { installFetchLayer, createResolver, setActiveResolver, resolveProject, missingAssets, clearMissingAssets, pluginStatus } from './assets';
 // the shared review interface (left rail, inspector, Edit · Notes · Highlight) every host mounts: studio/index.js
 import { mountStudio } from './studio';
+import { PREVIEW_TIER } from '../components/videoEditor/engine/previewMedia';
+import { setPhoneMode } from '../components/videoEditor/engine/phoneMode';
 
 // the package version, put in at build time (vite.motion-engine.config.js); 'dev' when built some other way
 const VERSION = typeof __GLM_VERSION__ === 'string' ? __GLM_VERSION__ : 'dev';
@@ -160,6 +162,7 @@ function mountPage(el, { project, assets = null, theme = 'dark' } = {}) {
   if (!project) throw new Error('GreenLightMotion.mountPage needs a project');
   activateVideoRenderer('webgpu');
   activateMaterialBackendForRenderer('webgpu');
+  if (PREVIEW_TIER.touch) setPhoneMode(true);
   const root = createRoot(el);
   root.render(<PlayerPage project={project} assets={assets} theme={theme} />);
   return { unmount: () => root.unmount() };

@@ -10,7 +10,7 @@
 
 ## Contents
 
-- [Grid layers (`mediaType: "grid"`) — Grid Builder](video-grid.md#grid-layers-mediatype-grid--grid-builder)
+- [Grid layers (`mediaType: "grid"`) — Grid Builder](#grid-layers-mediatype-grid--grid-builder)
 
 ### Grid layers (`mediaType: "grid"`) — Grid Builder
 
@@ -24,7 +24,7 @@ The grid owns **only PRS** (position / rotation / scale). A member keeps its own
 ungrouping restores every layer exactly as it was. Everything else about a member (text, colours,
 filters, effects, opacity, timing) is still its own.
 
-```json
+```jsonc
 // clip — one channel per cell, each holding exactly one item at freeStart 0
 {
   "id": "grid1", "source": "REMOTE", "mediaType": "grid", "url": "", "proxyUrl": null,
@@ -45,12 +45,13 @@ filters, effects, opacity, timing) is still its own.
 ```
 
 The layout rule lives on the **parent timeline item** as `gridConfig` (every field is optional —
-missing ones take the default shown, and out-of-range values are clamped on load):
+missing ones take the default shown, and out-of-range values are clamped on load). Strip the `//`
+comments before sending:
 
-```json
+```jsonc
 "gridConfig": {
   "version": 1,
-  "mode": "current",           // current | rect | radial | spiral | wave | scatter | sphere | path
+  "mode": "rect",              // rect (default) | current | radial | spiral | wave | scatter | sphere | path
 
   // shared
   "order": "stack",            // stack | reverse | name | random — which member takes which cell
@@ -100,11 +101,11 @@ missing ones take the default shown, and out-of-range values are clamped on load
   "scatterDepth": 0,           // px of random z spread
 
   // sphere
-  "sphereRadius": 300, "sphereSpinY": 0, "sphereTiltX": 0,
+  "sphereRadius": 420, "sphereSpinY": 0, "sphereTiltX": 0,
 
   // path — same point shape as item.motionPath (world pixels, centre origin).
   // Omit it and the grid rides the ITEM's own motionPath instead, which is what
-  // the UI does: the shipped on-canvas path editor is the grid's path editor.
+  // the editor does.
   "path": { "points": [{ "x": -400, "y": 0, "z": 0 }, { "x": 400, "y": 0, "z": 0 }], "closed": false },
   "pathSpacing": "arc",        // arc (equal distance along the curve) | segment
   "pathTrimStart": 0,          // % — the usable stretch of the curve
@@ -142,7 +143,7 @@ missing ones take the default shown, and out-of-range values are clamped on load
   // amount a FULLY effected cell gets, added on top of the layer's own value.
   // transform: scale % | opacity % | rotate ° | z px | lookAt % (proximity only)
   // filter:    blur px | brightness % | contrast % | saturate % | hue ° | grayscale % | sepia %
-  "fx": { "scale": 60, "blur": 8 },
+  "fx": { "scale": 60 },         // the default; e.g. { "scale": 60, "blur": 8 } also blurs the effected cells
 
   // per-cell reveal — NOT keyframes: a pure function of this layer's own progress
   "revealPreset": "none",      // none | fade | pop | rise | spin | flyCenter | flyEdge | flyRandom
@@ -168,7 +169,7 @@ missing ones take the default shown, and out-of-range values are clamped on load
   "layoutMix": 0,              // 0…layouts.length-1 — keyframe `gr:layoutMix` to morph; integer = exactly that slot (single layout evaluated); a Hold key hard-cuts
   "morphStagger": 0.35,        // 0–0.9 — spreads the move across cell ranks (0 = all cells slide together)
   "morphStaggerBy": "index",   // index | ring | distance | random — ranked on the layout being LEFT
-  "morphEase": "Smooth",// per-cell ramp (TransitionEasing name)
+  "morphEase": "Smooth",       // per-cell ramp: a name from easings.keyframe.transitionValues
   "morphArc": 60,              // px — bulges each cell's travel outward mid-move (negative implodes); exactly zero at both endpoints
   "morphSpin": 0               // whole turns added over the blend; integers land back on themselves
 }
@@ -182,7 +183,7 @@ Rules:
   remaining cells renumber. The member stays inside the grid.
 - **Cap: 64 members.** Every cell costs a channel state with two meshes and two `<video>` elements.
 - **Grid parameters are keyframable** as `gr:<key>` tracks in the parent item's `propertyKeyframes`
-  (numeric only) — e.g. `"gr:radius": [{ "position": 0, "value": "5" }, { "position": 100, "value": "40" }]`
+  (numeric only; `cols`, `rings`, `seed` and `morphSpin` are rounded to integers) — e.g. `"gr:radius": [{ "position": 0, "value": "5" }, { "position": 100, "value": "40" }]`
   opens a ring. Only the keys the CURRENT `mode` reads have any effect; see the field list above.
   With `layouts` present, a keyframed geometry key overrides BOTH sides of the blend — use slot
   values for static differences between layouts and `gr:` tracks for animation over time.
@@ -210,23 +211,22 @@ Rules:
   cell box letterboxes/pillarboxes with fully TRANSPARENT bars under `contain` (and under
   `none`/`stretch` where spare quad shows); `cover` fills the cell and crops. A member's own
   `backgroundColor` still paints its plate when set.
-- **A grid is REAL 3D.** Its cells are filmed by the project camera itself: the inner
-  scene is rendered through the posed camera moved into the grid's space (G⁻¹·C), and the result
-  is composited screen-aligned. So the whole item transform (`panX/Y/Z`, `rotateX/Y/Z`, `zoom`,
-  and their keyframes) moves the ARRANGEMENT in three dimensions, camera pans produce real
-  parallax between cells at different z, a dolly travels *through* the arrangement (into a
-  sphere's interior), and the 3D world view shows the member meshes in space rather than a plate.
-  `orient: "screen"` aims each card at the lens's true position at any angle and follows camera
-  roll. Cells clip against the real frustum like ordinary layers (there is no `overscan` field; a
-  leftover one in an old config is ignored and dropped on the next save). The plate survives only
-  as an intermediate, so the grid item's filters,
-  opacity, blend mode, masks and transitions still apply to the flattened result — but motion
-  blur on the grid item no longer sees the grid's own transform. `mirrorH/V` flip the picture,
-  not the arrangement.
+- **A grid is REAL 3D.** Its cells are filmed by the project camera itself, so the whole item
+  transform (`panX/Y/Z`, `rotateX/Y/Z`, `zoom`, and their keyframes) moves the ARRANGEMENT in
+  three dimensions, camera pans produce real parallax between cells at different z, a dolly
+  travels *through* the arrangement (into a sphere's interior), and the 3D world view shows the
+  member meshes in space. `orient: "screen"` aims each card at the lens's true position at any
+  angle and follows camera roll. Cells clip against the real frustum like ordinary layers; there
+  is no `overscan` field (one is dropped on save).
+- **The grid item's look applies to the flattened result:** its filters, opacity, blend mode,
+  masks and transitions work as on any layer, but motion blur on the grid item does not see the
+  grid's own transform — animate the camera or the layout for blurred motion. `mirrorH/V` flip the
+  picture, not the arrangement.
 - **PRO at render.** Free to build and preview; a project containing a non-empty grid needs a PRO
   licence to render, the same policy as PRO motion templates and Running Glow.
 - **Grouping existing layers is non-destructive** when the grid is created with `"mode": "current"`
-  + `"fit": "none"` — nothing moves or resizes until a layout type is chosen. That pairing is also
+  + `"fit": "none"` — nothing moves or resizes until a layout type is chosen. Write both
+  explicitly: a missing `mode` is `rect`, which rearranges the members at once. That pairing is also
   the natural slot 0 of a morph: `layouts: [{ "mode": "current" }, { "mode": "radial", … }]` plus a
   `gr:layoutMix` track travels the layers from where they are into a ring. A grid built empty has
   no arrangement to preserve, so `rect` is the sensible start there.

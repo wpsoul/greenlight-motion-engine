@@ -16,9 +16,13 @@ import { EngineCanvas } from './EngineCanvas';
 import { useVideoEditorStore } from '../components/videoEditor/videoEditorStore';
 import { getTimelineLayout } from '../components/videoEditor/speedUtils';
 import { waitForMediaReady } from '../components/videoEditor/renderWarmup';
+import { PHONE_LONG_EDGE, phoneMode } from '../components/videoEditor/engine/phoneMode';
+import { phoneFilmCost, phoneStats } from '../components/videoEditor/engine/phoneMedia';
+import { cacheStatus, localCacheDeps } from './localRenderCache';
 import { applyTemplateValues, fieldValues } from './template';
 import { createResolver, resolveProject, setActiveResolver, missingAssets } from './assets';
 import { toEngineProject } from './normalize';
+import { rulerSteps, rulerLabel } from './rulerSteps';
 import { mixProject, hasSound, hasSoundEffects } from './mix';
 import { activeLayers } from '../components/videoEditor/PreviewTransformOverlay';
 import { TransitionType, LayerTransitionType } from '../components/videoEditor/types';
@@ -81,6 +85,7 @@ function keyframedAt(item, side) {
 }
 
 const noop = () => {};
+const NO_COST = { peakMB: 0, heavy: false, minutes: 0 };
 const GET_APP_URL = 'https://greenlightdash.pro/';
 // A page opened from a file can hand GreenLight Dash its own path (desktop deep-links.js →
 // greenlightdash://open?path=…; the app imports the folder, or the one-file page itself).
@@ -169,6 +174,9 @@ const Icon = {
   pause: <svg viewBox="0 0 16 16" aria-hidden="true"><rect fill="currentColor" x="3.5" y="2.5" width="3.2" height="11" rx="1" /><rect fill="currentColor" x="9.3" y="2.5" width="3.2" height="11" rx="1" /></svg>,
   prev: <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" d="M10 3.5 5.5 8l4.5 4.5" /></svg>,
   next: <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" d="M6 3.5 10.5 8 6 12.5" /></svg>,
+  start: <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 19 9 12l9-7z" /><path fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" d="M6 5v14" /></svg>,
+  end: <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m6 19 9-7-9-7z" /><path fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" d="M18 5v14" /></svg>,
+  warn: <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" d="M12 4 2.8 20h18.4zM12 10v4.5M12 17.5v.01" /></svg>,
   loop: <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" d="M3 7.5V7a3 3 0 0 1 3-3h6.5M10.5 2l2 2-2 2M13 8.5V9a3 3 0 0 1-3 3H3.5M5.5 14l-2-2 2-2" /></svg>,
   film: <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="2" fill="none" stroke="currentColor" strokeWidth="1.4" /><path fill="currentColor" d="M6.8 6.1v3.8L10 8z" /></svg>,
   back: <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" d="M10 3.5 5.5 8l4.5 4.5" /></svg>,
@@ -263,34 +271,28 @@ function useLiveTime(playing, currentTime) {
   return playing ? live : currentTime;
 }
 
-function Transport({ duration, playing, currentTime, onPlay, onStep, loop, onLoop, rows }) {
+function Transport({ duration, playing, currentTime, onPlay, onStep, onSeek, loop, onLoop, rows, meter }) {
   const t = Math.min(useLiveTime(playing, currentTime) || 0, duration);
   const now = [];
   for (const row of rows) for (const l of row.layers) if (t >= l.start && t < l.end && now.length < 3) now.push(l.name);
   return (
     <div className="glm-transport">
       <div className="glm-tgroup">
+        <button type="button" className="glm-icon glm-se" onClick={() => onSeek(0)} aria-label="Go to start" title="Go to start (Home)">{Icon.start}</button>
         <button type="button" className="glm-play" onClick={onPlay} aria-keyshortcuts="Space">
           {playing ? Icon.pause : Icon.play}<span>{playing ? 'Pause' : 'Play'}</span>
         </button>
         <button type="button" className="glm-icon" onClick={() => onStep(-1)} aria-label="Previous frame" title="Previous frame (←) · Shift: 1 s back">{Icon.prev}</button>
         <button type="button" className="glm-icon" onClick={() => onStep(1)} aria-label="Next frame" title="Next frame (→) · Shift: 1 s on">{Icon.next}</button>
+        <button type="button" className="glm-icon glm-se is-end" onClick={() => onSeek(duration)} aria-label="Go to end" title="Go to end (End)">{Icon.end}</button>
       </div>
-      <div className="glm-time"><b>{clock(t, 2)}</b><span>/ {clock(duration, 2)}</span></div>
+      <div className="glm-time"><b>{clock(t, 2)}</b><span>/ {clock(duration, 2)}</span>{phoneMode() && <CacheStatus meter={meter} />}</div>
       <div className="glm-now">{now.length ? <><span>Now</span><b>{now.join(' · ')}</b></> : null}</div>
       <div className="glm-tgroup">
         <button type="button" className="glm-icon" aria-pressed={loop} onClick={onLoop} aria-label="Loop" title="Loop">{Icon.loop}<span>Loop</span></button>
       </div>
     </div>
   );
-}
-
-function rulerSteps(duration, width) {
-  const steps = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
-  const pxPerSec = width / Math.max(duration, 0.001);
-  const major = steps.find((s) => s * pxPerSec >= 84) || steps[steps.length - 1];
-  const minor = major / (major === 0.25 || major === 2.5 ? 5 : major >= 1 && major % 5 === 0 ? 5 : 4);
-  return { major, minor };
 }
 
 function Playhead({ duration, playing, currentTime }) {
@@ -301,18 +303,40 @@ function Playhead({ duration, playing, currentTime }) {
 }
 
 // The seconds that played too slowly on this computer (below 25 fps): the editor's render-cache line over the ruler,
-// measure-only here — the page renders nothing ahead, so a red second stays red until it plays fast enough.
+// measure-only here — the page renders nothing ahead, so a red second stays red until it plays fast enough. On a phone
+// the page does cache (./localRenderCache.js): the line shows those seconds too, rendering and cached.
 function SlowLine({ meter, duration }) {
   const snap = useSyncExternalStore(meter.subscribe, meter.getSnapshot);
-  const runs = (snap?.runs || []).filter((r) => r.state === 'slow');
+  const runs = (snap?.runs || []).filter((r) => r.state === 'slow' || r.state === 'pending' || r.state === 'cached');
   if (!runs.length) return null;
   return (
     <div className="glm-slow">
       {runs.map((r) => (
-        <span key={r.t0} className="glm-slow-run" data-slow={`${r.t0}-${r.t1}`}
+        <span key={r.t0} className={`glm-slow-run is-${r.state}`} data-slow={r.state === 'slow' ? `${r.t0}-${r.t1}` : undefined}
           style={{ left: `${(r.t0 / duration) * 100}%`, width: `${((r.t1 - r.t0) / duration) * 100}%` }}
-          title={`Plays below ${RENDER_CACHE_MIN_FPS} fps on this computer (${clock(r.t0)}–${clock(r.t1)})`} />
+          title={r.state === 'slow' ? `Plays below ${RENDER_CACHE_MIN_FPS} fps on this computer (${clock(r.t0)}–${clock(r.t1)})` : undefined} />
       ))}
+    </div>
+  );
+}
+
+function CacheStatus({ meter }) {
+  const s = cacheStatus(useSyncExternalStore(meter.subscribe, meter.getSnapshot));
+  return s ? <i className={`glm-rc is-${s.state}`}>{s.text}</i> : null;
+}
+
+// A film too big for this phone, before its first Play: prepare the cache instead of risking the page.
+function HeavyCard({ minutes, onPrepare, onPlay }) {
+  return (
+    <div className="glm-heavy" role="alertdialog" aria-label="Heavy for this phone">
+      <div>
+        <b>{Icon.warn}Heavy for this phone</b>
+        <p>This film needs more memory than a phone gives a page, so it may close while playing. Prepare it first and it plays smoothly from a rendered copy.</p>
+        <div className="glm-heavy-acts">
+          <button type="button" className="is-go" onClick={onPrepare}>Prepare · about {minutes} min</button>
+          <button type="button" onClick={onPlay}>Play anyway</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -320,6 +344,7 @@ function SlowLine({ meter, duration }) {
 function Timeline({ rows, duration, playing, currentTime, onSeek, onSelect, selected, limitsOf, onDrag, onDragEnd, selectedTrans, onTransition, onAddTransition, flags = [], onFlag, meter = null }) {
   const barRef = useRef(null);
   const [width, setWidth] = useState(600);
+  const [view, setView] = useState({ left: 0, width: 4096 });   // the part of the bar in view, in whole views of it
   const [ghost, setGhost] = useState(null);
   const [drag, setDrag] = useState(false);
   const [moving, setMoving] = useState(null);   // the layer being dragged: { id, zone }
@@ -342,10 +367,17 @@ function Timeline({ rows, duration, playing, currentTime, onSeek, onSelect, sele
   useEffect(() => {
     const el = barRef.current;
     if (!el) return undefined;
+    // a long film zoomed in is thousands of ticks: the ruler draws the view and one view either side
+    const seen = (box) => {
+      const w = box.clientWidth || 1; const left = Math.floor(box.scrollLeft / w) * w;
+      setView((v) => (v.left === left && v.width === w ? v : { left, width: w }));
+    };
+    const onScroll = (e) => { const box = e.target; if (box instanceof Element && box.scrollWidth > box.clientWidth + 1 && box.contains(el)) seen(box); };
     // an observer reports the starting size too
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth || 600));
+    const ro = new ResizeObserver(() => { setWidth(el.clientWidth || 600); seen(el.parentElement); });
     ro.observe(el);
-    return () => ro.disconnect();
+    document.addEventListener('scroll', onScroll, true);
+    return () => { ro.disconnect(); document.removeEventListener('scroll', onScroll, true); };
   }, []);
 
   const timeAt = (clientX) => {
@@ -414,12 +446,14 @@ function Timeline({ rows, duration, playing, currentTime, onSeek, onSelect, sele
   };
 
   const { major, minor } = rulerSteps(D, width);
+  const secPerPx = D / Math.max(1, width);
+  const lastTick = Math.ceil(((view.left + 2 * view.width) * secPerPx) / minor);
   const ticks = [];
-  for (let k = 0, s = 0; s <= D + 1e-6 && k < 2000; k += 1, s = k * minor) {
+  for (let k = Math.max(0, Math.floor(((view.left - view.width) * secPerPx) / minor)), s = k * minor; s <= D + 1e-6 && k <= lastTick; k += 1, s = k * minor) {
     const isMajor = Math.abs(s / major - Math.round(s / major)) < 1e-6;
     ticks.push(
       <div key={k} className={`glm-tick${isMajor ? ' is-major' : ''}`} style={{ left: `${(s / D) * 100}%` }}>
-        {isMajor && s < D - 1e-6 ? <span>{major < 1 ? `${+s.toFixed(2)}s` : s >= 60 ? clock(s, 0) : `${Math.round(s)}s`}</span> : null}
+        {isMajor && s < D - 1e-6 ? <span>{rulerLabel(s, major)}</span> : null}
       </div>,
     );
   }
@@ -752,6 +786,9 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     return () => { alive = false; };
   }, [raw, assets, source]);
 
+  // Any change on the page: Undo / Redo on the phone layout take it from here (studio/history.js).
+  useEffect(() => { window.dispatchEvent(new Event('glm:edits')); }, [itemEdits, clipEdits, timing, structEdits, values, applied]);
+
   const template = base?.template || null;
   // layer values on the normalized project (typing stays instant), then the template's values, then where
   // layers sit (again, so a move shows at once while the project is normalized anew), then a drag in progress
@@ -769,6 +806,10 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     return meter;
   });
   useEffect(() => () => slowMeter.dispose(), [slowMeter]);
+  const [cacheOut, setCacheOut] = useState(null);     // the size a cache render draws at, while one runs
+  const [cacheHold, setCacheHold] = useState(null);   // a still of the frame: a render takes over the preview
+  const [heavyCard, setHeavyCard] = useState(false);
+  const heavyAsked = useRef(false);
   const sound = useMemo(() => ({ any: hasSound(project), effects: hasSoundEffects(project) }), [project]);
   const size = project?.videoSize || { w: 1920, h: 1080 };
   const { rows, duration } = useMemo(() => layersOf(project?.channels, project?.clips), [project]);
@@ -782,6 +823,35 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   }, [slowMeter, mixed, meterKey, project?.projectFps]);
   useEffect(() => { slowMeter.setPlaying(playing); }, [slowMeter, playing]);
   const layerCount = rows.reduce((n, r) => n + r.layers.length, 0);
+  // A phone: the page caches slow seconds itself, and a film past what a phone can hold says so before its first Play.
+  const cacheInputs = useRef(null);
+  cacheInputs.current = { size };
+  useEffect(() => {
+    if (!phoneMode()) return undefined;
+    let clear = null;
+    const deps = localCacheDeps({
+      player: () => playerRef.current,
+      playhead: () => useVideoEditorStore.getState().playheadTime || 0,
+      size: () => {
+        const { w, h } = cacheInputs.current.size, k = Math.min(1, PHONE_LONG_EDGE / Math.max(w, h));
+        return { w: Math.round((w * k) / 2) * 2, h: Math.round((h * k) / 2) * 2 };
+      },
+      busy: () => !!abortRef.current,
+      begin: async (still, out) => {
+        clearTimeout(clear);
+        setCacheHold(still); setCacheOut(out);
+        await new Promise((r) => requestAnimationFrame(r));
+      },
+      end: () => {
+        setCacheOut(null);
+        clearTimeout(clear);
+        clear = setTimeout(() => setCacheHold(null), 250);   // the next stretch may start at once
+      },
+    });
+    slowMeter.setDeps(deps);
+    return () => { clearTimeout(clear); deps.dispose(); };
+  }, [slowMeter]);
+  const heavyCost = useMemo(() => (phoneMode() && project ? phoneFilmCost(project.channels, project.clips, duration) : NO_COST), [source, duration, project != null]);   // eslint-disable-line react-hooks/exhaustive-deps
   const title = template?.title || project?.name || 'Untitled video';
   const selected = useMemo(() => rows.flatMap((r) => r.layers).find((l) => l.id === selectedId) || null, [rows, selectedId]);
   const dirty = hasEdits({ itemEdits, clipEdits, timing, structEdits }) || JSON.stringify(values) !== initialValues.current;
@@ -806,7 +876,8 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     setPlayingState(false);
     setCurrentTime(t);
     useVideoEditorStore.getState().setPlayheadTime(t);
-  }, []);
+    slowMeter.noteActivity();
+  }, [slowMeter]);
 
   // The Player stops itself at the end; with Loop on, the page starts it again from the top.
   const loopRef = useRef(loop);
@@ -826,11 +897,19 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     setPlayingState(value);
   }, [seek]);
 
-  const togglePlay = useCallback(() => {
+  const togglePlay = useCallback((asked = true) => {
     if (render) return;
+    if (!playing && asked !== false && heavyCost.heavy && !heavyAsked.current && !slowMeter.hasEntries()) { setHeavyCard(true); return; }
     if (!playing && currentTime >= duration - 1e-3) seek(0);
+    if (slowMeter.isRendering()) slowMeter.stop();
     setPlayingState(!playing);
-  }, [playing, currentTime, duration, render, seek]);
+  }, [playing, currentTime, duration, render, seek, heavyCost, slowMeter]);
+  const prepareHeavy = useCallback(() => {
+    heavyAsked.current = true; setHeavyCard(false);
+    slowMeter.debug.forceSlow(0, duration);
+    slowMeter.renderNow();
+  }, [slowMeter, duration]);
+  const playHeavy = useCallback(() => { heavyAsked.current = true; setHeavyCard(false); togglePlay(false); }, [togglePlay]);
 
   const step = useCallback((dir, big = false) => {
     const from = playing ? (useVideoEditorStore.getState().playheadTime || 0) : currentTime;
@@ -1149,6 +1228,13 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
       retimeLayer: (id, span) => retimeLayer(id, span),
       pickAt: (x, y, at = currentTime) => pickAt(x, y, at),
       edits: () => ({ itemEdits, clipEdits, timing, structEdits, ops: editOps(), dirty }),
+      // every change on the page as one plain value, and back (Undo / Redo: studio/history.js)
+      editState: () => ({ itemEdits, clipEdits, timing, structEdits, values, applied }),
+      setEditState: (s) => { setSelectedTrans(null); setItemEdits(s.itemEdits); setClipEdits(s.clipEdits); setTiming(s.timing); setStructEdits(s.structEdits); setValues(s.values); setApplied(s.applied); },
+      // the render cache on a phone: the line's runs, and a stretch marked slow by hand (tests, agents)
+      cache: { state: () => slowMeter.debug.state(), snapshot: () => slowMeter.getSnapshot(), mark: (t0, t1) => slowMeter.debug.forceSlow(t0, t1), render: () => slowMeter.renderNow(), cost: () => heavyCost },
+      // what a phone holds right now (engine/phoneMedia.js), null elsewhere: { pictures, pictureMB, sequences, … }
+      memoryStats: () => (phoneMode() && playerRef.current ? phoneStats(playerRef.current.engine.engine) : null),
       // the seconds that played below 25 fps on this computer so far (the ruler's red line): [{ start, end }]
       slowParts: () => (slowMeter.getSnapshot().runs || []).filter((r) => r.state === 'slow').map((r) => ({ start: r.t0, end: r.t1 })),
       // what was measured, per second of the timeline: { [second]: 'slow|ok|unknown:<frames>:<fps>fps' }
@@ -1167,7 +1253,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
       },
       // review notes: where they go ('comments' | 'server' | 'local'), the notes, and the same as a mark + words
       review: { mode: review.mode, notes: () => review.notes, threads: () => review.threads, add: review.add, markdown: review.markdown, on: review.on, toggle: review.toggle },
-      play: () => { if (!playing) togglePlay(); },
+      play: () => { if (!playing) togglePlay(false); },
       pause: () => setPlayingState(false),
       seek,
       // A whole render without the UI (the CLI's `render`): base64 MP4, so a headless driver can read it.
@@ -1185,6 +1271,8 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
       },
       renderFrame: async (t) => {
         await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: { start: t, end: t + 1e-3 } });
+        // A phone keeps no scene it left: a video inside one has only just been asked for this time. It lands by the second look.
+        if (phoneMode()) { await playerRef.current?.captureFrameAtTime(Math.max(0, Number(t) || 0)); await new Promise((r) => setTimeout(r, 400)); }
         return playerRef.current?.captureFrameAtTime(Math.max(0, Number(t) || 0));
       },
     };
@@ -1233,7 +1321,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
               forceMuteAudio={false}
               videoWidth={size.w}
               videoHeight={size.h}
-              outputSize={null}
+              outputSize={cacheOut}
               previewQuality="full"
               motionBlurEnabled={motionBlur}
               background={project.background || null}
@@ -1242,6 +1330,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
               timecodeFps={fps}
               renderCache={slowMeter}
             />
+            {cacheHold && <img className="glm-hold" src={cacheHold} alt="" />}
             <div className="glm-pick" onPointerDown={onPreviewDown} aria-hidden="true" />
             {outline && (
               <svg className="glm-sel" viewBox={`0 0 ${size.w} ${size.h}`} aria-hidden="true">
@@ -1252,9 +1341,10 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
           </div>
           {review.on && <ReviewBar review={review} />}
           {review.composer && <NoteComposer composer={review.composer} fit={fit} size={size} onSave={review.saveComposer} onCancel={review.cancelComposer} />}
+          {heavyCard && <HeavyCard minutes={heavyCost.minutes} onPrepare={prepareHeavy} onPlay={playHeavy} />}
         </div>
-        <Transport duration={duration} playing={playing} currentTime={currentTime} onPlay={togglePlay} onStep={step}
-          loop={loop} onLoop={() => setLoop((v) => !v)} rows={rows} />
+        <Transport duration={duration} playing={playing} currentTime={currentTime} onPlay={togglePlay} onStep={step} onSeek={seek}
+          loop={loop} onLoop={() => setLoop((v) => !v)} rows={rows} meter={slowMeter} />
         <Timeline rows={rows} duration={duration || 1} playing={playing} currentTime={currentTime} onSeek={seek}
           onSelect={(l) => { setPlayingState(false); setSelectedTrans(null); setSelectedId(l.id); setPane('options'); }} selected={selectedId}
           limitsOf={limitsOf} onDrag={onLayerDrag} onDragEnd={onLayerDragEnd}

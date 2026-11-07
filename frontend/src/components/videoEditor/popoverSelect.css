@@ -1,0 +1,151 @@
+/* PopoverSelect's list (Fields.jsx): its own file, so a page without the Video Editor's stylesheet (the Agents window)
+   gets it too. The same rules stay in videoEditor.css; the trigger row is the editor's .ve-field-select there. */
+.ve-popsel-ctl { position: relative; }
+.ve-popsel-ctl.open { border-bottom-color: #2e3335; background: rgba(255, 255, 255, 0.035); }
+.ve-popsel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+.ve-popsel-btn:focus-visible { outline: none; }
+.ve-popsel-btn-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ve-popsel-ctl.is-warn .ve-popsel-btn-text { color: #e2b45c; }
+.ve-popsel-pop {
+  display: flex;
+  flex-direction: column;
+  background: #1b1c1f;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  box-shadow: 0 18px 44px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 40%);
+  overflow: hidden;
+}
+.ve-popsel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: calc(100vw - 16px);
+  outline: none;
+}
+.ve-popsel-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #26272b;
+  flex: 0 0 auto;
+}
+.ve-popsel-search-icon { color: var(--text-muted); font-size: 12px; }
+.ve-popsel-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+}
+.ve-popsel-search input::placeholder { color: var(--text-muted); }
+.ve-popsel-search kbd {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+  border: 1px solid #303136;
+  border-radius: 4px;
+  padding: 3px 5px;
+  background: #202124;
+}
+.ve-popsel-clear {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.ve-popsel-clear:hover { color: var(--text-primary); }
+.ve-popsel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 6px 6px;
+}
+.ve-popsel-ghead {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 700;
+  padding: 8px 8px 4px;
+}
+.ve-popsel-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 5px 8px 5px 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--ve-field-value);
+  transition: background 0.08s;
+}
+.ve-popsel-row.has-sub { padding-top: 4px; padding-bottom: 4px; }
+.ve-popsel-row:hover:not(:disabled) { background: #292b30; }
+.ve-popsel-row.is-current { background: #26282d; border-color: #30323a; color: #fff; }
+.ve-popsel-row.is-current:hover { background: #2c2e34; }
+.ve-popsel-row:disabled { opacity: 0.45; cursor: default; }
+.ve-popsel-row.is-warn .ve-popsel-name { color: #e2b45c; }
+.ve-popsel-check {
+  flex: 0 0 12px;
+  width: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+}
+.ve-popsel-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.ve-popsel-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ve-popsel-name b, .ve-popsel-sub b { color: var(--text-primary); font-weight: 700; }
+.ve-popsel-sub {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ve-popsel-flag {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  border: 1px solid #303136;
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.ve-popsel-none {
+  padding: 18px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.ve-popsel-none b { color: var(--text-secondary); }
+.ve-popsel-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #26272b;
+  padding: 6px 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.ve-popsel-foot b { color: var(--text-secondary); font-weight: 600; }

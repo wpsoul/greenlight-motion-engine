@@ -13,12 +13,15 @@ import { writeTrackSlots } from './objectTracking';
 import { SHAPE_RULERS_GLSL } from './shapeRulersGlsl';
 import { FAST_BLUR_EFFECT } from './fastBlurEffect';
 import { DEEP_GLOW_EFFECT } from './deepGlowEffect';
+import { GRADIENT_GLOW_EFFECT } from './gradientGlowEffect';
 import { RADIAL_FAST_BLUR_EFFECT } from './radialFastBlurEffect';
 import { GRID_LINES_EFFECT } from './gridLinesEffect';
 import { ASCII_EFFECT, getAsciiAtlas } from './asciiEffect';
 import { PIXELATE_EFFECT } from './pixelateEffect';
 import { POSTERIZE_EFFECT } from './posterizeEffect';
 import { STRIP_EFFECT } from './stripEffect';
+import { LIGHT_SWEEP_EFFECT } from './lightSweepEffect';
+import { GOOEY_EFFECT } from './gooeyEffect';
 
 /*
  * Overlay Effects — the shared GPU chain for adjustment and regular layers.
@@ -1240,6 +1243,9 @@ vec4 fx(vec2 uv) {
 }
 `,
   },
+
+  // ── Gradient Glow (gradientGlowEffect.js, PRO) ───────────────────────────────
+  GRADIENT_GLOW_EFFECT,
 
   {
     id: 'fractalNoise',
@@ -2903,6 +2909,10 @@ ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'colorama
 ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'gridLines') + 1, 0, STRIP_EFFECT);
 // Radial Fast Blur (AE CC Radial Fast Blur port) sits beside Radial Blur in Lens.
 ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'radialBlur') + 1, 0, RADIAL_FAST_BLUR_EFFECT);
+// Light Sweep (AE CC Light Sweep, html/light-sweep-lab is the look-dev) sits beside Light Rays in Light.
+ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'lightRays') + 1, 0, LIGHT_SWEEP_EFFECT);
+// Gooey (liquid merge / metaballs, promo-special/fx-labs/gooey_lab.html is the look-dev) sits beside Alpha Choker in Matte.
+ADJUSTMENT_EFFECTS.splice(ADJUSTMENT_EFFECTS.findIndex((e) => e.id === 'alphaChoker') + 1, 0, GOOEY_EFFECT);
 // The Object family (geometric-art). Each entry carries its OWN subject scan on
 // the effect instance, so they register as ordinary Overlay Effects — see
 // objectEffects.js for why this is not a section of its own.
@@ -3654,7 +3664,8 @@ export function effectParamKfMeta(effect, paramKey) {
   if (!def) return null;
   if (paramKey === EFFECT_MIX_PARAM) return { min: 0, max: 100, step: 1, label: 'Mix', unit: '%' };
   const p = def.params.find((x) => x.key === paramKey && (!x.type || x.type === 'number') && !x.static);
-  return p ? { min: p.min, max: p.max, step: p.step, label: p.label, unit: p.suffix || '' } : null;
+  if (!p) return null;
+  return { min: p.free ? -Infinity : p.min, max: p.free ? Infinity : p.max, step: p.step, label: p.label, unit: p.suffix || '' };
 }
 
 function makeEffectKfProp(eff, effName, paramKey, meta, currentValue, group = 'Overlay Effects') {
@@ -3876,11 +3887,13 @@ function parseHexColor(hex) {
   return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 };
 }
 
+// `free`: the descriptor's min / max bound the field's slider, not the value (Light Sweep's
+// Direction and Center: AE's own have no end, and a keyed spin or a pivot off the layer is normal).
 function clampParam(val, p) {
   const n = Number.isFinite(val) ? val : p.default;
   const lo = Number.isFinite(p.min) ? p.min : -Infinity;
   const hi = Number.isFinite(p.max) ? p.max : Infinity;
-  return Math.min(hi, Math.max(lo, n));
+  return p.free ? n : Math.min(hi, Math.max(lo, n));
 }
 
 // Push an effect config + frame context onto its material's uniforms.

@@ -197,7 +197,8 @@ export function renderLayerDepthScan(engine, srcTarget, scan, layerMesh, chCam, 
   return dest;
 }
 
-export function renderLayerAutoFill(engine, srcTarget, af, layerMesh, t, flipPlate = false) {
+// `cam`: the camera the isolate was filmed with (the sequence compositor's own).
+export function renderLayerAutoFill(engine, srcTarget, af, layerMesh, t, flipPlate = false, cam = engine.camera) {
   const renderer = engine.renderer;
   const orthoCamera = engine.orthoCamera;
   if (!renderer || !orthoCamera || !layerMesh) return srcTarget;
@@ -223,7 +224,7 @@ export function renderLayerAutoFill(engine, srcTarget, af, layerMesh, t, flipPla
       plate = norm;
     }
   }
-  const box = computeLayerBox(layerMesh, engine.camera, plate.width, plate.height);
+  const box = computeLayerBox(layerMesh, cam, plate.width, plate.height);
   if (!box) return srcTarget;
   const duration = entry.endTime - entry.startTime;
   const progress = duration > 0 ? Math.max(0, Math.min(1, (t - entry.startTime) / duration)) : 0;

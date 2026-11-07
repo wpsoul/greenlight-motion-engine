@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { normalizeBlendMode, isShaderBlendMode } from './blendModes.js';
-import { withBorderKeyframes } from './borderKeyframes.js';
+import { withBorderKeyframes, withRadiusKeyframes, withRadiusScaleLock } from './borderKeyframes.js';
 import { ccUniformValues, applyCcKeyframes } from './colorCorrection.js';
 
 const vertexShader = /* glsl */ `
@@ -62,6 +62,7 @@ uniform vec4 uCcHslS0;
 uniform vec4 uCcHslS1;
 uniform vec4 uCcHslL0;
 uniform vec4 uCcHslL1;
+uniform vec2 uCcDetail; // Details (-1..1), Sharpen (0..1); both 0 = no neighbour taps
 varying vec4 vCcClip;
 uniform float uBlur;
 uniform float uZoomBlur; // transient radial sampling trail used by advanced transitions
@@ -276,8 +277,47 @@ vec3 ccHsl(vec3 c) {
   vec3 r = ccHsv2Rgb(vec3(fract(h.x + dh * w * (30.0 / 360.0)), clamp(h.y * (1.0 + ds * w), 0.0, 1.0), h.z));
   return r * (1.0 + dl * 0.5 * w);
 }
-vec3 ccGrade(vec3 src) {
-  vec3 c = ccToDisp(ccToLin(src) * uCcGain);   // display-referred, may exceed 1 until the end
+// Details + Sharpen: luminance detail read from the plate around this pixel and
+// added to the grade's INPUT, so Mix and Before/After treat it like every section.
+// px is one COMPOSITION pixel in texture UV — a preview proxy and the full-size
+// file an export reads are sharpened alike. Each tap is (luma, alpha); luma is
+// straight (premultiplied plates are divided back). A kernel only acts where ALL its
+// taps are opaque: on a straight-alpha plate a bilinear tap across a cut-out's edge
+// already holds the transparent texels' colour, so near the edge it would halo.
+vec2 ccTap(vec2 uv) {
+  vec4 t = texture2D(uTexture, clamp(uv, 0.0, 1.0));
+  float y = dot(t.rgb, vec3(0.2126, 0.7152, 0.0722));
+  return vec2(uInputPremultiplied > 0.5 ? y / max(t.a, 1e-4) : y, t.a);
+}
+// Small differences pass whole, big edges saturate at k: the halo guard.
+float ccSoft(float d, float k) { return d * k / (k + abs(d)); }
+float ccOpaque(vec2 a, vec2 b, vec2 c, vec2 d) { return smoothstep(0.85, 1.0, min(min(a.y, b.y), min(c.y, d.y))); }
+float ccDetail(vec2 uv, vec2 px) {
+  vec2 c = ccTap(uv);
+  float off = 0.0;
+  if (uCcDetail.y > 0.0) {
+    // Sharpen: unsharp mask against a 3×3 binomial — four bilinear taps on the half-pixel diagonals.
+    vec2 t0 = ccTap(uv + px * vec2(0.5, 0.5)), t1 = ccTap(uv + px * vec2(-0.5, 0.5));
+    vec2 t2 = ccTap(uv + px * vec2(0.5, -0.5)), t3 = ccTap(uv + px * vec2(-0.5, -0.5));
+    float blur = (t0.x + t1.x + t2.x + t3.x) * 0.25;
+    off += uCcDetail.y * 1.75 * ccSoft(c.x - blur, 0.25) * ccOpaque(t0, t1, t2, t3);
+  }
+  if (uCcDetail.x != 0.0) {
+    // Details: local contrast against a ~2.5 px blur (axial ring at 2 px, diagonal ring at 4 px),
+    // eased off toward black and white. Below 0 it smooths fine texture and keeps the edges.
+    vec2 a0 = ccTap(uv + px * vec2(2.0, 0.0)), a1 = ccTap(uv + px * vec2(-2.0, 0.0));
+    vec2 a2 = ccTap(uv + px * vec2(0.0, 2.0)), a3 = ccTap(uv + px * vec2(0.0, -2.0));
+    vec2 d0 = ccTap(uv + px * vec2(2.83, 2.83)), d1 = ccTap(uv + px * vec2(-2.83, 2.83));
+    vec2 d2 = ccTap(uv + px * vec2(2.83, -2.83)), d3 = ccTap(uv + px * vec2(-2.83, -2.83));
+    float blur = (a0.x + a1.x + a2.x + a3.x) * 0.15 + (d0.x + d1.x + d2.x + d3.x) * 0.1;
+    float k = uCcDetail.x > 0.0 ? uCcDetail.x * 1.6 : uCcDetail.x * 0.95;
+    off += k * ccSoft(c.x - blur, 0.15) * min(1.0, 6.0 * c.x * (1.0 - c.x))
+         * ccOpaque(a0, a1, a2, a3) * ccOpaque(d0, d1, d2, d3);
+  }
+  return off * smoothstep(0.85, 1.0, c.y);
+}
+vec3 ccGrade(vec3 src, float det) {
+  vec3 c = ccToDisp(ccToLin(clamp(src + det, 0.0, 1.0)) * uCcGain);   // display-referred, may exceed 1 until the end
   if (uCcTone2.y > 0.5) c = ccTone(c);
   if (uCcCtl.w < 0.5) {
     if (uCcFlags.x > 0.5) c = ccLevels(c);
@@ -816,7 +856,9 @@ void main() {
   // Color Correction fixes the SOURCE, so it runs ahead of the stylising
   // filters below. Before/After: frame x left of the split keeps the original.
   if (uCcCtl.x > 0.5 && (uCcCtl.y < 0.0 || vCcClip.x / vCcClip.w * 0.5 + 0.5 >= uCcCtl.y)) {
-    color.rgb = ccGrade(clamp(color.rgb, 0.0, 1.0));
+    float ccDet = 0.0;
+    if (uCcDetail.x != 0.0 || uCcDetail.y > 0.0) ccDet = ccDetail(texUv, fitScale / max(uCanvasSize, vec2(1.0)));
+    color.rgb = ccGrade(clamp(color.rgb, 0.0, 1.0), ccDet);
   }
 
   // Brightness
@@ -994,6 +1036,7 @@ function createColorCorrectionUniforms() {
     uCcHslS1: { value: new THREE.Vector4(0, 0, 0, 0) },
     uCcHslL0: { value: new THREE.Vector4(0, 0, 0, 0) },
     uCcHslL1: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uCcDetail: { value: new THREE.Vector2(0, 0) },
   };
 }
 
@@ -1250,8 +1293,11 @@ export function getFramingExpansion(item) {
   return m > 0.01 ? Math.ceil(m + 4) : 0; // +4px anti-aliasing headroom
 }
 
-// Resolve an item's corner radii as [TL, TR, BR, BL] honoring the link toggle.
-export function getItemCornerRadii(item) {
+// Resolve an item's corner radii as [TL, TR, BR, BL] honoring the link toggle, this
+// frame's radius tracks (`keyframeProps`) and the scale lock, which divides by
+// `layerScale` — the layer's own scale the plate is drawn at (borderKeyframes.js).
+export function getItemCornerRadii(rawItem, keyframeProps = null, layerScale = 1) {
+  const item = withRadiusScaleLock(withRadiusKeyframes(rawItem, keyframeProps), layerScale);
   const base = Number.isFinite(item?.borderRadius) ? Math.max(0, item.borderRadius) : 0;
   if (item?.borderRadiusLinked !== false) return [base, base, base, base];
   const c = (v) => (Number.isFinite(v) ? Math.max(0, v) : base);
@@ -1260,7 +1306,7 @@ export function getItemCornerRadii(item) {
 
 export function applyFilterUniforms(mat, item, keyframeProps, options = {}) {
   const u = mat.uniforms;
-  const { reducedMotionPreview = false, disableFraming = false, silhouetteFraming = false, disableLetterSpacing = false } = options;
+  const { reducedMotionPreview = false, disableFraming = false, silhouetteFraming = false, disableLetterSpacing = false, layerScale = 1 } = options;
   const brightness = keyframeProps?.brightness ?? (Number.isFinite(item?.filterBrightness) ? item.filterBrightness : 100);
   const contrast = keyframeProps?.contrast ?? (Number.isFinite(item?.filterContrast) ? item.filterContrast : 100);
   const saturation = keyframeProps?.saturate ?? (Number.isFinite(item?.filterSaturation) ? item.filterSaturation : 100);
@@ -1316,7 +1362,7 @@ export function applyFilterUniforms(mat, item, keyframeProps, options = {}) {
     u.uPlaneExpand.value = 0;
     return;
   }
-  const radii = getItemCornerRadii(item);
+  const radii = getItemCornerRadii(item, keyframeProps, layerScale);
   u.uCornerRadii.value.set(radii[0], radii[1], radii[2], radii[3]);
   // A keyed layer draws its border and shadows along the keyed silhouette in a
   // pass after the key (silhouetteFraming.js), so the box ring and box shadows
@@ -1415,6 +1461,8 @@ export function applyColorCorrectionUniforms(mat, cc, { ccSplit = -1, ccStage = 
   u.uCcHslS1.value.set(v.hslS[4], v.hslS[5], v.hslS[6], v.hslS[7]);
   u.uCcHslL0.value.set(v.hslL[0], v.hslL[1], v.hslL[2], v.hslL[3]);
   u.uCcHslL1.value.set(v.hslL[4], v.hslL[5], v.hslL[6], v.hslL[7]);
+  // The pickers' probe reads one point of the plain picture: no neighbour detail.
+  if (u.uCcDetail) u.uCcDetail.value.set(pre ? 0 : v.det[0], pre ? 0 : v.det[1]);
 }
 
 // Blend modes. The catalogue lives in blendModes.js: the six HARDWARE modes

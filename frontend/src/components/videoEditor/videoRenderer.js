@@ -25,6 +25,7 @@
  * is readiness, and on WebGPU `render()` THROWS before it, so nothing may paint
  * until `ready` resolves.
  */
+import '../../utils/wgslSwizzleFix';
 import * as THREE from 'three';
 import { getPreviewTier } from './previewDeviceTier.js';
 import { notePerfRenderer } from './perfRegistry.js';

@@ -49,7 +49,7 @@ function fnv1a(str) {
 // only (a nested `name` can be a font name, which draws); `prerender` records are
 // dropped at every depth (a nested sequence's own prerender does not change what
 // the outer timeline shows).
-function stableJson(value, skip = null, depth = 0) {
+export function stableJson(value, skip = null, depth = 0) {
   if (value === null || typeof value !== 'object') {
     const json = JSON.stringify(value);
     return json === undefined ? 'null' : json;
@@ -61,7 +61,7 @@ function stableJson(value, skip = null, depth = 0) {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJson(value[k], null, depth + 1)}`).join(',')}}`;
 }
 
-const digestOf = (json) => `${fnv1a(json)}${json.length.toString(36)}`;
+export const digestOf = (json) => `${fnv1a(json)}${json.length.toString(36)}`;
 
 // Bookkeeping that never draws. `prerender` records (layer or sequence) are a
 // faithful stand-in for the live layer, so one arriving or going stale does not
@@ -108,7 +108,7 @@ function channelDigest(channel) {
 // The walk is memoised per item object as the set of short strings it holds; the
 // id filter runs per call (the id set is rebuilt with every recompute).
 const refCandidateCache = new WeakMap(); // item -> string[]
-function itemRefs(item, idSet) {
+export function itemRefs(item, idSet) {
   let candidates = refCandidateCache.get(item);
   if (!candidates) {
     const found = new Set();

@@ -3,6 +3,7 @@
  * of Player.jsx, which imports them back for the code that has not moved yet).
  */
 import * as THREE from 'three';
+import { phoneMode } from './phoneMode';
 
 // `mipmaps` is for SUPERSAMPLED plates only ("smooth edges" mode), where the canvas
 // is deliberately denser than the screen and has to be averaged back down. Plain
@@ -19,6 +20,7 @@ export function ensureTextTexture(cacheRef, key, width, height, mipmaps = false)
     && existing.mipmaps === mipmaps) return existing;
   existing?.texture?.dispose();
   existing?.release?.(); // GPU extras riding the entry (the text Deep Glow's plates and targets)
+  if (existing && phoneMode()) { existing.canvas.width = 0; existing.canvas.height = 0; }   // now, not when it is collected
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;

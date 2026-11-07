@@ -68,6 +68,9 @@ export const LAYER_TRANSITION_META = Object.freeze({
   'Pixel Blocks': Object.freeze(['advanced',
     'The layer arrives behind a front of pixel blocks that sweeps, bursts from a point or dissolves — or a colour wipes in first',
     'The layer breaks into pixel blocks that sweep, burst or dissolve away — or a colour wipes over it first']),
+  'Zoom Ruler': Object.freeze(['advanced',
+    'The layer opens inside a growing ruler box — full-frame guides and corner marks — with an optional zoom',
+    'A growing ruler box — full-frame guides and corner marks — cuts the layer away from the inside']),
   Custom: Object.freeze(['special', 'Built in the Transition Builder', 'Built in the Transition Builder']),
 });
 

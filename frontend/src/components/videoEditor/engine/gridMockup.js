@@ -12,10 +12,11 @@ import { gridKfOverrides, gridLayoutMixPoses, normalizeGridConfig } from '../gri
 import { getItemKeyframeValues, integratePathRate, itemHasKeyframes } from '../gsapTransitions';
 import { PARENTING_FULL_COPY, applyParenting, localPrs, resolveItemPrs, worldDeltaToLocal } from '../keyframeParenting';
 import { materials as makeMaterial } from '../materialFactory';
-import { applyMockupFrameUniforms, buildMockupDevice, createMockupFramePass, expandLayerBox, layoutMockupFrame, mockupChassisBoundsUv, mockupPassQuad, mockupShadowPad, resolveMockupFrameParams, updateMockupChassisCanvas } from '../mockupFrame';
+import { applyMockupFrameUniforms, buildMockupDevice, createMockupFramePass, expandLayerBox, layoutMockupFrame, mockupChassisBoundsUv, mockupPassQuad, mockupSeatTransform, mockupShadowPad, resolveMockupFrameParams, updateMockupChassisCanvas } from '../mockupFrame';
 import { VECTOR_DENSITY_BUCKETS, densityBytes, resolveDensity } from '../rasterDensity';
 import { measureScreenScale } from '../rasterDensityProject';
 import { composeViewRotation } from './camera';
+import { seatLayerMesh } from './compositeHelpers';
 import { computeLayerBox, layerPlaneBox } from './layerWarps';
 
 // ── A grid's cells are REAL 3D objects ──
@@ -403,4 +404,23 @@ export function resolveMockupStageParams(engine, fx, t) {
   if (p.mfScrollX) params.mfMediaX = p.mfMediaX - integratePathRate(fx.item, 'mfScrollSpeedX', p.mfScrollSpeedX, now, dur);
   if (p.mfScrollY) params.mfMediaY = p.mfMediaY - integratePathRate(fx.item, 'mfScrollSpeedY', p.mfScrollSpeedY, now, dur);
   return params;
+}
+
+// Mockup Frame SEATS the layer for its isolate: the mesh is posed into the chassis
+// screen (in its own plane, so a 3D tilt carries it) before the isolate renders, so
+// every stage after it holds the artwork already inside the screen and the pass
+// reads it at identity. Returns the saved pose for unseatLayerMesh, or null when
+// the frame cannot seat (the pass then falls back to the projected read). Shared
+// by the top-level compositor and the sequence compositor.
+export function seatMockupLayer(engine, mockupFrame, mesh, chCam, pixelW, pixelH, t) {
+  if (!mesh) return null;
+  const mfParams = resolveMockupStageParams(engine, mockupFrame, t);
+  const mfDev = buildMockupDevice(mfParams);
+  const mfBox = computeLayerBox(mesh, chCam, pixelW, pixelH);
+  const mfPlane = mfBox ? layerPlaneBox(mesh, chCam, pixelH) : null;
+  if (!mfDev || !(mfDev.w > 0) || !(mfDev.h > 0) || !mfPlane?.sizePlane) return null;
+  const [bw, bh] = mfPlane.sizePlane;
+  const mfLayout = layoutMockupFrame(mfDev, Math.max(1, bw), Math.max(1, bh), mfParams);
+  if (!(mfLayout.scale > 1e-6)) return null;
+  return seatLayerMesh(mesh, mockupSeatTransform(mfDev, mfParams, mfLayout, Math.max(1, bw), Math.max(1, bh)), mfPlane.pxPerWorld);
 }

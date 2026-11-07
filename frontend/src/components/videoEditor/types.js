@@ -251,6 +251,8 @@ export const LayerTransitionType = {
    * reveals it; its exit maps the layer and dissolves the map to nothing.
    * Pixel Blocks block the layer in (or out) over what is under it; a colour
    * wipe fills only the layer's own pixels.
+   * The Zoom Ruler's entrance opens the layer inside the growing ruler box over
+   * what is under it; its exit keeps the layer outside the box until it clears.
    *
    * The options live in transitionIn/OutOptions, resolved through the SAME
    * ADVANCED_TRANSITION_PRESETS descriptor the cross slot reads.
@@ -262,6 +264,7 @@ export const LayerTransitionType = {
   GLOW_STACK: 'Gradient Glow Stack',
   GRADIENT_MAP: 'Gradient Map',
   PIXEL_BLOCKS: 'Pixel Blocks',
+  ZOOM_RULER: 'Zoom Ruler',
   CUSTOM: 'Custom',
 };
 
@@ -275,6 +278,7 @@ export const ADVANCED_LAYER_TRANSITIONS = Object.freeze([
   LayerTransitionType.GLOW_STACK,
   LayerTransitionType.GRADIENT_MAP,
   LayerTransitionType.PIXEL_BLOCKS,
+  LayerTransitionType.ZOOM_RULER,
 ]);
 
 export function isAdvancedLayerTransition(type) {
@@ -292,15 +296,22 @@ export function itemHasLayerTransition(item) {
 }
 
 export const TransitionEasing = {
+  // The order is the easing picker's (EasingPicker.jsx GROUPS) so every plain dropdown
+  // lists the curves the same way: Basic, After Effects, Expressive, springs, families.
   LINEAR: 'Linear',
   EASE_IN: 'Ease In',
   EASE_OUT: 'Ease Out',
   EASE_IN_OUT: 'Smooth',
-  // The owner's own curves from the "Easing study" board (2026-10-16): Smooth Glide arrives fast, glides slowly
-  // through the middle and leaves fast (its "Glide Easing" layer); Glide Easing Stop jumps in, all but stops,
-  // then goes (its "Glide Easing Stop" layer). Both are cubic beziers — see EASING_BEZIER.
-  SMOOTH_GLIDE: 'Smooth Glide',
-  GLIDE_STOP: 'Glide Easing Stop',
+  // Expressive curves ported from the legacy MotionFast template easing catalogue
+  // (greenlight-render-templates/templates/common/easings.ts). Natural and Slow Down
+  // are cubic beziers; Overshoot/Impulse/Swing are sampled spring curves.
+  NATURAL: 'Natural',
+  // From the "Easing Lab" board (2026-11-01), both plain cubic beziers. Punch winds up
+  // slowly, hits hard and trails a long tail (scene changes on the beat, a logo hit, a
+  // screen swipe); nothing else in the list is within 0.23 of it. Apple Out starts at
+  // full speed and spends most of the move in a soft stop (UI panels, drawers, a
+  // camera landing).
+  PUNCH: 'Punch',
   // After Effects-style bezier curves — same curves as MotionFast's aeIn/aeSmooth/aeOut.
   // AE names a curve by the side of the key its influence sits on, so the shapes read
   // backwards to the CSS names: AE In starts fast and brakes into the key (an arrival),
@@ -308,6 +319,27 @@ export const TransitionEasing = {
   AE_IN: 'AE In (arrive)',
   AE_SMOOTH: 'AE Smooth',
   AE_OUT: 'AE Out (leave)',
+  // The owner's own curves from the "Easing study" board (2026-10-16): Smooth Glide arrives fast, glides slowly
+  // through the middle and leaves fast (its "Glide Easing" layer); Glide Easing Stop jumps in, all but stops,
+  // then goes (its "Glide Easing Stop" layer). Both are cubic beziers — see EASING_BEZIER.
+  SMOOTH_GLIDE: 'Smooth Glide',
+  GLIDE_STOP: 'Glide Easing Stop',
+  APPLE_OUT: 'Apple Out',
+  SLOW_DOWN: 'Slow Down',
+  OVERSHOOT: 'Overshoot',
+  IMPULSE: 'Impulse',
+  SWING: 'Swing',
+  // Winds back first, then snaps through to the end: an exit. Sampled.
+  ANTICIPATE: 'Anticipate',
+  BACK_IN: 'Back In',
+  BACK_OUT: 'Back Out',
+  BACK_IN_OUT: 'Back Smooth',
+  BOUNCE_OUT: 'Bounce Out',
+  ELASTIC_OUT: 'Elastic',
+  // The smooth sibling of Overshoot/Elastic: the same springy character, but it
+  // leaves 0 at zero velocity instead of being thrown, and rings once instead
+  // of several times. Sampled — see SAMPLED_EASING_VALUES.
+  SMOOTH_OVERSHOOT: 'Smooth Overshoot',
   SINE_IN: 'Sine In',
   SINE_OUT: 'Sine Out',
   SINE_IN_OUT: 'Sine Smooth',
@@ -318,32 +350,6 @@ export const TransitionEasing = {
   EXPO_IN_OUT: 'Expo Smooth',
   // A hard, decisive stop (GSAP power4.out; drawn as cubic-bezier(0.23, 1, 0.32, 1)).
   POWER: 'Power',
-  // From the "Easing Lab" board (2026-11-01), both plain cubic beziers. Punch winds up
-  // slowly, hits hard and trails a long tail (scene changes on the beat, a logo hit, a
-  // screen swipe); nothing else in the list is within 0.23 of it. Apple Out starts at
-  // full speed and spends most of the move in a soft stop (UI panels, drawers, a
-  // camera landing).
-  PUNCH: 'Punch',
-  APPLE_OUT: 'Apple Out',
-  BACK_IN: 'Back In',
-  BACK_OUT: 'Back Out',
-  BACK_IN_OUT: 'Back Smooth',
-  BOUNCE_OUT: 'Bounce Out',
-  ELASTIC_OUT: 'Elastic',
-  // Expressive curves ported from the legacy MotionFast template easing catalogue
-  // (greenlight-render-templates/templates/common/easings.ts). Natural and Slow Down
-  // are cubic beziers; Overshoot/Impulse/Swing are sampled spring curves.
-  NATURAL: 'Natural',
-  SLOW_DOWN: 'Slow Down',
-  OVERSHOOT: 'Overshoot',
-  IMPULSE: 'Impulse',
-  SWING: 'Swing',
-  // The smooth sibling of Overshoot/Elastic: the same springy character, but it
-  // leaves 0 at zero velocity instead of being thrown, and rings once instead
-  // of several times. Sampled — see SAMPLED_EASING_VALUES.
-  SMOOTH_OVERSHOOT: 'Smooth Overshoot',
-  // Winds back first, then snaps through to the end: an exit. Sampled.
-  ANTICIPATE: 'Anticipate',
   // ── Keyframe-only easings ──
   // CUSTOM reads the key's own `bezier: [x1, y1, x2, y2]` (the graph editor writes
   // it by dragging handles); HOLD steps to the next key instead of interpolating.
@@ -445,6 +451,7 @@ export const MODEL_CONFIG_DEFAULTS = {
   fitValue: 60,
   anchor: 'center',
   placeOnRigFloor: true,
+  physics: 'off',
   baseRotation: { x: 0, y: 0, z: 0 },
   env: { hdr: 'potsdamer_platz_1k', intensity: 1, exposure: 1, rotation: 0 },
   lights: { key: 1, fill: 0.45, rim: 0.35 },

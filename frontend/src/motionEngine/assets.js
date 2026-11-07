@@ -21,6 +21,9 @@
  *   PROJECT to blob:/data: URLs (textures can't use local files); anything a loader fetches
  *   (models, HDRs) is answered through fetch. A ref nobody provides fails soft and is listed in
  *   missing(), so a CLI or an agent can supply it and load again.
+ * - A page GreenLight Dash itself serves (a review card on a board) says so (setServerFiles): its
+ *   `/media/...` and `/hdr/...` are real files at that address, so those requests go out as they
+ *   do from the same card opened as a file. `/api/...` stays the engine's.
  */
 
 import { setPackageAssetResolver } from '../components/videoEditor/packageAssetUrls';
@@ -30,6 +33,13 @@ const PROJECT_REF_PREFIXES = ['/media/', '/hdr/', 'asset:', 'motion-engine-unbun
 const isProjectRef = (v) => typeof v === 'string' && PROJECT_REF_PREFIXES.some((p) => v.startsWith(p));
 // Root paths that mean "the GreenLight Dash server" when a page on http(s) asks its own origin.
 const SERVER_ROOTS = ['/api/', '/media/', '/hdr/'];
+
+let serverFiles = false;
+/** This page is served by GreenLight Dash: its project's files are real, at their own addresses. */
+export function setServerFiles() {
+  serverFiles = true;
+}
+const onServer = (ref) => serverFiles && (ref.startsWith('/media/') || ref.startsWith('/hdr/'));
 
 /*
  * The reference a request stands for, or null when it is an ordinary URL. Loaders (three's
@@ -186,6 +196,7 @@ export function installFetchLayer() {
       const list = method === 'GET' || method === 'HEAD' ? API_LISTS[path] : null;
       return list ? json(200, list) : json(404, { detail: 'Not available in the GreenLight Motion Engine' });
     }
+    if (onServer(path)) return nativeFetch(input, init);
     if (ref) {
       const blob = activeResolver ? await activeResolver.blob(path) : null;
       if (blob) return new Response(blob, { status: 200, headers: { 'content-type': blob.type || 'application/octet-stream' } });
@@ -256,6 +267,7 @@ export async function resolveProject(project, resolver) {
   const unresolved = new Set();
   const walk = async (value) => {
     if (isProjectRef(value)) {
+      if (onServer(value)) return value;
       const url = await resolver.url(value);
       if (url) return url;
       unresolved.add(value);

@@ -196,6 +196,9 @@ export function engineInitialValues() {
     rcSample: { lastPaint: 0, warmUntil: 0 },
     rcTargetMs: 1000 / 30,
     rcMediaOnly: false,
+    phonePictureEdge: 0,   // set while a real render runs on a phone (./phoneMedia.js)
+    phoneLookAt: 0,
+    phonePlatesAt: 0,
     rcPlate: null,
     rcDrewCache: false,
     motionBlurModule: null,

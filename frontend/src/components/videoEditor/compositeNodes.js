@@ -358,6 +358,41 @@ const FAR_PLANE = 0.999999;
  * pixel. Both sides share one projection, so the copied values need no
  * linearisation.
  */
+/**
+ * The world's canvas split in one draw: the picture over its depth (src/world3d/WorldRenderer.js, #handoffNode) into a
+ * colour plate and a real depth texture, in the compositor's own near/far. GLSL twin: createWorldPlateMaterial.
+ */
+export function createWorldPlateNodeMaterial({ worldNear, worldFar, worldUnits }) {
+  const u = { uHandoff: makeSampler(), uNear: uniform(1), uFar: uniform(100000), uShadow: uniform(0) };
+  const material = new THREE.MeshBasicNodeMaterial();
+  // As in the GLSL twin: a canvas uploads top row first, so the picture is the half at high v, and depth the half below it.
+  // The shadows go straight onto the stack, which a layer's plate does not: that hop has the other parity on WebGPU.
+  const v = u.uShadow.greaterThan(0.5).select(uv().y.oneMinus(), uv().y);
+  const top = vec2(uv().x, v.mul(0.5).add(0.5));
+  const below = vec2(uv().x, v.mul(0.5));
+  // A canvas drops alpha, so coverage comes in the depth band.
+  const band = u.uHandoff.sample(below);
+  const picture = vec4(u.uHandoff.sample(top).rgb, band.b);
+  // The shadows alone: what has coverage and no surface.
+  const empty = band.r.greaterThanEqual(0.999).and(band.g.greaterThanEqual(0.999));
+  material.colorNode = u.uShadow.greaterThan(0.5).and(empty.not()).select(vec4(0, 0, 0, 0), picture);
+  material.depthNode = Fn(() => {
+    const packed = u.uHandoff.sample(below);
+    const encoded = packed.r.mul(255).round().add(packed.g).div(255);
+    const distance = float(worldNear).mul(float(worldFar / worldNear).pow(encoded)).div(float(worldUnits));
+    const depth = u.uFar.mul(distance.sub(u.uNear)).div(u.uFar.sub(u.uNear).mul(distance));
+    return packed.r.greaterThanEqual(0.999).and(packed.g.greaterThanEqual(0.999)).select(float(1), depth.min(0.99999));
+  })();
+  material.transparent = false;
+  material.blending = THREE.NoBlending;     // an opaque NormalBlending material has its alpha forced to 1
+  material.toneMapped = false;
+  material.depthTest = true;
+  material.depthFunc = THREE.AlwaysDepth;
+  material.depthWrite = true;
+  material.uniforms = u;
+  return material;
+}
+
 export function createDepthStampNodeMaterial() {
   const u = {
     uDepth: makeSampler(),

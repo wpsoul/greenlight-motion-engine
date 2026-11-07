@@ -24,6 +24,8 @@ import { wireEngine, syncEngineFields, ENV_DEPS } from './driverWiring';
 import { mountEngine, resizeEngine, disposeEngine } from './engineLifecycle';
 import { setEngineBackground } from './background';
 import { pruneSequenceStates } from './channelStates';
+import { PHONE_LONG_EDGE, phoneMode } from './phoneMode';
+import { createCachePlate } from './cachePlate';
 import {
   deriveBackgroundUrls, deriveClipsMap, deriveLayoutMap, deriveMotionImageUrls, deriveParentIndex,
   deriveShapeBackgroundUrls, deriveTextFontLoadRequest, deriveTransitionSoundCues,
@@ -52,6 +54,7 @@ const DEFAULTS = {
 export async function createMotionEngine({ canvas, backend = null } = {}) {
   if (!canvas) throw new Error('createMotionEngine: a canvas is required');
   const engine = createEngineState();
+  const cachePlate = createCachePlate(engine, () => s.renderCache);
   engine.canvas = canvas;
   // the fields the Player starts from its props / state (`useRef(prop)`); the rest of those are set by
   // syncEngineFields on every flush. driver_mirror.test.mjs lists the Player's and fails on a new one.
@@ -123,14 +126,16 @@ export async function createMotionEngine({ canvas, backend = null } = {}) {
     const { channels, videoWidth, videoHeight, background, isPlaying, previewQuality } = s;
     // the Player: interactivePreviewEnabled = previewQuality === 'auto' && isPlaying, and the render size
     const interactivePreviewEnabled = previewQuality === 'auto' && isPlaying;
-    const capScale = previewQuality === 'full' ? 1 : Math.min(1, PREVIEW_MAX_LONG_EDGE / Math.max(1, videoWidth, videoHeight));
+    const capEdge = phoneMode() ? PHONE_LONG_EDGE : previewQuality === 'full' ? Infinity : PREVIEW_MAX_LONG_EDGE;
+    const capScale = Math.min(1, capEdge / Math.max(1, videoWidth, videoHeight));
     const renderScale = (interactivePreviewEnabled ? 0.75 : 1) * capScale;
     return {
       ...s, ...setters, SCRUB_SETTLE_MS, interactivePreviewEnabled,
       materialsReady: true, motionPathEditItemId: null, rotoPreview: null, selectedLightId: null,
       // a render cache only measures here (frameRender.js: renderCache.recordSample while playing); nothing is cached,
-      // so the Player's own rcStop / rcFrameTexture stop nothing and return null (draw live)
-      renderCache: s.renderCache, rcFrameTexture: () => null, rcStop: () => {},
+      // so the Player's own rcStop / rcFrameTexture stop nothing and return null (draw live). A phone caches (./cachePlate.js)
+      renderCache: s.renderCache,
+      rcFrameTexture: phoneMode() ? cachePlate.frameTexture : () => null, rcStop: phoneMode() ? cachePlate.stop : () => {},
       renderWidth: Math.max(320, Math.round(videoWidth * renderScale)),
       renderHeight: Math.max(180, Math.round(videoHeight * renderScale)),
       adaptiveRasterMode: sanitizeTextureQuality(s.textureQuality),
@@ -270,6 +275,7 @@ export async function createMotionEngine({ canvas, backend = null } = {}) {
       }
       effectState.clear();
       listeners.clear();
+      cachePlate.dispose();
     },
   };
 }

@@ -75,6 +75,7 @@
 .glm-app .glm-icon { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; min-width: 32px; padding: 0 8px; border: 1px solid transparent; border-radius: 7px;
   background: transparent; color: var(--glm-sub); cursor: pointer; white-space: nowrap; font-size: 12.5px; }
 .glm-app .glm-icon svg { width: 15px; height: 15px; }
+.glm-app .glm-se { display: none; }   /* Go to start / end: the phone layout's (studio/chat.css); elsewhere Home / End */
 .glm-app .glm-icon:hover { color: var(--glm-txt); background: var(--glm-soft); }
 .glm-app .glm-icon:disabled { opacity: .4; cursor: default; background: transparent; }
 .glm-app .glm-icon[aria-pressed] { border-color: var(--glm-line); }
@@ -94,6 +95,26 @@
 /* the seconds that played below 25 fps here: the editor's render-cache red line (videoEditor.css .ve-ruler-cache) */
 .glm-slow { position: absolute; left: 0; right: 0; top: 0; height: 2px; pointer-events: none; }
 .glm-slow-run { position: absolute; top: 0; height: 2px; background: #e5484d; pointer-events: auto; }
+/* a phone caches its slow seconds (localRenderCache.js): the Smart cache's line, its status beside the time */
+.glm-slow-run.is-cached { background: #34d399; }
+.glm-slow-run.is-pending { background: repeating-linear-gradient(-45deg, #34d399 0 4px, rgb(52 211 153 / 25%) 4px 8px); animation: glm-cache-pulse 1.2s ease-in-out infinite alternate; }
+@keyframes glm-cache-pulse { from { opacity: .55; } to { opacity: 1; } }
+.glm-time .glm-rc { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-style: normal; font-weight: 600; letter-spacing: .01em; }
+.glm-rc::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.glm-rc.is-slow { color: #ff9a9d; }
+.glm-rc.is-pending, .glm-rc.is-cached { color: #7ff0c3; }
+.glm-rc.is-pending::before { animation: glm-cache-pulse 1.2s ease-in-out infinite alternate; }
+/* a cache render takes over the preview: the frame it left stands still */
+.glm-hold { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 1; }
+/* a film too big for this phone */
+.glm-heavy { position: absolute; inset: 0; z-index: 7; display: flex; align-items: center; justify-content: center; padding: 10px; background: rgb(10 12 12 / 90%); }
+.glm-heavy > div { display: flex; flex-direction: column; gap: 8px; max-width: 300px; color: #dfe6e3; font-size: 12.5px; line-height: 1.4; }
+.glm-heavy b { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: #fff; }
+.glm-heavy b svg { width: 16px; height: 16px; color: #ffb86b; flex: none; }
+.glm-heavy p { margin: 0; color: #b9c0bd; }
+.glm-heavy-acts { display: flex; gap: 6px; margin-top: 2px; }
+.glm-heavy button { height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #2f3537; background: #1a1d1e; color: #dfe6e3; font: 600 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
+.glm-heavy button.is-go { background: #33efab; border-color: #33efab; color: #062a1d; }
 .glm-tick { position: absolute; bottom: 0; width: 1px; height: 4px; background: var(--glm-line); }
 .glm-tick.is-major { height: 8px; background: var(--glm-sub); opacity: .55; }
 .glm-tick span { position: absolute; left: 4px; bottom: 4px; font-size: 10.5px; line-height: 1; color: var(--glm-sub); font-variant-numeric: tabular-nums; white-space: nowrap; }

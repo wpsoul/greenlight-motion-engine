@@ -14,7 +14,7 @@ body:not(.original) .glm-frame{border-radius:8px;box-shadow:0 0 0 1px #383c3a,0 
 body:not(.original) .glm-sel polygon{stroke:#a78bfa;stroke-dasharray:none;stroke-width:1.5px}
 body:not(.original) .glm-transport{grid-column:2;grid-row:3;flex-wrap:nowrap;padding:0 14px;gap:12px;min-width:0}
 body:not(.original) .glm-app .glm-play{background:none;color:#edf1ee;min-width:30px;width:30px;height:30px;padding:0;border-radius:50%;margin:0;order:2}body:not(.original) .glm-play span{display:none}
-body:not(.original) .glm-tgroup:first-child .glm-icon:first-of-type{order:1}body:not(.original) .glm-tgroup:first-child .glm-icon:last-child{order:3}
+body:not(.original) .glm-tgroup:first-child .glm-icon[aria-label="Previous frame"]{order:1}body:not(.original) .glm-tgroup:first-child .glm-icon[aria-label="Next frame"]{order:3}
 body:not(.original) .glm-time{gap:5px;margin-left:auto;font-size:11px;order:2}body:not(.original) .glm-time b{font-size:12px;font-weight:500;min-width:0}body:not(.original) .glm-now{display:none}
 body:not(.original) .glm-app .glm-icon{height:28px;min-width:28px;font-size:11px;border:0;padding:0 6px}body:not(.original) .glm-app .glm-icon[aria-pressed=true]{background:rgba(51,239,171,.1);color:#33efab}
 body:not(.original) .glm-side{grid-column:3;grid-row:2/4;margin:8px 0;border:1px solid var(--lab-line);border-radius:10px;background:#151718;box-shadow:0 8px 40px rgba(0,0,0,.3)}

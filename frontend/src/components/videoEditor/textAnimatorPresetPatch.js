@@ -26,12 +26,23 @@ export function presetPatch(item, preset, { clipSec, fontPx, duration = null, sp
     });
     list = [...existing, ...renamed].slice(0, MAX_ANIMATORS);
   }
+  // A depth preset needs its shared camera (Text Animators ▸ More options ▸ Camera):
+  // Replace sets the preset's camera (or puts the layer back on each unit's own); Add
+  // turns a shared one on only when the layer has none yet.
+  const shared = built.layer.camera && built.layer.camera !== 'unit';
+  const camera = {
+    textAnimatorCamera: shared ? built.layer.camera : null,
+    textAnimatorPerspective: shared && built.layer.perspective > 0 ? built.layer.perspective : null,
+  };
+  const hasCamera = item?.textAnimatorCamera === 'layer' || item?.textAnimatorCamera === 'project';
   return {
     textAnimators: list,
     propertyKeyframes: pk,
     ...(adding ? null : {
       textAnimatorPivotX: built.layer.pivotX,
       textAnimatorPivotY: built.layer.pivotY,
+      ...camera,
     }),
+    ...(adding && shared && !hasCamera ? camera : null),
   };
 }

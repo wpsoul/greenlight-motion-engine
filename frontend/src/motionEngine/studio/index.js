@@ -4,7 +4,7 @@
  * The review card on a board, the lab, a chat's page and a shared link all mount THIS (one look, one notes system);
  * a host only says where its sources come from and where a review goes (RV_CONFIG.save).
  *
- *   GreenLightMotion.mountStudio(el, { project, sources?, strips?, parts?, config?, assets?, chat? })
+ *   GreenLightMotion.mountStudio(el, { project, sources?, strips?, parts?, config?, assets?, serverFiles?, chat? })
  *
  * project  the film on the page (the lab's sample, a card's empty film or a source's project) — window.GL_LAB_PROJECT
  * sources  [{ k, title, sub, col, video?, project?, cuts?, values, layers }] — window.RV_SOURCES (default: one, the project)
@@ -12,6 +12,8 @@
  * parts    [[label, startSeconds, sub]] the film's parts — window.RV_PARTS
  * config   window.RV_CONFIG: { title, modes, start, storeKey, fps, startAt, save(job), saveLabel, canMode, cantMode, onSource, … }
  * assets   the page's files for the engine (mountPage's assets: a map or a function ref → file)
+ * serverFiles  true on a page GreenLight Dash itself serves: the project's /media/ and /hdr/ files are real at their
+ *          addresses (assets.js setServerFiles). A page with no backend leaves it out
  * chat     { height, full, onExpand(full) } — the studio in a chat's frame (chat.js): up to 900 px wide the mobile editor
  *          in a box `height` px tall (the whole screen when `full`), no purple; the returned studio's `chat.set({ height,
  *          full, onExpand })` follows the host. Without it the studio is laid out for a whole window (a column ≤ 900 px)
@@ -30,6 +32,7 @@ import focusCss from './focus.css?inline';
 import chatCss from './chat.css?inline';
 import * as sketch from '../../components/sketch/sketchEngine.js';
 import { zipStore } from '../reviewNotes.js';
+import { setServerFiles } from '../assets';
 import { install as lab } from './lab.js';
 import { install as review } from './review.js';
 import { install as color } from './color.js';
@@ -38,6 +41,7 @@ import { install as gizmo } from './gizmo.js';
 import { install as notes } from './notes.js';
 import { install as highlight } from './highlight.js';
 import { install as chatLayout, whiten } from './chat.js';
+import { install as timelineZoom } from './timelineZoom.js';
 
 const SORT_CARET = '<svg class="ve-nav-sort-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const COLLAPSE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 19h16M9 10.5 12 8l3 2.5M9 13.5l3 2.5 3-2.5"/></svg>';
@@ -79,9 +83,10 @@ ${key('Hide · Crop · Range', kbd('X', 'C', 'G'))}
 }
 
 let mounted = false;
-export function mountStudio(el, { project, sources, strips, parts, config, assets = null, chat = null } = {}) {
+export function mountStudio(el, { project, sources, strips, parts, config, assets = null, serverFiles = false, chat = null } = {}) {
   if (!el) throw new Error('GreenLightMotion.mountStudio needs an element');
   if (mounted) throw new Error('GreenLightMotion.mountStudio: one studio per page');
+  if (serverFiles) setServerFiles();
   if (project) window.GL_LAB_PROJECT = project;
   if (!window.GL_LAB_PROJECT) throw new Error('GreenLightMotion.mountStudio needs a project');
   if (sources) window.RV_SOURCES = sources;
@@ -133,6 +138,7 @@ export function mountStudio(el, { project, sources, strips, parts, config, asset
   mounted = true;
   // the order the card loaded them in: the page and the rail, the modes, then the parts that use them
   for (const install of [lab, review, color, inspector, gizmo, notes, highlight]) install(STUDIO);
+  STUDIO.zoom = timelineZoom();
   if (chat) STUDIO.chat = chatLayout(STUDIO, chat);
   return STUDIO;
 }

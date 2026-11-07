@@ -112,6 +112,7 @@ function buildClipNodes() {
   const uCcHslS1 = uniform(new THREE.Vector4(0, 0, 0, 0));
   const uCcHslL0 = uniform(new THREE.Vector4(0, 0, 0, 0));
   const uCcHslL1 = uniform(new THREE.Vector4(0, 0, 0, 0));
+  const uCcDetail = uniform(new THREE.Vector2(0, 0));
   const uBlur = uniform(0.0);
   const uZoomBlur = uniform(0.0);
   const uZoomCenter = uniform(new THREE.Vector2(0.5, 0.5));
@@ -422,6 +423,40 @@ function buildClipNodes() {
     inputs: [{ name: 'cIn', type: 'vec3' }, { name: 'h0', type: 'vec4' }, { name: 'h1', type: 'vec4' },
       { name: 's0', type: 'vec4' }, { name: 's1', type: 'vec4' }, { name: 'l0', type: 'vec4' }, { name: 'l1', type: 'vec4' }],
   });
+  // Details + Sharpen — the GLSL's ccTap / ccSoft / ccOpaque / ccDetail. The tap reads
+  // uTexture and uInputPremultiplied, so it inlines (no layout — see the header):
+  // x = straight luma, y = alpha. A kernel acts only where all its taps are opaque.
+  const ccTap = (p) => {
+    const t = uTexture.sample(clamp(p, 0.0, 1.0));
+    const y = dot(t.rgb, vec3(0.2126, 0.7152, 0.0722));
+    return vec2(select(uInputPremultiplied.greaterThan(0.5), y.div(max(t.a, 1e-4)), y), t.a).toVar();
+  };
+  const ccSoft = Fn(([d, k]) => d.mul(k).div(k.add(abs(d))))
+    .setLayout({ name: 'ccSoft', type: 'float', inputs: [{ name: 'd', type: 'float' }, { name: 'k', type: 'float' }] });
+  const ccOpaque = (a, b, c, d) => smoothstep(0.85, 1.0, min(min(a.y, b.y), min(c.y, d.y)));
+  // `px` = one composition pixel in texture UV. Called only under a guard on uCcDetail.
+  const ccDetail = (p, px) => {
+    const c = ccTap(p);
+    const off = float(0.0).toVar();
+    If(uCcDetail.y.greaterThan(0.0), () => {
+      const t0 = ccTap(p.add(px.mul(vec2(0.5, 0.5)))), t1 = ccTap(p.add(px.mul(vec2(-0.5, 0.5))));
+      const t2 = ccTap(p.add(px.mul(vec2(0.5, -0.5)))), t3 = ccTap(p.add(px.mul(vec2(-0.5, -0.5))));
+      const blur = t0.x.add(t1.x).add(t2.x).add(t3.x).mul(0.25);
+      off.addAssign(uCcDetail.y.mul(1.75).mul(ccSoft(c.x.sub(blur), float(0.25))).mul(ccOpaque(t0, t1, t2, t3)));
+    });
+    If(uCcDetail.x.notEqual(0.0), () => {
+      const a0 = ccTap(p.add(px.mul(vec2(2.0, 0.0)))), a1 = ccTap(p.add(px.mul(vec2(-2.0, 0.0))));
+      const a2 = ccTap(p.add(px.mul(vec2(0.0, 2.0)))), a3 = ccTap(p.add(px.mul(vec2(0.0, -2.0))));
+      const d0 = ccTap(p.add(px.mul(vec2(2.83, 2.83)))), d1 = ccTap(p.add(px.mul(vec2(-2.83, 2.83))));
+      const d2 = ccTap(p.add(px.mul(vec2(2.83, -2.83)))), d3 = ccTap(p.add(px.mul(vec2(-2.83, -2.83))));
+      const blur = a0.x.add(a1.x).add(a2.x).add(a3.x).mul(0.15).add(d0.x.add(d1.x).add(d2.x).add(d3.x).mul(0.1));
+      const k = select(uCcDetail.x.greaterThan(0.0), uCcDetail.x.mul(1.6), uCcDetail.x.mul(0.95));
+      off.addAssign(k.mul(ccSoft(c.x.sub(blur), float(0.15)))
+        .mul(min(float(1.0), c.x.mul(6.0).mul(float(1.0).sub(c.x))))
+        .mul(ccOpaque(a0, a1, a2, a3)).mul(ccOpaque(d0, d1, d2, d3)));
+    });
+    return off.mul(smoothstep(0.85, 1.0, c.y));
+  };
 
   const mirrorRepeat = Fn(([v]) => {
     const t = fract(v.mul(0.5));
@@ -854,7 +889,11 @@ function buildClipNodes() {
         const frameX = modelViewProjection.x.div(modelViewProjection.w).mul(0.5).add(0.5);
         If(uCcCtl.y.lessThan(0.0).or(frameX.greaterThanEqual(uCcCtl.y)), () => {
           const src = clamp(color.rgb, 0.0, 1.0).toVar();
-          const g = ccToDisp(ccToLin(src).mul(uCcGain)).toVar();
+          const det = float(0.0).toVar();
+          If(uCcDetail.x.notEqual(0.0).or(uCcDetail.y.greaterThan(0.0)), () => {
+            det.assign(ccDetail(texUv, fitScale.div(max(uCanvasSize, vec2(1.0)))));
+          });
+          const g = ccToDisp(ccToLin(clamp(src.add(det), 0.0, 1.0)).mul(uCcGain)).toVar();
           If(uCcTone2.y.greaterThan(0.5), () => { g.assign(ccTone(g, uCcTone, uCcTone2.x)); });
           If(uCcCtl.w.lessThan(0.5), () => {
             If(uCcFlags.x.greaterThan(0.5), () => { g.assign(ccLevels(g, uCcLvInB, uCcLvInW, uCcLvGam, uCcLvOutB, uCcLvOutW)); });
@@ -1002,7 +1041,7 @@ function buildClipNodes() {
     uBrightness, uContrast, uSaturation, uHueRotate,
     uGrayscale, uSepia, uInvert, uBlur, uZoomBlur, uZoomCenter, uMoveBlur, uRgbSplit, uSplitMove,
     uCcCtl, uCcGain, uCcTone, uCcTone2, uCcFlags, uCcLvInB, uCcLvInW, uCcLvGam, uCcLvOutB, uCcLvOutW,
-    uCcWhS, uCcWhM, uCcWhH, uCcHslH0, uCcHslH1, uCcHslS0, uCcHslS1, uCcHslL0, uCcHslL1,
+    uCcWhS, uCcWhM, uCcWhH, uCcHslH0, uCcHslH1, uCcHslS0, uCcHslS1, uCcHslL0, uCcHslL1, uCcDetail,
     uTileFade, uClipPathInset, uLetterSpacing, uTintColor, uBgColor, uFlashColor,
     uFlashAmount, uBloomAmount, uBloomThreshold, uBloomRadius,
     uResolution, uCanvasSize, uStabilizeOn, uStabilizeLinear, uStabilizeOffset,

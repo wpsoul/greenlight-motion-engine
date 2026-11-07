@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { requestPointPick, cancelPointPick, subscribePointPick } from './pointPickBroker';
+import './popoverSelect.css';
 
 /*
  * Shared editor field primitives for the video editor.
@@ -557,6 +558,9 @@ export function PopoverSelect({
   label, labelAction, value, onChange, options = [], title, disabled, disabledReason,
   placeholder = '—', searchable = false, searchPlaceholder = 'Search…', emptyText = 'No match',
   width = 236,
+  // searchable only: what you type can be the value too ("Use “…”", or ↵ when nothing matches); customValid(text)
+  // says whether it may (Agent Flow's model: any id the agent's CLI takes)
+  allowCustom = false, customValid = null,
 }) {
   const anchorRef = useRef(null);
   const listRef = useRef(null);
@@ -574,6 +578,10 @@ export function PopoverSelect({
     || String(o.group ?? '').toLowerCase().includes(q)
     || String(o.flag ?? '').toLowerCase().includes(q);
   const visible = options.filter(matches);
+  const typed = query.trim();
+  const custom = searchable && allowCustom && typed
+    && !options.some((o) => String(o.value).toLowerCase() === typed.toLowerCase() || String(o.label ?? '').toLowerCase() === typed.toLowerCase())
+    ? { text: typed, ok: !customValid || customValid(typed) } : null;
 
   const commit = useCallback((v) => {
     const next = String(v);
@@ -614,7 +622,11 @@ export function PopoverSelect({
     else if (e.key === 'ArrowUp') { e.preventDefault(); step(-1); }
     else if (e.key === 'Home' && !(searchable && query)) { e.preventDefault(); step(-Infinity); }
     else if (e.key === 'End' && !(searchable && query)) { e.preventDefault(); step(Infinity); }
-    else if (e.key === 'Enter') { e.preventDefault(); close(true); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (custom?.ok && visible.length === 0) commit(custom.text);
+      close(true);
+    }
     else if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -718,7 +730,13 @@ export function PopoverSelect({
             </div>
           )}
           <div className="ve-popsel-scroll" ref={listRefCb} role="listbox">
-            {visible.length === 0 && <div className="ve-popsel-none">{emptyText}{q ? <> for “<b>{query.trim()}</b>”</> : null}</div>}
+            {custom && (
+              <button type="button" className="ve-popsel-row is-custom" disabled={!custom.ok} onClick={() => { commit(custom.text); close(true); }}>
+                <span className="ve-popsel-check" />
+                <span className="ve-popsel-text"><span className="ve-popsel-name">Use “{custom.text}”</span></span>
+              </button>
+            )}
+            {visible.length === 0 && !custom && <div className="ve-popsel-none">{emptyText}{q ? <> for “<b>{query.trim()}</b>”</> : null}</div>}
             {rows}
           </div>
           <div className="ve-popsel-foot">

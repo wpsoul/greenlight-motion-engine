@@ -19,6 +19,7 @@
 // bezier paths in a unit box rather than their own geometry model.
 
 import { isMaskPathTrackKey } from './keyframeProps.js';
+import { RADIUS_KF_KEYS } from './borderKeyframes.js';
 import {
   isMotionPathTrackKey,
   encodeMotionPathValue,
@@ -617,8 +618,10 @@ export function shapeBoxSize(item, compositionWidth, compositionHeight) {
 // in composition px, or with `borderRadiusUnit: 'pct'` in % of the shape's SHORTER
 // side (50 = a full pill at any aspect). It is resolved against the box actually
 // being drawn, so changing Width / Height never stretches a corner the way scaling
-// the layer does. Corners clamp to half the shorter side, where they meet.
-export const SHAPE_CORNER_KF_KEYS = ['borderRadius', 'borderRadiusTL', 'borderRadiusTR', 'borderRadiusBR', 'borderRadiusBL'];
+// the layer does — and `borderRadiusScaleLock` stops the layer's Scale stretching it
+// too (borderKeyframes.js withRadiusScaleLock). Corners clamp to half the shorter
+// side, where they meet.
+export const SHAPE_CORNER_KF_KEYS = RADIUS_KF_KEYS;
 export function shapeCornerRadii(item, width, height) {
   const side = Math.max(0, Math.min(num(width), num(height)));
   const base = Math.max(0, num(item?.borderRadius));
@@ -662,6 +665,8 @@ export const SHAPE_SIZE_KF_PROPS = SHAPE_SIZE_KF_KEYS.map((label) => ({
 export function shapeSizeKfMeta(label) {
   return SHAPE_SIZE_KF_PROPS.find((p) => p.label === label) || null;
 }
+// The corner radius tracks in use: one, or the four corners while they are unlinked.
+const cornerKfWanted = (item) => (item?.borderRadiusLinked === false ? SHAPE_CORNER_KF_KEYS.slice(1) : ['borderRadius']);
 /**
  * The size tracks worth offering: the current unit's pair (a circle: its radius),
  * a rectangle's corner radius (one track, or four when the corners are unlinked),
@@ -672,15 +677,21 @@ export function buildShapeSizeKfProps(item) {
   const want = item?.shapeType === 'circle'
     ? [px ? 'shapeRadiusPx' : 'shapeRadiusPct']
     : (px ? ['shapeWidthPx', 'shapeHeightPx'] : ['shapeWidthPct', 'shapeHeightPct']);
-  if ((item?.shapeType || 'rectangle') === 'rectangle') {
-    if (item?.borderRadiusLinked === false) want.push(...SHAPE_CORNER_KF_KEYS.slice(1));
-    else want.push('borderRadius');
-  }
+  if ((item?.shapeType || 'rectangle') === 'rectangle') want.push(...cornerKfWanted(item));
   const keyed = item?.propertyKeyframes || {};
   const radiusUnit = item?.borderRadiusUnit === 'pct' ? '%' : 'px';
   return SHAPE_SIZE_KF_PROPS
     .filter((p) => want.includes(p.label) || keyed[p.label]?.length)
     .map((p) => (SHAPE_CORNER_KF_KEYS.includes(p.label) && p.unit !== radiusUnit ? { ...p, unit: radiusUnit } : p));
+}
+/**
+ * A media plate's corner radius tracks (px; clipShader.js getItemCornerRadii reads
+ * them): the ones in use plus any already keyed.
+ */
+export function buildCornerKfProps(item) {
+  const want = cornerKfWanted(item);
+  const keyed = item?.propertyKeyframes || {};
+  return SHAPE_SIZE_KF_PROPS.filter((p) => SHAPE_CORNER_KF_KEYS.includes(p.label) && (want.includes(p.label) || keyed[p.label]?.length));
 }
 /** `item` with this frame's keyframed size laid over it (the same object when nothing is keyed). */
 export function withShapeSizeKeyframes(item, kfValues) {

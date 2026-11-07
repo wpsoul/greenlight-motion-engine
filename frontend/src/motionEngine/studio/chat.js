@@ -1,18 +1,22 @@
 // The studio in a chat's frame: mountStudio(el, { chat: { height, full, onExpand } }) — the chat layout lab's Variant 5 ·
 // Mobile (html/INTERFACE/motion-chat-layout-lab, 2026-10-26; its look: chat.css). Up to 900 px wide — a phone's chat
 // and a computer's alike — the app's mobile editor in a box of the chat's height: the timeline always there, zoomed and
-// scrolling sideways (100 px a second at first, pinch or ctrl + wheel to zoom, kept), the studio's own toolbar on top of
+// scrolling sideways (100 px a second at first, pinch or ctrl + wheel to zoom, kept: timelineZoom.js), the studio's own toolbar on top of
 // it with Properties · Layers first, a panel a sheet sliding over the timeline (Done closes it). A tap picks a layer, a
 // double tap opens its Properties. Notes and Highlight: their strip only as tall as it needs, their panel docked under
 // it. The timeline's top edge is a handle (kept per film shape). Wider than 900 px (full screen): the studio's
 // whole-window layout. The page tells it the box's height and whether it is full screen (set()); the Expand button
 // (600 px and wider, when the host can go full screen) asks the page through onExpand(full).
 // body.cl-c.cl-a.cl-stack = the layout · .cl-asphone = 600–900 px · body[data-cl-tab] = the open sheet: '' | side | panel
+import { createHistory } from './history.js';
+
 const B = document.body;
 const svg = (d, w = 17) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const ICON = {
   expand: svg('<path d="M14 4h6v6M10 20H4v-6M20 4l-6.5 6.5M4 20l6.5-6.5"/>', 15),
   shrink: svg('<path d="M20 10h-6V4M4 14h6v6M14 10l6.5-6.5M10 14l-6.5 6.5"/>', 15),
+  undo: svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
+  redo: svg('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>'),
 };
 const TB = {   // the toolbar's own buttons, 14 px as the studio's
   panel: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
@@ -58,6 +62,7 @@ function whitenPart(text) {
 export function install(STUDIO, opts = {}) {
   const S = { height: +opts.height || 780, full: !!opts.full, onExpand: typeof opts.onExpand === 'function' ? opts.onExpand : null };
   let compact = false, expandBtn = null, split = null, done = null, started = false;
+  const zoom = STUDIO.zoom;
   const api = () => window.GreenLightMotion && window.GreenLightMotion.page;
   const mode = () => (/\brv-mode-(\w+)/.exec(B.className) || [])[1] || 'edit';
   const stack = () => B.classList.contains('cl-stack');
@@ -107,25 +112,15 @@ export function install(STUDIO, opts = {}) {
   // the rows fill the timeline down to its bottom edge (the toolbar and the ruler above them stay)
   const ro = window.ResizeObserver ? new ResizeObserver(() => measure()) : null;
   let watched = null;
-  // Edit's timeline: only the lanes scroll sideways — the bar (the ruler, the rows, the playhead) in a scroller of its
-  // own, so the toolbar, the names column and their head stay put; undone for the whole-window layout
-  function lanes() {
-    const tl = document.querySelector('#app .glm-tlwrap'); if (!tl) return;
-    let wrap = tl.querySelector(':scope > .cl-lanes');
-    const bar = tl.querySelector('.glm-bar');
-    if (stack()) {
-      if (bar && bar.parentNode === tl) { if (!wrap) { wrap = document.createElement('div'); wrap.className = 'cl-lanes'; } tl.insertBefore(wrap, bar); wrap.append(bar); }
-    } else if (wrap) { if (bar && bar.parentNode === wrap) tl.insertBefore(bar, wrap); wrap.remove(); }
-  }
   function measure() {
-    lanes();
+    zoom.lanes();
     const tl = document.querySelector('.glm-tlwrap'), rows = document.querySelector('.glm-rows');
     if (tl && ro && tl !== watched) { if (watched) ro.unobserve(watched); ro.observe(tl); watched = tl; }
     if (!compact || !tl || !rows || !tl.offsetHeight) { ['--cl-rows', '--cl-barw', '--cl-tlvw', '--cl-hlw', '--cl-hlvw'].forEach((v) => B.style.removeProperty(v)); return; }
     const pg = api();
     if (pg && pg.duration > 0) {
       const tcs = getComputedStyle(tl), padX = (parseFloat(tcs.paddingLeft) || 0) + (parseFloat(tcs.paddingRight) || 0);
-      B.style.setProperty('--cl-barw', Math.max(tl.clientWidth - padX, Math.round(pg.duration * PPS)) + 'px');
+      B.style.setProperty('--cl-barw', Math.max(tl.clientWidth - padX, Math.round(pg.duration * zoom.pps())) + 'px');
       B.style.setProperty('--cl-tlvw', tl.clientWidth + 'px');   // the toolbar: the strip's visible width
     }
     // Notes and Highlight's timeline: its labels + the lanes at the same scale; its toolbar the view's width inside the
@@ -133,7 +128,7 @@ export function install(STUDIO, opts = {}) {
     const hl = document.querySelector('.hl-tl'), lab = hl && hl.querySelector('.hl-lab');
     if (hl && hl.clientWidth && pg && pg.duration > 0) {
       const hcs = getComputedStyle(hl), pad = (parseFloat(hcs.paddingLeft) || 0) + (parseFloat(hcs.paddingRight) || 0), lw = lab ? lab.offsetWidth : 58;
-      B.style.setProperty('--cl-hlw', Math.max(hl.clientWidth - pad, lw + Math.round(pg.duration * PPS)) + 'px');
+      B.style.setProperty('--cl-hlw', Math.max(hl.clientWidth - pad, lw + Math.round(pg.duration * zoom.pps())) + 'px');
       B.style.setProperty('--cl-hlvw', (hl.clientWidth - pad) + 'px');
     } else { B.style.removeProperty('--cl-hlw'); B.style.removeProperty('--cl-hlvw'); }
     stripHeight();
@@ -208,9 +203,33 @@ export function install(STUDIO, opts = {}) {
     }
     if (!expandBtn.isConnected) top.append(expandBtn);
   }
+  // Undo / Redo: in the app bar, left of Render
+  const history = createHistory(() => undoState());
+  let undoBar = null;
+  function undoState() {
+    if (!undoBar) return;
+    undoBar.querySelector('[data-ur=undo]').setAttribute('aria-disabled', String(!history.canUndo()));
+    undoBar.querySelector('[data-ur=redo]').setAttribute('aria-disabled', String(!history.canRedo()));
+  }
+  function addUndo() {
+    const top = document.querySelector('.glm-top'), render = top && top.querySelector('.glm-xbtn'); if (!render) return;
+    if (!undoBar) {
+      undoBar = document.createElement('span'); undoBar.className = 'cl-ur';
+      const mk = (key, label, done) => {
+        const b = document.createElement('button'); b.type = 'button'; b.dataset.ur = key; b.title = label; b.innerHTML = ICON[key]; b.setAttribute('aria-label', label); b.setAttribute('aria-disabled', 'true');
+        b.onclick = async () => {
+          if (b.getAttribute('aria-disabled') === 'true') return;
+          const step = await history[key]();
+          if (step && window.LabSide) LabSide.toast(step.word ? `${done} · ${step.word}` : done);
+        };
+        return b;
+      };
+      undoBar.append(mk('undo', 'Undo', 'Undone'), mk('redo', 'Redo', 'Redone'));
+    }
+    if (undoBar.parentNode !== top) top.insertBefore(undoBar, render);
+    undoState();
+  }
 
-  // the strip's scale: 100 px a second at first (≈3 s across a phone — clips at a size a finger can take), kept
-  let PPS = (() => { const v = +store.get('glm-chat-pps'); return v >= 20 && v <= 240 ? v : 100; })();
   function openSheet(tab, pane) {
     const again = B.dataset.clTab === tab && (tab !== 'side' || (window.LabSide && LabSide.active() === pane));
     if (again) { show(tab === 'side' && mode() !== 'edit' ? firstTab(mode()) : ''); tbButtons(); return; }   // Notes · Highlight: a wide film's panel comes back
@@ -378,44 +397,6 @@ export function install(STUDIO, opts = {}) {
     B.classList.toggle('cl-drawing', m === 'notes' && (!!document.querySelector('.mn-tools [data-note-tool][aria-pressed=true]') || !!(ink && !ink.hidden && ink.offsetParent)));
     listButton(); stripHeight(); flagsClear();
   }
-  // the element that scrolls the clips sideways: `.cl-lanes` (inside `.glm-tlwrap`, which does not scroll — a selector
-  // list in querySelector returns the first in PAGE order, i.e. the wrapper), or Notes / Highlight's `.hl-tl`
-  const lanesOf = (edit) => (edit ? document.querySelector('.cl-lanes') || document.querySelector('.glm-tlwrap') : document.querySelector('.hl-tl'));
-  // ── the timeline follows the playhead while it plays, as GreenLight Dash's does (videoEditor/Timeline.jsx): every
-  // frame the view keeps the playhead in sight with lead room at the right edge; it gives way while you scroll it
-  // yourself and glides back a moment after you stop.
-  const LEAD = 48, IDLE = 1200, GLIDE = 320;
-  const own = new WeakMap();
-  let userAt = -1e9, glide = null;
-  document.addEventListener('scroll', (e) => {
-    const el = e.target;
-    if (el instanceof Element && el.matches('.cl-lanes, .hl-tl') && Math.abs(el.scrollLeft - (own.get(el) ?? -1)) > 1) { userAt = performance.now(); glide = null; }
-  }, true);
-  function follow(now) {
-    requestAnimationFrame(follow);
-    if (!stack()) return;
-    const pg = api(), st = pg && pg.ready && pg.state ? pg.state() : null;
-    if (!st || !(pg.duration > 0)) return;
-    const edit = mode() === 'edit', sc = lanesOf(edit), bar = document.querySelector(edit ? '.glm-bar' : '.hl-ruler');
-    if (!sc || !bar || sc.scrollWidth <= sc.clientWidth + 1) return;
-    const put = (x) => { sc.scrollLeft = Math.max(0, x); own.set(sc, sc.scrollLeft); };
-    if (glide) {
-      const k = Math.min(1, (now - glide.t0) / GLIDE), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-      put(glide.from + (glide.to - glide.from) * e); if (k >= 1) glide = null; return;
-    }
-    if (!st.playing || now - userAt < IDLE) return;
-    // what covers the lanes' left edge (the names column / Highlight's labels) is not part of the view
-    const sr = sc.getBoundingClientRect(), cover = document.querySelector(edit ? '.lab-track-labels' : '.hl-lab');
-    const cr = cover && cover.offsetParent ? cover.getBoundingClientRect() : null;
-    const gutter = cr && cr.left < sr.left + 8 ? Math.max(0, cr.right - sr.left) : 0;
-    const x = bar.getBoundingClientRect().left - sr.left + sc.scrollLeft + (st.playhead || 0) / pg.duration * bar.offsetWidth;
-    const left = sc.scrollLeft + gutter, right = sc.scrollLeft + sc.clientWidth;
-    const to = x > right - LEAD ? x - sc.clientWidth + LEAD : x < left ? x - gutter - LEAD : null;
-    if (to == null) return;
-    if (now - userAt < IDLE + 400 && Math.abs(to - sc.scrollLeft) > sc.clientWidth / 3) glide = { from: sc.scrollLeft, to: Math.max(0, to), t0: now };
-    else put(to);
-  }
-  requestAnimationFrame(follow);
   let ready = false;
   function setup() {
     if (ready) return; ready = true;
@@ -470,34 +451,8 @@ export function install(STUDIO, opts = {}) {
     tbButtons();
   }
 
-  // zoom with the time under the finger (or the pointer) kept where it is
-  function setPPS(next, anchorX) {
-    next = Math.max(20, Math.min(240, next)); if (Math.abs(next - PPS) < 0.5) return;
-    const edit = mode() === 'edit', sc = lanesOf(edit), bar = document.querySelector(edit ? '.glm-bar' : '.hl-ruler');
-    let f = null;
-    if (sc && bar && anchorX != null) { const r = bar.getBoundingClientRect(); f = (anchorX - r.left) / Math.max(1, r.width); }
-    PPS = next; store.set('glm-chat-pps', String(Math.round(PPS)));
-    measure();
-    if (sc && bar && f != null) { const r2 = bar.getBoundingClientRect(); sc.scrollLeft += r2.left + f * r2.width - anchorX; }
-  }
-  document.addEventListener('wheel', (e) => {
-    if (!e.ctrlKey || !stack() || !e.target.closest('.glm-tlwrap, .hl-tl')) return;
-    e.preventDefault(); setPPS(PPS * Math.exp(-e.deltaY * 0.01), e.clientX);
-  }, { passive: false, capture: true });
-  let pinch = null;
-  document.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 2 || !stack() || !e.target.closest('.glm-tlwrap, .hl-tl')) return;
-    const [a, b] = e.touches;
-    pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, pps: PPS };
-  }, { passive: true, capture: true });
-  document.addEventListener('touchmove', (e) => {
-    if (!pinch || e.touches.length !== 2) return;
-    e.preventDefault();
-    const [a, b] = e.touches;
-    setPPS(pinch.pps * (Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch.d), (a.clientX + b.clientX) / 2);
-  }, { passive: false, capture: true });
-  document.addEventListener('touchend', (e) => { if (e.touches.length < 2) pinch = null; }, { capture: true });
   window.addEventListener('resize', apply);
+  zoom.layoutNarrow = measure;
 
   // the shape before the page paints (no jump), then the rest once the engine's page is up
   shape(window.GL_LAB_PROJECT);
@@ -514,8 +469,8 @@ export function install(STUDIO, opts = {}) {
       if (compact) show(firstTab(m));
     }).observe(B, { attributes: true, attributeFilter: ['class'] });
     // a rebuild, or another project on the page (its shape may differ)
-    window.addEventListener('rv:remount', () => setTimeout(() => { shape(window.GL_LAB_PROJECT); addExpand(); restoreSplit(); measure(); }, 0));
-    addExpand(); addSplit();
+    window.addEventListener('rv:remount', () => setTimeout(() => { shape(window.GL_LAB_PROJECT); addExpand(); addUndo(); restoreSplit(); measure(); }, 0));
+    addExpand(); addUndo(); addSplit(); history.start();
     B.classList.toggle('cl-nostrip', !window.RV_STRIPS);
     const fitText = !(window.CSS && CSS.supports && CSS.supports('field-sizing', 'content'));
     setInterval(() => {   // the inspector rebuilds its rows on every pick

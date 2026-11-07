@@ -7,6 +7,7 @@ const factory = function (T) {
   const CATEGORIES = [
     { id: 'sweep', name: 'Sweep Reveal' },
     { id: 'kinetic', name: 'Kinetic' },
+    { id: 'depth', name: 'Depth' },
     { id: 'shape', name: 'Type on Shape' },
     { id: 'emphasis', name: 'Emphasis' },
     { id: 'loop', name: 'Loop' },
@@ -402,6 +403,120 @@ const factory = function (T) {
           effects: [['rotate3d', { x: 0, y: 80, perspective: em(10) }], ['opacity', { opacity: 0 }]] },
         { name: 'Swing shut', range: kOut('words', 'word', { stagger: 0.04, duration: 0.6, curve: 'Anticipate' }),
           effects: [['rotate3d', { x: 0, y: -80, perspective: em(10) }], ['opacity', { opacity: 0 }]] }] },
+    // The two after it film the text with ONE camera (layer: { camera: 'layer' }): every
+    // letter at its own depth, all converging to one vanishing point, nearer covering
+    // farther — what Position Z and a shared Rotate 3D are for.
+    // Title Push 3D = MotionFast template5 "Push 1 — 3D Pop" (the title-push-3d template):
+    // its stage's 1000 px CSS perspective on 4 vw type is a layer camera ~13 em away. Each
+    // word pops in over 0.8 s on GSAP's power1.out, 0.2–0.4 s after the one before (0.2 s —
+    // its shortest — and 0.75 s here, so seven words land by 2 s like every Kinetic preset; the modal's Speed
+    // stretches both); here it flies in from deep behind the text and tips up flat, and Back
+    // Out carries it a little past the line toward the camera before it settles. The
+    // template slides its container left as each word lands so the words shown stay
+    // centred; that needs the shown words' width, so here the whole text makes one Sine Out
+    // glide left across the arrivals. At the end the words rush past the camera, last first.
+    { id: 'title-push-3d', name: 'Title Push 3D', cat: 'kinetic', sides: 'inOut', anchor: 'drive', sample: 'Kinetic type with depth', tile: KIN_TILE,
+      labLayer: { size: 110, weight: 800 },
+      layer: { camera: 'layer', perspective: em(13) },
+      description: 'Words fly in from depth one by one, overshoot toward the camera and settle as the line glides over to make room; at the end they rush past the camera',
+      animators: [
+        { name: 'Fly in', range: kIn('words', 'word', { stagger: 0.2, duration: 0.75, curve: 'Back Out' }),
+          effects: [['position', { x: 0, y: em(0.35), z: em(-26) }], ['rotate3d', { x: -50, y: 0, perspective: em(6) }], ['opacity', { opacity: 0 }]] },
+        { name: 'Push', range: kIn('lines', 'all', { stagger: 0, duration: 1.6, curve: 'Sine Out' }),
+          effects: [['position', { x: em(2.4), y: 0 }]] },
+        { name: 'Rush out', range: kOut('words', 'word', { order: 'backward', stagger: 0.05, duration: 0.55, curve: 'Ease In' }),
+          effects: [['position', { x: 0, y: 0, z: em(9) }], ['opacity', { opacity: 0 }]] }] },
+    // Perspective Type = the Kinetic Perspective Type template (kinetic-perspective-type,
+    // look-dev html/kinetic-perspective-type.html): the whole text lies on a plane tilted
+    // toward the camera (X 32°, Y 25°, Z −6°, 150 %; its focal 520 px on 250 px type is a
+    // layer camera ~2 em away — 3 em here, the same keystone on lines ~4 em wide), the lines
+    // drive in one after another (0.5 s apart, 0.5 s each, AE Smooth), rising from 1.45 line
+    // heights below and growing from 55 %, and at 1.2 s the plane swings flat (0.7 s,
+    // Natural: a Time entrance with a 1.2 s delay, so no keys). Not here: each arrival
+    // shoving the earlier lines up the plane (a line cannot move on its neighbours' clocks),
+    // the pushed word and its reflow, and the template's own motion blur. At the end the
+    // lines sink back into depth.
+    { id: 'perspective-type', name: 'Perspective Type', cat: 'kinetic', sides: 'inOut', anchor: 'drive', sample: 'Big\nbold\nideas', tile: KIN_TILE,
+      // Centred like the template's block (its lines are left-aligned inside a block it
+      // centres in frame): a left-aligned layer swings its tilted plane off the left edge.
+      labLayer: { size: 160, weight: 800, lineHeight: 0.95 },
+      layer: { camera: 'layer', perspective: em(3) },
+      description: 'Lines drive in one after another on a plane tilted toward the camera, which then swings flat; at the end they sink back into depth',
+      animators: [
+        { name: 'Lines in', range: kIn('lines', 'line', { stagger: 0.5, duration: 0.5, curve: 'AE Smooth' }),
+          effects: [['position', { x: 0, y: em(1.4) }], ['scale', { scale: 55 }], ['opacity', { opacity: 0 }]] },
+        { name: 'Tilted plane', range: kIn('lines', 'all', { delay: 1.2, stagger: 0, duration: 0.7, curve: 'Natural' }),
+          effects: [['rotate3d', { x: 32, y: 25, perspective: em(3) }], ['rotation', { angle: -6 }], ['scale', { scale: 150 }], ['position', { x: em(0.16), y: em(-0.04) }]] },
+        { name: 'Sink out', range: kOut('lines', 'line', { order: 'backward', stagger: 0.08, duration: 0.5, curve: 'Ease In' }),
+          effects: [['position', { x: 0, y: 0, z: em(-8) }], ['opacity', { opacity: 0 }]] }] },
+
+    // ── Depth ──
+    // Position Z under ONE camera (layer: { camera: 'layer', perspective }): a letter
+    // moved in depth really goes there — nearer grows and moves out from the centre,
+    // farther shrinks toward one vanishing point, nearer covers farther. Picked by the
+    // owner from the Text in Depth lab (html/text-depth-lab, 2026-11-07).
+    { id: 'rack-focus', name: 'Rack Focus', cat: 'depth', sides: 'inOut', anchor: 'start', sample: 'Pull focus to every word',
+      tile: 'Pull focus\nto every word', labLayer: { size: 130, weight: 600 },
+      layer: { camera: 'layer', perspective: em(14) },
+      description: 'Words come forward out of a soft background and snap into focus; at the end they pass the focus toward you',
+      animators: [
+        { name: 'Focus in', range: kIn('words', 'word', { stagger: 0.12, duration: 1.3, curve: 'Expo Out' }),
+          effects: [['position', { x: 0, y: 0, z: em(-9) }], ['blur', { amount: em(0.12) }], ['opacity', { opacity: 0 }]] },
+        { name: 'Focus out', range: kOut('words', 'word', { stagger: 0.05, duration: 0.6, curve: 'Ease In' }),
+          effects: [['position', { x: 0, y: 0, z: em(5) }], ['blur', { amount: em(0.12) }], ['opacity', { opacity: 0 }]] }] },
+    // Pivot Y 100: each letter turns on a hinge at its feet; under one camera the letters lie
+    // on a real floor that recedes to the vanishing point.
+    { id: 'stand-up', name: 'Stand Up', cat: 'depth', sides: 'inOut', anchor: 'start', sample: 'Stand up and be seen',
+      tile: 'Stand up\nand be seen', labLayer: { size: 150, weight: 800 },
+      layer: { camera: 'layer', perspective: em(6), pivotY: 100 },
+      description: 'Letters slide forward across the floor and stand up one after another, hinged at their feet; at the end they fall forward toward you',
+      animators: [
+        { name: 'Stand', range: kIn('charsNoSpace', 'char', { stagger: 0.04, duration: 0.9, curve: 'Cubic Out' }),
+          effects: [['position', { x: 0, y: 0, z: em(-3) }], ['rotate3d', { x: 90, y: 0, perspective: em(6) }], ['opacity', { opacity: 0 }]] },
+        { name: 'Fall', range: kOut('charsNoSpace', 'char', { stagger: 0.025, duration: 0.6, curve: 'Ease In' }),
+          effects: [['position', { x: 0, y: 0, z: em(1.5) }], ['rotate3d', { x: -90, y: 0, perspective: em(6) }], ['opacity', { opacity: 0 }]] }] },
+    // Words rest at their own depths, only behind the plate. One camera pulls a far word toward
+    // the centre, so a nearer word just outside it would cover it: the depths form a bowl (the
+    // middle words deepest, Shape Smooth) with a fixed scatter added (Wiggle at 0 / s), so an
+    // outer neighbour is never much farther. Drift is the camera move, spread over the whole
+    // layer: every word slides by the same amount past the fixed camera, which films exactly
+    // like a slow pan and push-in — the nearer words travel farther (parallax). The bowl runs
+    // in reading order, so it is written for ONE line: on two, the deep middle words are the
+    // rows' outer ends and get pulled into their neighbours.
+    { id: 'strata', name: 'Strata', cat: 'depth', sides: 'inOut', anchor: 'start', sample: 'Each word at its own depth',
+      tile: 'Layers of depth', labLayer: { size: 108, weight: 800 },
+      layer: { camera: 'layer', perspective: em(10) },
+      description: 'Words float in and rest at their own depths while a slow camera drift slides them past each other; at the end they fall back',
+      animators: [
+        { name: 'Layers', range: { basedOn: 'words', around: 'word', shape: 'smooth' },
+          wiggle: { mode: 'add', min: 0, max: 40, rate: 0, corr: 0, seed: 8 },
+          effects: [['position', { x: 0, y: 0, z: em(-7) }]] },
+        { name: 'Drift', anchor: 'clip', range: { basedOn: 'words', around: 'word' },
+          effects: [['position', { x: em(0.7), y: 0, z: em(-1) }]],
+          keys: { amount: [[0, 100, 'Sine Smooth'], [100, -100]] } },
+        { name: 'Float in', range: kIn('words', 'word', { stagger: 0.12, duration: 1.2, curve: 'Cubic Out' }),
+          effects: [['position', { x: 0, y: 0, z: em(-12) }], ['opacity', { opacity: 0 }]] },
+        { name: 'Fall back', range: kOut('words', 'word', { order: 'backward', stagger: 0.05, duration: 0.6, curve: 'Ease In' }),
+          effects: [['position', { x: 0, y: 0, z: em(-12) }], ['opacity', { opacity: 0 }]] }] },
+    // Fill folds top to bottom: Sit back greys every word, the Spotlight's white wins at its turn.
+    { id: 'spotlight', name: 'Spotlight', cat: 'depth', sides: 'once', anchor: 'start', sample: 'Every word takes the stage',
+      tile: 'Every word\ntakes the stage', labLayer: { size: 130, weight: 800 },
+      layer: { camera: 'layer', perspective: em(12) },
+      description: 'Words wait set back and dim; each in turn steps forward into the light, and the last one keeps it',
+      animators: [
+        { name: 'Sit back', range: { basedOn: 'words', around: 'word' },
+          effects: [['position', { x: 0, y: 0, z: em(-1.6) }], ['fill', { color: '#5d636b' }]] },
+        { name: 'Spotlight', range: { drive: 'time', animate: 'active', basedOn: 'words', around: 'word', delay: 0.3, stagger: 0.55, duration: 0.35, hold: 0, fadeOut: 0.3, keepLast: true, curve: 'Cubic Out' },
+          effects: [['position', { x: 0, y: 0, z: em(1.6) }], ['fill', { color: '#ffffff' }]] }] },
+    // A Time cascade from the centre, looping: each letter swells toward the camera on its
+    // turn and settles back, so a ring of depth spreads outward like a ripple on water.
+    { id: 'ripple', name: 'Ripple', cat: 'depth', sides: 'loop', anchor: 'none', sample: 'Ripples from the centre',
+      tile: 'Ripples from\nthe centre', labLayer: { size: 130, weight: 700 },
+      layer: { camera: 'layer', perspective: em(10) },
+      description: 'Rings of depth spread from the centre of the text to its edges, over and over, like ripples on still water',
+      animators: [
+        { name: 'Ripple', range: { drive: 'time', animate: 'active', basedOn: 'charsNoSpace', around: 'char', order: 'center', delay: 0.2, stagger: 0.1, duration: 0.14, hold: 0, fadeOut: 0.3, loop: true, curve: 'Sine Out' },
+          effects: [['position', { x: 0, y: 0, z: em(1.1) }], ['fill', { color: '#8fe3ff', mix: 65 }]] }] },
 
     // ── Type on Shape ──
     // The typing animator carries a Highlight box set to Behind ▸ Revealed, so the
@@ -619,6 +734,8 @@ const factory = function (T) {
     return span;
   }
   const isTimed = (p) => p.anchor === 'start' || p.anchor === 'end';
+  const keyedAt = (p, anchor) => p.animators.some((a) => a.keys && anchorOf(p, a) === anchor);
+  const keyedBothEnds = (p) => keyedAt(p, 'start') && keyedAt(p, 'end');
   // Sizes: a number = px; { em } = × the layer's font size; { px, em } = their sum;
   // minEm = at least that many font sizes, keeping the sign (of the value, or of
   // minEm when the value is 0) — a masked unit has to clear its own line, as Text
@@ -645,8 +762,10 @@ const factory = function (T) {
     const uid = (prefix) => { let n = 1; while (ids.has(`${prefix}${n}`)) n += 1; ids.add(`${prefix}${n}`); return `${prefix}${n}`; };
     const span = presetSpan(p);
     const clip = Math.max(0.1, clipSec);
+    // Keys at both ends (an In·Out from Sides): each side gets at most half the layer.
+    const room = keyedBothEnds(p) ? clip / 2 : clip;
     let scale = span > 0 && duration > 0 ? duration / span : 1;
-    if (span > 0 && span * scale > clip) scale = clip / span;
+    if (span > 0 && span * scale > room) scale = room / span;
     const pos = (t, anchor) => {
       let v;
       if (anchor === 'clip') v = t;
@@ -690,7 +809,8 @@ const factory = function (T) {
     return {
       animators: T.sanitizeAnimators(animators),
       tracks,
-      layer: { ...T.defaultsOf(T.LAYER_FIELDS), ...(p.layer || {}) },
+      // Layer fields may be sizes too (a shared camera's Perspective in em).
+      layer: { ...T.defaultsOf(T.LAYER_FIELDS), ...Object.fromEntries(Object.entries(p.layer || {}).map(([k, v]) => [k, resolveEm(v, fontPx)])) },
     };
   }
 
@@ -712,23 +832,110 @@ const factory = function (T) {
   // The preset with a plain exit added (Presets ▸ Exit): its units fade out at the
   // layer's end, on the unit its first animator works on. Seconds from the end, so
   // trimming the layer never stretches it.
+  const exitStagger = (basedOn) => (basedOn === 'words' ? 0.04 : basedOn === 'lines' ? 0.08 : 0.015);
   function withExit(p) {
-    if (!p || p.sides === 'out' || p.sides === 'loop' || hasExit(p)) return p;
+    if (!p || p.sides === 'out' || p.sides === 'inOut' || p.sides === 'loop' || hasExit(p)) return p;
     const first = p.animators[0] && p.animators[0].range;
     const basedOn = (first && first.basedOn) || 'chars';
-    const stagger = basedOn === 'words' ? 0.04 : basedOn === 'lines' ? 0.08 : 0.015;
     return {
       ...p,
       sides: 'inOut',
       animators: [...p.animators, {
         name: 'Out',
-        range: { drive: 'time', animate: 'out', basedOn, stagger, duration: 0.3, curve: 'Ease In' },
+        range: { drive: 'time', animate: 'out', basedOn, stagger: exitStagger(basedOn), duration: 0.3, curve: 'Ease In' },
         effects: [['opacity', { opacity: 0 }]],
       }],
     };
   }
 
-  const api = { CATEGORIES, PRESETS, anchorOf, presetSpan, isTimed, resolveEm, build, fakeVoice, usesVoice, hasExit, withExit };
+  // Presets ▸ Sides: an entrance-only preset also plays as its exit, or as both, and an
+  // exit-only one as its entrance. The other side is the same motion played BACKWARDS,
+  // ending with the layer (typing in becomes a backspace out, an Overshoot arrival an
+  // Anticipate departure): keyed animators get their keys reversed against the other end
+  // of the layer, Time / Voice ones swap In and Out with their order and curve reversed
+  // (a Voice entrance leaves on the layer clock, as every Out turn does). Animators that
+  // are neither (a static colour, a highlight on its own clock, a loop) stay as they are
+  // in every version. In·Out presets keep their own pair.
+  // A curve played backwards. Linear and the in-out curves are their own mirror; the
+  // ones with none in the list take the exit curve the Kinetic presets pair them with.
+  const REVERSE_CURVE = {
+    'Ease In': 'Ease Out', 'Ease Out': 'Ease In', 'Cubic In': 'Cubic Out', 'Cubic Out': 'Cubic In',
+    'Sine In': 'Sine Out', 'Sine Out': 'Sine In', 'Expo In': 'Expo Out', 'Expo Out': 'Expo In',
+    'Back In': 'Back Out', 'Back Out': 'Back In', 'AE In (arrive)': 'AE Out (leave)', 'AE Out (leave)': 'AE In (arrive)',
+    Overshoot: 'Anticipate', 'Smooth Overshoot': 'Anticipate', Elastic: 'Anticipate', Anticipate: 'Overshoot',
+    'Bounce Out': 'Ease In', Power: 'Cubic In', 'Slow Down': 'Expo In', 'Apple Out': 'Ease In',
+  };
+  const reverseCurve = (c) => REVERSE_CURVE[c] || c;
+  const REVERSE_ORDER = { forward: 'backward', backward: 'forward', center: 'edges', edges: 'center' };
+  const driven = (r) => r.drive === 'time' || r.drive === 'voice';
+  // 'in' (an entrance), 'out' (an exit) or null (neither) for one animator of p.
+  function sideOf(p, a) {
+    const r = a.range || {};
+    if (r.loop || a.wiggle) return null;
+    if (driven(r)) {
+      const animate = r.animate || 'in';
+      return animate === 'in' || animate === 'out' ? animate : null;
+    }
+    if (!a.keys || !Object.keys(a.keys).length) return null;
+    const anchor = anchorOf(p, a);
+    return anchor === 'start' ? 'in' : anchor === 'end' ? 'out' : null;
+  }
+  // The sides a preset can play (['in', 'out', 'inOut']), or null when only its own.
+  function sideVersions(p) {
+    if (!p || (p.sides !== 'in' && p.sides !== 'out')) return null;
+    const sides = p.animators.map((a) => sideOf(p, a));
+    return sides.includes(p.sides) && !sides.includes(p.sides === 'in' ? 'out' : 'in') ? ['in', 'out', 'inOut'] : null;
+  }
+  // One entrance animator as its exit, or an exit as its entrance.
+  function mirror(p, a) {
+    const toOut = sideOf(p, a) === 'in';
+    const word = toOut ? 'out' : 'in';
+    const m = new RegExp(`\\b${toOut ? 'in' : 'out'}$`, 'i').exec(a.name);
+    const name = m ? a.name.slice(0, m.index) + (m[0][0] === m[0][0].toUpperCase() ? word[0].toUpperCase() + word.slice(1) : word) : `${a.name} ${word}`;
+    const r = a.range || {};
+    if (driven(r)) {
+      const range = { ...r, animate: word, order: REVERSE_ORDER[r.order || 'forward'] || r.order, curve: reverseCurve(r.curve || 'Ease Out') };
+      if (r.curve === 'Custom' && Array.isArray(r.bezier) && r.bezier.length === 4) {
+        const [x1, y1, x2, y2] = r.bezier;
+        range.bezier = [1 - x2, 1 - y2, 1 - x1, 1 - y1];
+      }
+      if (r.drive === 'voice') {
+        range.drive = 'time';
+        if (r.stagger == null) range.stagger = exitStagger(r.basedOn);
+      }
+      return { ...a, name, range };
+    }
+    // Keys in reverse, measured from the other end; the easing that led into a key now
+    // leaves it, reversed.
+    const keys = {};
+    for (const [chan, ks] of Object.entries(a.keys)) {
+      const n = ks.length;
+      keys[chan] = ks.map((_, i) => {
+        const k = ks[n - 1 - i];
+        const into = ks[n - 2 - i];
+        const t = -k[0] || 0;
+        return into ? [t, k[1], reverseCurve(into[2] || 'Smooth')] : [t, k[1]];
+      });
+    }
+    return { ...a, name, anchor: toOut ? 'end' : 'start', keys };
+  }
+  // p played as `sides` ('in', 'out' or 'inOut'); p itself when it has no such version.
+  function withSides(p, sides) {
+    const versions = sideVersions(p);
+    if (!versions || !versions.includes(sides) || sides === p.sides) return p;
+    const flip = { start: 'end', end: 'start' };
+    // Every keyed animator keeps its own clock under the version's anchor.
+    const pinned = (a) => (a.keys && !a.anchor ? { ...a, anchor: anchorOf(p, a) } : a);
+    const moving = (a) => sideOf(p, a) === p.sides;
+    if (sides === 'inOut') {
+      const back = p.animators.filter(moving).map((a) => mirror(p, a));
+      const own = p.animators.map(pinned);
+      return { ...p, sides, anchor: p.anchor === 'end' ? 'start' : p.anchor, animators: p.sides === 'in' ? [...own, ...back] : [...back, ...own] };
+    }
+    return { ...p, sides, anchor: flip[p.anchor] || p.anchor, animators: p.animators.map((a) => (moving(a) ? mirror(p, a) : pinned(a))) };
+  }
+
+  const api = { CATEGORIES, PRESETS, anchorOf, presetSpan, isTimed, keyedBothEnds, resolveEm, build, fakeVoice, usesVoice, hasExit, withExit, sideVersions, withSides };
   return api;
 };
 
@@ -739,11 +946,14 @@ export const {
   anchorOf,
   presetSpan,
   isTimed,
+  keyedBothEnds,
   resolveEm,
   build,
   fakeVoice,
   usesVoice,
   hasExit,
   withExit,
+  sideVersions,
+  withSides,
 } = PRESETS_API;
 export default PRESETS_API;

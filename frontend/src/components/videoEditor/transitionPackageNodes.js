@@ -360,7 +360,6 @@ const pbRoundedBox = Fn(([p, b, r]) => {
   inputs: [{ name: 'p', type: 'vec2' }, { name: 'b', type: 'vec2' }, { name: 'r', type: 'float' }],
 });
 
-const PB_MASK_INPUTS = [{ name: 't', type: 'float' }, { name: 'phase2', type: 'float' }];
 
 /**
  * Pixel Blocks: the lab's cell mask, expression for expression. Every switch is
@@ -414,12 +413,15 @@ export function createPixelBlocksNodeMaterial() {
     const far = max(pp, u.uRes.sub(pp));
     const dr = length(px.sub(pp)).div(length(far));
     const radial = select(u.uDir.lessThan(1.5), dr, float(1.0).sub(dr));
-    const dir = vec2(cos(u.uAngle), sin(u.uAngle).negate());
-    const d = dot(px.sub(u.uRes.mul(0.5)), dir);
-    const maxD = abs(dir.x).mul(u.uRes.x).add(abs(dir.y).mul(u.uRes.y)).mul(0.5);
+    // The direction as two floats: a vec2 kept in a variable here was emitted as f32 by the WGSL builder
+    // ("cannot index into expression of type 'f32'" on dir.x), which broke the whole pipeline on WebGPU.
+    const dirX = cos(u.uAngle).toVar();
+    const dirY = sin(u.uAngle).negate().toVar();
+    const d = px.x.sub(u.uRes.x.mul(0.5)).mul(dirX).add(px.y.sub(u.uRes.y.mul(0.5)).mul(dirY));
+    const maxD = abs(dirX).mul(u.uRes.x).add(abs(dirY).mul(u.uRes.y)).mul(0.5);
     const lin = d.div(maxD).mul(0.5).add(0.5);
     return select(isRadial(), radial, lin);
-  }).setLayout({ name: 'pbDirCoord', type: 'float', inputs: [{ name: 'px', type: 'vec2' }] });
+  });
   const front = (band, t, fade) => band.mul(-0.5).add(t.mul(float(1.0).add(band).add(u.uLag).add(fade)));
   const cellAlpha = Fn(([cid, t, phase2]) => {
     const cc = cid.add(0.5).mul(u.uCell);
@@ -439,7 +441,7 @@ export function createPixelBlocksNodeMaterial() {
     const a2 = clamp(f.sub(start).sub(u.uLag.mul(rLag.mul(0.75).add(0.25))).div(fade), 0.0, 1.0);
     const a0 = max(a1.mul(lvl), a2);
     return select(u.uSteps.greaterThan(0.5), floor(a0.mul(u.uSteps).add(0.5)).div(max(u.uSteps, 1.0)), a0);
-  }).setLayout({ name: 'pbCellAlpha', type: 'float', inputs: [{ name: 'cid', type: 'vec2' }, ...PB_MASK_INPUTS] });
+  });
   const softMask = Fn(([g, t, phase2]) => {
     const gc = g.sub(0.5);
     const i = floor(gc);
@@ -451,7 +453,7 @@ export function createPixelBlocksNodeMaterial() {
     const a01 = cellAlpha(i.add(vec2(0.0, 1.0)), t, phase2);
     const a11 = cellAlpha(i.add(vec2(1.0, 1.0)), t, phase2);
     return mix(mix(a00, a10, w.x), mix(a01, a11, w.x), w.y);
-  }).setLayout({ name: 'pbSoftMask', type: 'float', inputs: [{ name: 'g', type: 'vec2' }, ...PB_MASK_INPUTS] });
+  });
   // vec2(m, mN): m = the soft mask, mN = the nearest cell's alpha (drives that cell's pixelation)
   const maskAt = Fn(([px, t, phase2]) => {
     const g = px.div(u.uCell);
@@ -470,7 +472,7 @@ export function createPixelBlocksNodeMaterial() {
     const shape = select(size.lessThan(0.92), float(1.0).sub(smoothstep(aa.negate(), aa, sd)), float(1.0));
     const mShaped = select(u.uScaleIn.greaterThan(0.5), shape.mul(step(0.002, aN)), m0.mul(shape));
     return vec2(select(shaped, mShaped, m0), aN);
-  }).setLayout({ name: 'pbMaskAt', type: 'vec2', inputs: [{ name: 'px', type: 'vec2' }, ...PB_MASK_INPUTS] });
+  });
   const pixUv = (px) => {
     const cs = u.uCell.mul(u.uPixScale);
     return floor(px.div(cs)).add(0.5).mul(cs).div(u.uRes);

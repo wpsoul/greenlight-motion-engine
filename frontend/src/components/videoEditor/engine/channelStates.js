@@ -179,6 +179,8 @@ export function ensureSequenceState(engine, itemId, seqClip) {
       clipsKey: null,
       layoutKey: null,
       rt: null,
+      // The owning sequence item: keys per-instance temporal state (Motion Trail).
+      itemId,
     };
     engine.sequenceStates.set(itemId, st);
   }
