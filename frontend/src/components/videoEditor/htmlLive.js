@@ -111,6 +111,10 @@ class LivePage {
     this.forExport = forExport;
     this.canvas = document.createElement('canvas');
     this.canvas.setAttribute('layoutsubtree', '');
+    // Chrome 157 (the render browser a packed backend found: system Chrome) asks for `content="drawable"` on the canvas and `drawable`
+    // on the element drawn (load): without them every drawElementImage threw and each page fell back to its bake. Chromium 151 draws
+    // with all three (tests/live-screen/chrome157_probe.mjs).
+    this.canvas.setAttribute('content', 'drawable');
     this.canvas.width = width;
     this.canvas.height = height;
     // CSS size == pixel size, or the page is drawn scaled by the ratio.
@@ -209,6 +213,7 @@ class LivePage {
     this.loadedAt = performance.now();
     this.loads = (this.loads || 0) + 1;
     const iframe = document.createElement('iframe');
+    iframe.setAttribute('drawable', '');
     // The same trust as an HTML card on the board.
     iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
     iframe.style.cssText = `border:0;width:${this.width}px;height:${this.height}px;background:transparent;`;
@@ -431,6 +436,9 @@ class LivePage {
       this.progressAt = performance.now();
       if (fromPaint) this.painted = this.stepped;
       this.revision += 1;
+      // Which picture this is, for a copy that redraws only on a new one (liveLayers.js): the page's frame on its clock, from which load,
+      // and whether a real paint drew it. A page repainting the same frame (a caret, a repaint of nothing) keeps the same stamp.
+      this.canvas.__glStamp = `${this.loads}:${this.drawn}:${this.painted === this.drawn ? 'p' : 'f'}${this.inexact ? 'i' : ''}`;
     } catch (err) {
       // Nothing of the page painted yet: the no-paint fallback ran before the browser's first paint of it — a
       // window that is not painting (covered, minimized, in the background) or a busy frame. Not a failure: the
@@ -650,7 +658,9 @@ export async function htmlLiveExportCanvas(clip, sourceSeconds, { fps, videoSize
 // `failed`: the pages that could not be drawn live (a strict caller stops, the backend
 // then renders the still from bakes).
 export async function htmlLiveSettleUsed({ timeoutMs = EXPORT_STALL_MS } = {}) {
-  const used = [...pages.values()].filter((p) => !p.forExport && p.usedEpoch === renderEpoch);
+  // An export copy that failed in this render counts too (a 3D surface's page, liveLayers.js): the still then says so, and a strict
+  // caller renders it again from bakes instead of keeping an empty screen.
+  const used = [...pages.values()].filter((p) => (!p.forExport || (p.failed && p.failed !== 'disposed')) && p.usedEpoch === renderEpoch);
   let waited = false;
   const failed = [];
   await Promise.all(used.map(async (page) => {
@@ -665,7 +675,11 @@ export async function htmlLiveSettleUsed({ timeoutMs = EXPORT_STALL_MS } = {}) {
       ]);
       clearTimeout(timer);
     }
-    if (!onFrame()) failed.push(page.url);
+    // With the page's own reason: the url alone left "could not be drawn live" unexplained.
+    if (!onFrame()) {
+      const why = page.failed && page.failed !== 'disposed' ? page.failed : `not drawn on frame ${page.target} within ${Math.round(timeoutMs / 1000)} s`;
+      failed.push(`${page.url} (${why})`);
+    }
   }));
   return { waited, failed };
 }

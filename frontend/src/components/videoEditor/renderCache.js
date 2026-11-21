@@ -184,9 +184,15 @@ function mix(h, k) {
   return Math.imul(x, 0x85ebca6b) >>> 0;
 }
 
+// A 3D Scene layer: a Rig drawn by the 3D world (rig3d.js rigUsesWorld; kept here so this file stays free of the
+// editor's modules). Smart caching leaves the segments it covers alone: rendering them in the background means
+// path tracing on the user's GPU (owner, 2026-11-15: "it loads the system a lot").
+const isWorldScene = (item) => !!item?.rig && item.rig.renderer !== 'classic';
+
 /**
  * One fingerprint per segment: segment i covers [i·segSec, (i+1)·segSec).
- * Returns { hashes: string[], duration }. Item, clip and channel digests are
+ * Returns { hashes: string[], duration, sceneSegments: Set<number> } (sceneSegments: the segments a 3D Scene
+ * layer draws in). Item, clip and channel digests are
  * memoised per object, so an edit re-digests only what changed; every key is
  * hashed ONCE and folded into the segments it covers as two integer lanes, so the
  * per-segment work is a few integer ops per layer, not a string per segment.
@@ -205,6 +211,7 @@ export function computeSegmentHashes({ channels, clips, globalKey, segSec = REND
   const laneA = new Uint32Array(n);
   const laneB = new Uint32Array(n);
   const count = new Uint32Array(n);
+  const sceneSegments = new Set();
   const fold = (lanes, s) => {
     laneA[s] = mix(laneA[s], lanes[0]);
     laneB[s] = mix(laneB[s] ^ 0x5f3759df, lanes[1]);
@@ -240,6 +247,11 @@ export function computeSegmentHashes({ channels, clips, globalKey, segSec = REND
       }
       const itemLanes = keyLanes(`i${ci}.${ii}:${keys.join(',')}`);
       for (let s = first; s <= last; s += 1) fold(itemLanes, s);
+      // the Scene's own span (no margin): a 2D segment right after it stays cacheable
+      if (isWorldScene(item)) {
+        const s1 = Math.min(n - 1, Math.ceil(l.endTime / segSec - 1e-9) - 1);
+        for (let s = Math.max(0, Math.floor(l.startTime / segSec + 1e-9)); s <= s1; s += 1) sceneSegments.add(s);
+      }
     });
   });
   const g = globalKey || '';
@@ -247,7 +259,7 @@ export function computeSegmentHashes({ channels, clips, globalKey, segSec = REND
   for (let s = 0; s < n; s += 1) {
     hashes[s] = `${g}|${s}|${laneA[s].toString(16)}.${laneB[s].toString(16)}.${count[s]}`;
   }
-  return { hashes, duration };
+  return { hashes, duration, sceneSegments };
 }
 
 // ── Cost map ──
@@ -378,10 +390,11 @@ export function partitionEntries(entries, hashes) {
  * Segments that are slow and not validly cached, merged into contiguous ranges of
  * at most `maxJobSec`, ordered: the range under/after the playhead first, then
  * the rest ahead in timeline order, then everything behind it.
+ * `skip` (a Set of segment indices) is left out: Smart mode passes the 3D Scene segments.
  * Returns [{ t0, t1, segments: number[] }].
  */
 export function planCacheJobs({
-  costMap, hashes, entries, playhead = 0, duration, busy = null,
+  costMap, hashes, entries, playhead = 0, duration, busy = null, skip = null,
   segSec = RENDER_CACHE_SEGMENT_SEC, maxJobSec = 8,
 }) {
   const n = hashes?.length || 0;
@@ -389,6 +402,7 @@ export function planCacheJobs({
   for (let i = 0; i < n; i += 1) {
     if (segmentVerdict(costMap, i) !== 'slow') continue;
     if (busy && busy.has(i)) continue;
+    if (skip && skip.has(i)) continue;
     if (entryForSegment(entries, i, hashes[i])) continue;
     todo.push(i);
   }

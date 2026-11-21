@@ -21,7 +21,7 @@ import { getDepthCameraShift } from '../depthParallax';
 import { activeEffectPrecomposeStage } from '../effectTransitionOrder';
 import { applyCrossTransition, applyGsapEasing, applyLayerTransition, getItemKeyframeValues, integratePathRate, itemHasKeyframes } from '../gsapTransitions';
 import { bindHtmlLiveCanvas, htmlLiveCanvas, htmlLivePrepare } from '../htmlLive';
-import { applyParenting, localPrs } from '../keyframeParenting';
+import { applyParenting, localPrs, sceneTurnFix } from '../keyframeParenting';
 import { applyMotionFollowToPrs } from '../motionTracking';
 import { isLayerMaskEnabled } from '../layerMask';
 import { layerDriveTableFor } from '../layerVelocity';
@@ -34,7 +34,7 @@ import { perfRegistry } from '../perfRegistry.js';
 import { ensurePreviewAudio } from '../previewAudioMedia.js';
 import { isInactiveTextureNeededAsFallback, reconcileChannelPreviewMedia, shouldPrepareNextVideo } from '../previewMediaLifecycle';
 import { isCameraChannel, isCameraClip } from '../projectCamera';
-import { isCameraBaked3dPlate, isScenePlate, RIG_MEDIA_TYPE } from '../rig3d';
+import { isCameraBaked3dPlate, isScenePlate, resolveRigAt, RIG_MEDIA_TYPE, sceneTimeAt, shutterEntries } from '../rig3d';
 import { prerenderPlaybackClip } from '../sequencePrerender';
 import { getSpeedAtTime } from '../speedUtils';
 import { hideTransitionPackageInstances, renderTransitionPackage } from '../transitionPackageRuntime';
@@ -42,11 +42,14 @@ import { isAdvancedLayerTransition, isContainerClip, LayerTransitionType, SEQUEN
 import { hasVideoStabilization } from '../videoStabilization';
 import { applyCameraRig } from './camera';
 import { ensureSequenceState as ensureSequenceStateInEngine } from './channelStates';
-import { _platePos, resolveActiveIndex } from './compositeHelpers';
-import { modelKeepsOwnPass, prepareWorldFrame, worldLayerResult } from '../world3dLayer';
+import { _platePos, resolveActiveIndex, shutterTimeIn } from './compositeHelpers';
+import { pictureWorldRun } from '../liveLayers';
+import { isPictureInWorldLayer } from '../world3dText.js';
+import { handWorldText, isWorldRig, modelFxLiveAt, modelKeepsOwnPass, prepareWorldFrame, textKeepsOwnPass, worldBlockedOn, worldHolds, worldLayerResult } from '../world3dLayer';
 import { bakeableLayerStack, calculateVideoTime, layerContentBox } from './layerHelpers';
 import { playbackRateTrim } from './mediaClock';
 import { getClipPlaybackUrl, normalizeUrl, primePreparedVideoTexture as primePreparedVideoTextureInEngine } from './mediaTextures';
+import { textureVideoOf } from './videoCanvasTexture';
 import { resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
 import { requestModel3dModule } from './modules3d';
 import { mediaActivation } from './previewMedia';
@@ -110,6 +113,75 @@ function stageContainerEntry(engine, env, seqItem, seqClip, timeInClip, rateScal
     env.syncVideo(video, clip, target, { allowPlayback: false, idleStaging: true });
     primePreparedVideoTextureInEngine(engine, video, clip, target, env.projectFps);
   }
+}
+
+/** The quad transform 3D Text's letters are placed by (world3dText.js text3dLayerMatrix, model3dLayer.js renderText3dLayer): the pose
+ *  setupMesh gave the layer's mesh, its world matrix at the top level (`world`: a parent's turn and scale in it), and the plane's expand
+ *  taken back out of its scale. */
+function text3dQuadTransform(engine, mesh, material, world) {
+  const { w: pW, h: pH } = engine.videoSize;
+  const expand = Math.max(0, Number(material.uniforms?.uPlaneExpand?.value) || 0);
+  const expandX = (pW + 2 * expand) / pW;
+  const expandY = (pH + 2 * expand) / pH;
+  let px = mesh.position.x, py = mesh.position.y, pz = mesh.position.z;
+  let qx = mesh.quaternion.x, qy = mesh.quaternion.y, qz = mesh.quaternion.z, qw = mesh.quaternion.w;
+  let sx = mesh.scale.x, sy = mesh.scale.y;
+  if (world) {
+    mesh.updateWorldMatrix(true, false);
+    mesh.matrixWorld.decompose(_platePos, _plateQuat, _plateScale);
+    px = _platePos.x; py = _platePos.y; pz = _platePos.z;
+    qx = _plateQuat.x; qy = _plateQuat.y; qz = _plateQuat.z; qw = _plateQuat.w;
+    sx = _plateScale.x; sy = _plateScale.y;
+    if (mesh.scale.x < 0) sx = -Math.abs(sx);
+    if (mesh.scale.y < 0) sy = -Math.abs(sy);
+  }
+  return {
+    position: { x: px, y: py, z: pz },
+    quaternion: { x: qx, y: qy, z: qz, w: qw },
+    scale: { x: sx / expandX, y: sy / expandY, z: 1 },
+  };
+}
+
+/**
+ * (mblur5) A top-level 3D Text channel's letters at time `t`, as renderChannel would hand them to a Scene's world at that time (setupMesh's
+ * run and the quad transform promoteText3dMesh takes), without drawing a frame: the world poses its letters across a motion-blur shutter
+ * with them (world3dLayer.js worldMotionBlur / worldDraftBlur), so a Text Animator's moves blur inside the one trace. Lays the layer out on
+ * the channel's own mesh, which the frame drawn next sets again. `env` needs layoutMap, clipsMap, parentIndex and setupMesh. Returns
+ * { item, run, transform }, or null when the channel shows no 3D Text then, or shows it in a cross transition (two clips at once).
+ */
+export function text3dRunAt(engine, env, channel, t) {
+  const cs = engine.channelStates?.get(channel?.id);
+  const layout = env?.layoutMap?.get(channel?.id);
+  if (!cs || !layout || !env.setupMesh || channel.visible === false || !channel.items?.length) return null;
+  const index = resolveActiveIndex(layout, t);
+  if (index < 0) return null;
+  const item = channel.items[index];
+  const at = layout[index];
+  const clip = env.clipsMap?.get(item?.clipId);
+  if (!clip || !isText3dLayer(item, clip)) return null;
+  const realTimeInClip = t - at.startTime;
+  if (index > 0 && at.overlapIn > 0 && realTimeInClip <= at.overlapIn) return null;
+  // as renderChannel lays a single clip out at `t`: the layer's own clock (Posterize Time), its parent and its track at that time
+  const timeInClip = posterizedTimeInClip(item, realTimeInClip, at.duration);
+  const progress = Math.max(0, Math.min(1, timeInClip / at.duration));
+  const parent = resolveParentingInEngine(engine, env.parentIndex, item, t);
+  const follow = resolveFollowInEngine(engine, env.parentIndex, item, t);
+  const mesh = cs.currMesh, material = cs.currMaterial;
+  mesh.visible = false;
+  mesh.position.set(0, 0, 0.01);
+  mesh.scale.set(1, 1, 1);
+  mesh.rotation.set(0, 0, 0);
+  resetMaterialUniforms(material);
+  // (a placeholder's own clock reads the timeline's)
+  const was = engine.currentTime;
+  engine.currentTime = t;
+  try {
+    env.setupMesh(mesh, material, item, clip, null, progress, at.duration, cs, null, parent, follow);
+  } finally {
+    engine.currentTime = was;
+  }
+  const run = mesh.visible ? mesh.userData?.text3dRun : null;
+  return run ? { item, run, transform: text3dQuadTransform(engine, mesh, material, true) } : null;
 }
 
 export function renderChannel(engine, env, channel, time, ctx = null) {
@@ -180,6 +252,8 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   resetMaterialUniforms(cs.prevMaterial);
   resetMaterialUniforms(cs.currMaterial);
 
+  // (filmbugs) a sub-frame of a render's motion blur: the clip of the frame's own time, held inside its span (compositeHelpers.shutterTimeIn)
+  if (!ctx && Number.isFinite(engine.shutterFrameTime)) time = shutterTimeIn(layout, engine.shutterFrameTime, time);
   const activeIndex = resolveActiveIndex(layout, time);
   if (activeIndex < 0) {
     reconcileMedia();
@@ -407,8 +481,12 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // null when there is nothing to draw yet.
   const resolveModelTexture = (mItem, mClip, mTimeInClip) => {
     if (mClip?.mediaType !== 'model3d') return null;
-    // Only what the world really took: a camera-locked channel is not in it, and suppressing its pass makes the model vanish.
-    if (engine.worldFrameReady && !channel.cameraLocked && !modelKeepsOwnPass(mItem)) {
+    // Only what the world really took: a camera-locked channel is not in it, and suppressing its pass makes the model vanish. One of the
+    // six live this frame takes the model out of the world (modelKeepsOwnPass); coming back, it keeps its pass until the world holds it
+    // again, since the world rebuilds without it in the meantime. A Scene that cannot draw here (the WebGL engine, no WebGPU) takes the
+    // same models with it: the notice stands where the Scene would be, never the old passes.
+    if ((engine.worldBlocked || (engine.worldFrameReady && (ctx || worldHolds(mItem.id))))
+      && !channel.cameraLocked && !modelKeepsOwnPass(mItem, () => modelFxLiveAt(mItem, itemLayout, time))) {
       // In the Scene layer's picture already.
       engine.modelDepth.delete(channel.id);
       engine.modelDepthTex.delete(channel.id);
@@ -428,7 +506,11 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     // the sequence clip's own plane) gets the neutral pose.
     const locked = ctx || channel.cameraLocked || engine.worldActive;
     const kfNow = itemHasKeyframes(mItem) ? getItemKeyframeValues(mItem, itemProgress) : null;
-    const prs = localPrs(mItem, kfNow, mW, mH);
+    // (enginebugs2) In a world Scene a model turns as the Scene's objects do (keyframeParenting.js sceneTurnPrs), in the world and in
+    // this pass alike (one of the six effects takes it out of the world for a while: it must not turn the other way meanwhile), and so
+    // does its real geometry in the 3D view. A camera-locked channel and a sequence's inner render keep the editor's turn: no world.
+    const sceneTurn = !!engine.worldScene && !ctx && !channel.cameraLocked;
+    const prs = localPrs(mItem, kfNow, mW, mH, { sceneTurn });
     // Render at the drawing-buffer size, like every other target in the comp, so the
     // model is not resampled twice on its way to the canvas.
     const buf = renderer.getDrawingBufferSize(_modelSize);
@@ -447,17 +529,24 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     }
     // Real-3D effects, resolved for this frame and run INSIDE the model's pass
     // (model3dFx.js). Empty → the pass never loads that module.
-    const fx3d = resolveModelFx3d(mItem, kfNow, Math.max(0, mTimeInClip), itemLayout.duration);
+    const fx3d = resolveModelFx3d(mItem, kfNow, Math.max(0, mTimeInClip), itemLayout.duration, engine.worldScene && !ctx);
     const res = mod.renderModelLayer(renderer, {
       item: mItem,
       clip: mClip,
       pose: locked ? null : engine.cameraPose,
+      // A world Scene with a camera of its own films this pass from it too, so a model out of the world stands where the world shows it.
+      cameraProxy: !locked && engine.worldFrameReady ? engine.worldCameraProxy : null,
+      // ... and lit and filmed as that world lights and films it (world3dLayer.js, engine.worldLook).
+      worldLook: !locked && engine.worldFrameReady ? engine.worldLook : null,
       prs,
+      sceneTurn,
       W: mW,
       H: mH,
       width: buf.x || mW,
       height: buf.y || mH,
       time: Math.max(0, mTimeInClip),
+      // (pose) the Scene's own time, at which a pose's targets ("@object") stand
+      sceneTime: sceneTimeAt(shutterEntries(engine.rigEntries, engine.shutterFrameTime), time),
       growFill,
       fx3d,
       // The project's 3D Rig, if there is one. Outside every rig clip this falls
@@ -492,7 +581,6 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // draw (no live particles at this time — a legitimate, common state).
   const resolveParticleTexture = (pItem, pClip, pTimeInClip) => {
     if (pClip?.mediaType !== PARTICLE_MEDIA_TYPE || !pItem?.particleSystem) return null;
-    if (engine.worldFrameReady && pItem.particleLook === '3d') return null;   // objects in the world now, in the Scene's picture
     const mod = engine.particle;
     if (!mod) {
       // The frame that triggered this import drew nothing for the layer; repaint
@@ -795,6 +883,15 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // the same mechanism that lets a model cut the layers behind it.
   const resolveRigTexture = (rItem, rClip) => {
     if (rClip?.mediaType !== RIG_MEDIA_TYPE) return null;
+    // A Scene on the WebGL engine, or on a computer with no WebGPU: nothing, and the preview says why (WorldNeedsWebGpu.jsx).
+    if (engine.worldBlocked) {
+      engine.modelDepth.delete(channel.id);
+      engine.modelDepthRange.delete(channel.id);
+      engine.modelDepthTex.delete(channel.id);
+      engine.modelTransparentDepthTex.delete(channel.id);
+      engine.modelSpillDepth.delete(channel.id);
+      return null;
+    }
     if (engine.worldFrameReady) {
       const res = worldLayerResult(engine);
       engine.modelDepth.set(channel.id, res.viewDistance);
@@ -804,6 +901,8 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
       engine.modelTransparentDepthTex.delete(channel.id);
       engine.modelSpillDepth.delete(channel.id);
       engine.worldShadowTexture = res.shadowTexture;
+      // (mblur3) its coverage is a shutter's (a frame traced moving over a see-through sky): it goes over the stack in linear light
+      engine.worldLinearCover = !!res.linearCover;
       return res.texture;
     }
     const mod = engine.model3d;
@@ -958,6 +1057,17 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     return true;
   };
 
+  // (enginebugs2) The quad's pose as a world takes a 3D Text layer's letters: the world turns them as it turns its objects (world3dText.js
+  // `sceneTurn` maps the turn), and a parent's turn carries the word's place the same way, as does a Transform origin it turns about, while
+  // a path that aims the word along itself keeps that aim (keyframeParenting.js sceneTurnFix); a plain layer stands where the editor puts it.
+  const worldTextTransform = (tItem, mesh, transform, pW, pH) => {
+    const fix = sceneTurnFix(levelParentIndex, tItem, mesh.userData?.text3dKf ?? null, time, { W: pW, H: pH, evalKeyframes: getItemKeyframeValues });
+    if (!fix) return transform;
+    const p = transform.position, s = fix.shift;
+    return { ...transform, position: { x: p.x + s.x, y: p.y + s.y, z: p.z + s.z },
+      ...(fix.turn ? { quaternion: { x: fix.turn[0], y: fix.turn[1], z: fix.turn[2], w: fix.turn[3] } } : {}) };
+  };
+
   // 3D Text (text3d.js): the text layer's letters, laid out and animated by
   // setupMesh into mesh.userData.text3dRun, are filmed as solids in the 3D pass and
   // the quad takes that full-frame picture — promotePlateMesh's contract.
@@ -973,30 +1083,34 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     const renderer = engine.renderer;
     if (!renderer || !mod.renderText3dLayer) return false;
     const { w: pW, h: pH } = engine.videoSize;
-    const expand = Math.max(0, Number(material.uniforms?.uPlaneExpand?.value) || 0);
-    const expandX = (pW + 2 * expand) / pW;
-    const expandY = (pH + 2 * expand) / pH;
     const buf = renderer.getDrawingBufferSize(_modelSize);
-    let px = mesh.position.x, py = mesh.position.y, pz = mesh.position.z;
-    let qx = mesh.quaternion.x, qy = mesh.quaternion.y, qz = mesh.quaternion.z, qw = mesh.quaternion.w;
-    let sx = mesh.scale.x, sy = mesh.scale.y;
-    if (!ctx) {
-      mesh.updateWorldMatrix(true, false);
-      mesh.matrixWorld.decompose(_platePos, _plateQuat, _plateScale);
-      px = _platePos.x; py = _platePos.y; pz = _platePos.z;
-      qx = _plateQuat.x; qy = _plateQuat.y; qz = _plateQuat.z; qw = _plateQuat.w;
-      sx = _plateScale.x; sy = _plateScale.y;
-      if (mesh.scale.x < 0) sx = -Math.abs(sx);
-      if (mesh.scale.y < 0) sy = -Math.abs(sy);
+    // (mblur5: shared with text3dRunAt, which lays the letters out at the other times of a shutter)
+    const transform = text3dQuadTransform(engine, mesh, material, !ctx);
+    // In a Scene's world the letters stand in the world itself (world3dText.js), lit, shadowed and traced with everything in it, and the
+    // layer's own quad draws nothing. Only what the world can take: a top-level layer, not locked to the camera, with no effect of its own.
+    // A Scene that cannot draw here holds them back too, as it holds back its models.
+    if (!ctx && (engine.worldBlocked || (engine.worldFrameReady && engine.worldTakesText)) && !channel.cameraLocked && !textKeepsOwnPass(tItem)
+      && (engine.worldBlocked || handWorldText(engine, tItem, run, worldTextTransform(tItem, mesh, transform, pW, pH)))) {
+      engine.modelDepth.delete(channel.id);
+      engine.modelDepthRange.delete(channel.id);
+      engine.modelDepthTex.delete(channel.id);
+      engine.modelTransparentDepthTex.delete(channel.id);
+      engine.modelSpillDepth.delete(channel.id);
+      mesh.visible = false;
+      return true;
+    }
+    // (enginebugs2) In the 3D view (engine.worldActive) a world Scene's letters are lent to the view (frameRender.js) and drawn by this pass:
+    // posed as the world stands them (turned as its objects, placed by a parent's turn in that sense), so the view, its gizmo and its box
+    // show what the world draws. The world maps the turn itself (world3dText.js `sceneTurn`); this pass takes the quaternion mapped.
+    let passTransform = transform;
+    if (!ctx && engine.worldActive && engine.worldScene && !channel.cameraLocked && !textKeepsOwnPass(tItem)) {
+      const w = worldTextTransform(tItem, mesh, transform, pW, pH);
+      passTransform = { ...w, quaternion: { x: -w.quaternion.x, y: -w.quaternion.y, z: w.quaternion.z, w: w.quaternion.w } };
     }
     const res = mod.renderText3dLayer(renderer, {
       item: tItem,
       run,
-      transform: {
-        position: { x: px, y: py, z: pz },
-        quaternion: { x: qx, y: qy, z: qz, w: qw },
-        scale: { x: sx / expandX, y: sy / expandY, z: 1 },
-      },
+      transform: passTransform,
       pose: (ctx || channel.cameraLocked || engine.worldActive) ? null : engine.cameraPose,
       rig: engine.activeRigAt(engine.currentTime),
       frameToken: engine.frameToken,
@@ -1027,6 +1141,68 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     mesh.rotation.set(0, 0, 0);
     mesh.scale.set(1, 1, 1);
     mesh.userData.cameraBaked3d = true;
+    return true;
+  };
+
+  // Flat text in the Scene's world (text3d.js isTextInWorldLayer): setupMesh laid the layer's letters out as cards
+  // (mesh.userData.textWorldRun) on a frame the world takes them, and the world films them in its own space. The
+  // quad draws nothing; its transform places the cards, as it places 3D Text's letters, and its opacity fades them.
+  const promoteTextWorldMesh = (tItem, mesh, material) => {
+    const run = mesh?.visible && engine.worldTextItems?.get(tItem?.id) === tItem ? mesh.userData?.textWorldRun : null;
+    if (!run || ctx || !engine.worldFrameReady || !engine.worldTakesText || channel.cameraLocked || textKeepsOwnPass(tItem)) return false;
+    const { w: pW, h: pH } = engine.videoSize;
+    const expand = Math.max(0, Number(material.uniforms?.uPlaneExpand?.value) || 0);
+    mesh.updateWorldMatrix(true, false);
+    mesh.matrixWorld.decompose(_platePos, _plateQuat, _plateScale);
+    const transform = {
+      position: { x: _platePos.x, y: _platePos.y, z: _platePos.z },
+      quaternion: { x: _plateQuat.x, y: _plateQuat.y, z: _plateQuat.z, w: _plateQuat.w },
+      scale: {
+        x: (mesh.scale.x < 0 ? -1 : 1) * Math.abs(_plateScale.x) / ((pW + 2 * expand) / pW),
+        y: (mesh.scale.y < 0 ? -1 : 1) * Math.abs(_plateScale.y) / ((pH + 2 * expand) / pH),
+        z: 1,
+      },
+    };
+    const opacity = Number.isFinite(material.uniforms?.uOpacity?.value) ? material.uniforms.uOpacity.value : 1;
+    if (!handWorldText(engine, tItem, run, transform, { opacity })) return false;
+    engine.modelDepth.delete(channel.id);
+    engine.modelDepthRange.delete(channel.id);
+    engine.modelDepthTex.delete(channel.id);
+    engine.modelTransparentDepthTex.delete(channel.id);
+    engine.modelSpillDepth.delete(channel.id);
+    mesh.visible = false;
+    return true;
+  };
+
+  // A picture layer in the Scene's world (`inWorld`: an HTML clip, a video, an image; world3dText.js isPictureInWorldLayer), on a frame
+  // the world takes it: one flat card of the layer's picture (liveLayers.js pictureWorldRun), placed by this quad's transform as flat
+  // text is, so it stands at the layer's own Z, hidden by what is in front and hiding what is behind. The quad draws nothing.
+  const promotePictureWorldMesh = (pItem, pClip, mesh, material) => {
+    if (!mesh?.visible || ctx || engine.worldTextItems?.get(pItem?.id) !== pItem || !isPictureInWorldLayer(pItem, pClip)) return false;
+    if (!engine.worldFrameReady || !engine.worldTakesText || channel.cameraLocked || textKeepsOwnPass(pItem)) return false;
+    const { w: pW, h: pH } = engine.videoSize;
+    const run = pictureWorldRun(pItem, pW, pH, engine.currentTime);
+    if (!run) return false;
+    const expand = Math.max(0, Number(material.uniforms?.uPlaneExpand?.value) || 0);
+    mesh.updateWorldMatrix(true, false);
+    mesh.matrixWorld.decompose(_platePos, _plateQuat, _plateScale);
+    const transform = {
+      position: { x: _platePos.x, y: _platePos.y, z: _platePos.z },
+      quaternion: { x: _plateQuat.x, y: _plateQuat.y, z: _plateQuat.z, w: _plateQuat.w },
+      scale: {
+        x: (mesh.scale.x < 0 ? -1 : 1) * Math.abs(_plateScale.x) / ((pW + 2 * expand) / pW),
+        y: (mesh.scale.y < 0 ? -1 : 1) * Math.abs(_plateScale.y) / ((pH + 2 * expand) / pH),
+        z: 1,
+      },
+    };
+    const opacity = Number.isFinite(material.uniforms?.uOpacity?.value) ? material.uniforms.uOpacity.value : 1;
+    if (!handWorldText(engine, pItem, run, transform, { opacity })) return false;
+    engine.modelDepth.delete(channel.id);
+    engine.modelDepthRange.delete(channel.id);
+    engine.modelDepthTex.delete(channel.id);
+    engine.modelTransparentDepthTex.delete(channel.id);
+    engine.modelSpillDepth.delete(channel.id);
+    mesh.visible = false;
     return true;
   };
 
@@ -1159,8 +1335,16 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     const overlapProgress = Math.max(0, Math.min(1, realTimeInClip / itemLayout.overlapIn));
     const easedProgress = applyGsapEasing(overlapProgress, item.transitionEasing);
 
-    const prevSeqTex = resolveSequenceTexture(prevItem, prevClip, prevTimeInClip, prevProgress, poseFor(prevItem));
-    const currSeqTex = resolveSequenceTexture(item, clip, timeInClip, itemProgress, itemParentXform);
+    // (enginebugs3) A Scene on either side of the cross: its picture is the world's frame, as when it plays alone (resolveRigTexture, which
+    // hands the channel the world's depth too). Neither side asked for it before, so the Scene drew nothing for the length of the
+    // transition and the cross showed as a hard cut at its end. The world draws one Scene a frame, the one resolveRigAt picks (the earlier
+    // of two Scene clips that overlap): only that side shows it, so a second Scene crossing in never shows the first one's picture.
+    const worldSide = (it, c) => (c?.mediaType === RIG_MEDIA_TYPE && resolveRigAt(shutterEntries(engine.rigEntries, engine.shutterFrameTime), time)?.itemId === it.id
+      ? resolveRigTexture(it, c) : null);
+    const prevSeqTex = resolveSequenceTexture(prevItem, prevClip, prevTimeInClip, prevProgress, poseFor(prevItem))
+      || worldSide(prevItem, prevClip);
+    const currSeqTex = resolveSequenceTexture(item, clip, timeInClip, itemProgress, itemParentXform)
+      || worldSide(item, clip);
 
     // NB: do NOT pass the channel state here — the last-good-frame backstop is for
     // single-clip (no-overlap) rendering only. During a crossfade both meshes share
@@ -1184,7 +1368,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     // did not bake here would disappear for the length of the transition.
     const prepareTransitionFx = engine.preTransitionFxPrepare;
     if (prepareTransitionFx) {
-      if (hasActiveLayerOverlayEffects(withFlatEffects(prevItem, prevClip)) || isLayerMaskEnabled(prevItem) || bakeableLayerStack(prevItem, prevClip, prevLayout)) {
+      if (hasActiveLayerOverlayEffects(withFlatEffects(prevItem, prevClip, engine.worldScene && !ctx)) || isLayerMaskEnabled(prevItem) || bakeableLayerStack(prevItem, prevClip, prevLayout)) {
         prepareTransitionFx({
           key: prevItem.id,
           mesh: cs.prevMesh,
@@ -1197,7 +1381,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
           refClipOf,
         });
       }
-      if (hasActiveLayerOverlayEffects(withFlatEffects(item, clip)) || isLayerMaskEnabled(item) || bakeableLayerStack(item, clip, itemLayout)) {
+      if (hasActiveLayerOverlayEffects(withFlatEffects(item, clip, engine.worldScene && !ctx)) || isLayerMaskEnabled(item) || bakeableLayerStack(item, clip, itemLayout)) {
         prepareTransitionFx({
           key: item.id,
           mesh: cs.currMesh,
@@ -1346,7 +1530,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   );
   const inactiveCachedTexture = engine.videoTextureCache.get(previousVideo)?.texture || null;
   const inactiveFallbackTexture = inactiveCachedTexture
-    || (cs.lastGoodTexture?.image === previousVideo ? cs.lastGoodTexture : null);
+    || (textureVideoOf(cs.lastGoodTexture) === previousVideo ? cs.lastGoodTexture : null);
   const inactiveTexturePinned = isInactiveTextureNeededAsFallback({
     activeHasFreshFrame,
     inactiveTexture: inactiveFallbackTexture,
@@ -1415,7 +1599,10 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     itemParentXform,
     itemFollow
   );
-  if (!promoteText3dMesh(item, clip, cs.currMesh, cs.currMaterial)) promotePlateMesh(item, clip, cs.currMesh, cs.currMaterial);
+  if (!promoteTextWorldMesh(item, cs.currMesh, cs.currMaterial) && !promotePictureWorldMesh(item, clip, cs.currMesh, cs.currMaterial)
+    && !promoteText3dMesh(item, clip, cs.currMesh, cs.currMaterial)) {
+    promotePlateMesh(item, clip, cs.currMesh, cs.currMaterial);
+  }
 
   // Layer in/out transitions
   const inType = item.transitionInType || LayerTransitionType.NONE;
@@ -1433,7 +1620,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     transitionOutType: outType,
     transitionOutDuration: outDuration,
   });
-  if (effectTransitionStage && (hasActiveLayerOverlayEffects(withFlatEffects(item, clip)) || isLayerMaskEnabled(item) || bakeableLayerStack(item, clip, itemLayout))) {
+  if (effectTransitionStage && (hasActiveLayerOverlayEffects(withFlatEffects(item, clip, engine.worldScene && !ctx)) || isLayerMaskEnabled(item) || bakeableLayerStack(item, clip, itemLayout))) {
     engine.preTransitionFxPrepare?.({
       key: item.id,
       mesh: cs.currMesh,
@@ -1536,11 +1723,21 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
  */
 export function prePoseWorldModels(engine, env, time) {
   engine.worldFrameReady = false;
+  // (mblur3) whether this frame's world goes over the stack in linear light: said again by the world's own layer (resolveRigTexture)
+  engine.worldLinearCover = false;
+  engine.worldTakesText = false;
+  engine.worldTextItems = null;
+  // A model in a world Scene skips the effects not offered there (model3dFxCatalog.js NOT_IN_WORLD_FX_IDS), whatever draws it this frame.
+  engine.worldScene = isWorldRig(engine.activeRigAt?.(time));
+  // A Scene draws only on the WebGPU engine: elsewhere its layer, its models and its 3D Text give way to a notice.
+  engine.worldBlocked = engine.worldScene && worldBlockedOn(engine);
   const mod = engine.model3d;
   if (!mod?.poseModelLayer || engine.worldActive || engine.rcMediaOnly) return;
   const rig = engine.activeRigAt(time);
   if (!rig) return;
   const { w, h } = engine.videoSize;
+  // (enginebugs2) a world Scene turns its model layers as it turns its objects (resolveModelTexture), the pose its shadows and copy take
+  const sceneTurn = !!engine.worldScene;
   for (const channel of env.channels) {
     if (channel.visible === false || channel.cameraLocked || !channel.items?.length) continue;
     const layout = env.layoutMap.get(channel.id);
@@ -1554,8 +1751,8 @@ export function prePoseWorldModels(engine, env, time) {
     const progress = itemLayout.duration > 0 ? Math.max(0, Math.min(1, timeInClip / itemLayout.duration)) : 0;
     const kfNow = itemHasKeyframes(item) ? getItemKeyframeValues(item, progress) : null;
     mod.poseModelLayer({
-      item, clip, prs: localPrs(item, kfNow, w, h), W: w, H: h,
-      time: Math.max(0, timeInClip), rig, frameToken: engine.frameToken,
+      item, clip, prs: localPrs(item, kfNow, w, h, { sceneTurn }), sceneTurn, W: w, H: h,
+      time: Math.max(0, timeInClip), sceneTime: sceneTimeAt(shutterEntries(engine.rigEntries, engine.shutterFrameTime), time), rig, frameToken: engine.frameToken,
     });
   }
   prepareWorldFrame(engine, env, time);

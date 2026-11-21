@@ -6,6 +6,7 @@ import AudioPlayButton from "./AudioPlayButton";
 import { useHoverTip } from "../hooks/useHoverTip";
 import { cachedAudioDuration, requestAudioDuration } from "../utils/audioDurationProbe";
 import { useAudioRecording } from "./videoEditor/useAudioRecording";
+import { mediaMtimeNsOf, withMediaVersion } from "./videoEditor/mediaUrlVersion";
 
 const MEDIA_BASE = "";
 const DEFAULT_UPSCALE_PROMPT = "Upscale this image while preserving composition, style, and details.";
@@ -22,14 +23,51 @@ function isAudioFileUrl(url) {
   return !!url && /\.(mp3|wav|m4a|aac|ogg|flac|opus|wma)(\?.*)?$/i.test(url);
 }
 
+// A tile here is ~60px wide, so its picture is asked for as a cached downscale
+// (the backend's `?thumb=` ladder) instead of the original: a library of
+// camera-size stills otherwise downloads and decodes gigabytes to paint
+// thumbnails. Only our own media route knows the parameter; anything else
+// (external, blob:, data:) passes through, and the server itself falls back to
+// the original for a file that isn't a large raster still.
+const TILE_THUMB_WIDTH = 192;
+// Tiles the media library view mounts at a time (about ten screens of its list).
+const LIBRARY_PAGE = 240;
+
+function tileThumbUrl(url, mtimeNs = null) {
+  if (!url || !url.startsWith("/media/") || /[?&]thumb=/.test(url)) return url;
+  return withMediaVersion(`${url}${url.includes("?") ? "&" : "?"}thumb=${TILE_THUMB_WIDTH}`, mtimeNs);
+}
+
+// True while the element is on screen (or close to it) inside whatever scrolls
+// it. Lets a tile hold a heavy element only while it can be seen.
+function useNearViewport(ref) {
+  const [near, setNear] = useState(() => typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => setNear(entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return near;
+}
+
 // Video tile that shows its poster (or first frame) by default and plays the
 // clip, muted and looping, while hovered. The <video> is only mounted on hover,
-// so the grid doesn't eagerly load every clip.
+// so the grid doesn't eagerly load every clip — and a clip with no poster holds
+// its first-frame <video> only while the tile is on screen, never one media
+// element per clip in the library.
 function HoverVideo({ src, poster }) {
   const [active, setActive] = useState(false);
+  const tileRef = useRef(null);
+  const near = useNearViewport(tileRef);
   return (
     <div
       className="generation-thumb-media"
+      ref={tileRef}
       onMouseEnter={() => setActive(true)}
       onMouseLeave={() => setActive(false)}
     >
@@ -45,10 +83,10 @@ function HoverVideo({ src, poster }) {
           draggable={false}
         />
       ) : poster ? (
-        <img src={poster} alt="" draggable={false} />
-      ) : (
+        <img src={poster} alt="" draggable={false} loading="lazy" decoding="async" />
+      ) : near ? (
         <video src={`${src}#t=0.1`} muted preload="metadata" playsInline draggable={false} />
-      )}
+      ) : null}
       {!active && (
         <span className="generation-thumb-play" aria-hidden="true">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20" /></svg>
@@ -227,6 +265,7 @@ function toRelativeMediaPath(url) {
 export default function GenerationInputPopover({ fieldType, elements, unsortedItems, onSelect, onClose, uploadBoardId = null, onRecorded, multiUpload = false, onSelectMany = null }) {
   const [mode, setMode] = useState(null);
   const [mediaLibrary, setMediaLibrary] = useState(null);
+  const [mediaLibraryLoading, setMediaLibraryLoading] = useState(false);
   const [upscaleModels, setUpscaleModels] = useState([]);
   const [upscaleLoadingModels, setUpscaleLoadingModels] = useState(false);
   const [upscaleTarget, setUpscaleTarget] = useState(null);
@@ -363,13 +402,17 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
     }
   };
 
-  // Load media library on demand
+  // Load media library on demand. The view opens at once and fills in when the
+  // listing lands; only each board's own files are asked for (`folders: false`)
+  // because that is all this grid draws.
   const loadMediaLibrary = () => {
-    if (mediaLibrary) { setMode("media"); return; }
-    api.listMedia().then((data) => {
-      setMediaLibrary(data);
-      setMode("media");
-    }).catch(() => setMode("media"));
+    setMode("media");
+    if (mediaLibrary || mediaLibraryLoading) return;
+    setMediaLibraryLoading(true);
+    api.listMedia(null, { folders: false })
+      .then((data) => setMediaLibrary(data))
+      .catch(() => {})
+      .finally(() => setMediaLibraryLoading(false));
   };
 
   const matchesMediaField = (f) =>
@@ -463,7 +506,7 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
           try { await api.deleteMedia(oldPath); } catch { /* no-op */ }
         }
         try {
-          const refreshed = await api.listMedia();
+          const refreshed = await api.listMedia(null, { folders: false });
           setMediaLibrary(refreshed);
         } catch {
           // keep existing state if refresh fails
@@ -601,6 +644,7 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
     const key = getItemKey(kind, item);
     const resolvedUrl = normalizeMediaUrl(sourceUrl);
     const resolvedThumb = normalizeMediaUrl(thumbnailUrl || sourceUrl);
+    const mtimeNs = mediaMtimeNsOf(item) ?? mediaMtimeNsOf(item.data);
     const isBusy = !!upscalingByKey[key];
     const itemType = item.type || item.data?.type;
     const isModelItem = fieldType === "model" || itemType === "3d-model" || isModelFileUrl(resolvedUrl);
@@ -610,7 +654,7 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
     // clip itself and isn't a video file. Otherwise fall back to a <video> seeked
     // to the first frame (the old code stuffed the poster into <video src>, which
     // renders blank).
-    const videoPoster = isVideoItem && resolvedThumb && !isVideoFileUrl(resolvedThumb) ? resolvedThumb : null;
+    const videoPoster = isVideoItem && resolvedThumb && !isVideoFileUrl(resolvedThumb) ? tileThumbUrl(resolvedThumb) : null;
     const hasUpscale = fieldType === "image" || fieldType === "media";
     return (
       <div
@@ -639,7 +683,15 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
         ) : isVideoItem ? (
           <HoverVideo src={resolvedUrl} poster={videoPoster} />
         ) : (
-          <img src={urlOverrides[key] || resolvedThumb} alt="" draggable={false} />
+          // An upscaled replacement is a new file, so the listing's mtime no
+          // longer describes it: it goes unversioned and the browser revalidates.
+          <img
+            src={urlOverrides[key] ? tileThumbUrl(urlOverrides[key]) : tileThumbUrl(resolvedThumb, mtimeNs)}
+            alt=""
+            draggable={false}
+            loading="lazy"
+            decoding="async"
+          />
         )}
         {hasUpscale && !isVideoItem && !isModelItem && !isAudioItem && (
           <button
@@ -669,6 +721,28 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
   };
 
   const searchTerm = searchQuery.trim().toLowerCase();
+
+  // The media library view mounts its tiles a page at a time: a library of
+  // thousands of files would otherwise build thousands of tiles in one go and
+  // freeze the page while it does. A marker under the last tile asks for the
+  // next page when it nears the view. The search still covers every file: it
+  // filters the listing, not the tiles. A new search starts from one page.
+  const [libraryPaging, setLibraryPaging] = useState({ term: "", limit: LIBRARY_PAGE });
+  const libraryLimit = libraryPaging.term === searchTerm ? libraryPaging.limit : LIBRARY_PAGE;
+  const libraryMoreRef = useRef(null);
+  useEffect(() => {
+    const marker = libraryMoreRef.current;
+    if (mode !== "media" || !marker || typeof IntersectionObserver === "undefined") return undefined;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      setLibraryPaging((prev) => ({
+        term: searchTerm,
+        limit: (prev.term === searchTerm ? prev.limit : LIBRARY_PAGE) + LIBRARY_PAGE,
+      }));
+    }, { root: marker.parentElement, rootMargin: "600px 0px" });
+    io.observe(marker);
+    return () => io.disconnect();
+  }, [mode, mediaLibrary, searchTerm, libraryLimit]);
 
   // The search row reuses the media manager's .media-board-search styling so
   // both pickers look and behave the same.
@@ -769,6 +843,16 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
           .filter((board) => board.files.length > 0)
       : mediaLibraryBoards;
     const visibleLibraryCount = visibleLibraryBoards.reduce((n, b) => n + b.files.length, 0);
+    // Only the first `libraryLimit` files get a tile; each board keeps its
+    // full count in its heading.
+    const shownLibraryBoards = [];
+    let tilesLeft = libraryLimit;
+    for (const board of visibleLibraryBoards) {
+      if (tilesLeft <= 0) break;
+      const files = board.files.length > tilesLeft ? board.files.slice(0, tilesLeft) : board.files;
+      shownLibraryBoards.push({ name: board.name, total: board.files.length, files });
+      tilesLeft -= files.length;
+    }
     return (
       <div className="generation-popover generation-popover-board" ref={ref}>
         <div className="generation-popover-header">
@@ -781,17 +865,19 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
         </div>
         {hoverTipPortal}
         {mediaLibraryCount > 0 && renderSearchRow()}
-        {mediaLibraryCount === 0 ? (
+        {mediaLibraryLoading && !mediaLibrary ? (
+          <div className="generation-popover-empty">Loading media library…</div>
+        ) : mediaLibraryCount === 0 ? (
           <div className="generation-popover-empty">No {fieldNounPlural(fieldType)} in media library</div>
         ) : visibleLibraryCount === 0 ? (
           <div className="generation-popover-empty">No {fieldNounPlural(fieldType)} match “{searchQuery.trim()}”</div>
         ) : (
           <div className="generation-popover-board-list">
-            {visibleLibraryBoards.map((board) => (
+            {shownLibraryBoards.map((board) => (
               <div className="generation-popover-board-group" key={board.name}>
                 <div className="generation-popover-board-name">
                   {board.name}
-                  <span className="generation-popover-board-count">{board.files.length}</span>
+                  <span className="generation-popover-board-count">{board.total}</span>
                 </div>
                 <div className="generation-popover-grid">
                   {board.files.map((file, i) =>
@@ -808,6 +894,9 @@ export default function GenerationInputPopover({ fieldType, elements, unsortedIt
                 </div>
               </div>
             ))}
+            {visibleLibraryCount > libraryLimit && (
+              <div ref={libraryMoreRef} aria-hidden="true" style={{ height: 1 }} />
+            )}
           </div>
         )}
         {renderPickedBar()}

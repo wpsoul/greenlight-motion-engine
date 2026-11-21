@@ -16,7 +16,7 @@
  */
 import * as THREE from 'three/webgpu';
 import {
-  uniform, vec2, vec3, vec4, float, int, dot, mix, clamp, step, abs, sqrt, floor, fract, sin,
+  uniform, vec2, vec3, vec4, float, int, dot, mix, clamp, step, abs, sqrt, floor, fract, sin, pow,
   min as tmin, max as tmax, select, Fn, If, screenCoordinate,
 } from 'three/tsl';
 import { makeTslSampler } from './tslSampler.js';
@@ -119,7 +119,58 @@ export function blendNode(mode, b, s) {
   return out;
 }
 
-export function createBlendCompositeNodeMaterial({ flipLayer = false } = {}) {
+// ── (hdr3) The same blends in an HDR render's float composite ────────────────────────────────────────────────────────────────────
+// The stack there holds display values up to white and light above it (hdrComposite.js); so may the layer, when it is the 3D Scene.
+// channel by channel (a TSL select() on a vector tests all() of it): the sRGB curve to light carried on above 1, and light back to the
+// float composite's numbers (display values up to white, light past it)
+const srgbLin = (c) => mix(tmax(c, vec3(0)).div(12.92), pow(tmax(c, vec3(0)).add(0.055).div(1.055), vec3(2.4)), step(vec3(0.04045), c));
+const toHybrid = (c) => mix(mix(tmax(c, vec3(0)).mul(12.92), pow(clamp(c, 0.0, 1.0), vec3(1 / 2.4)).mul(1.055).sub(0.055), step(vec3(0.0031308), c)),
+  c, step(vec3(1), c));
+const SLOPE_AT_WHITE = 1.055 / 2.4;
+const maxOf = (v) => tmax(v.r, tmax(v.g, v.b));
+
+/**
+ * B(backdrop, source) of two of the float composite's colours (straight): the SDR blend of their display parts, plus each one's light
+ * above white carried on. The GPU's own blends (multiply, screen, add, lighten, darken) act on light there: multiply scales the light
+ * above white by the other side's light (a 50 % grey takes it to 21 %, as it takes white in the SDR export); screen and add keep it (a
+ * layer screened or added onto a highlight never takes light from it); lighten keeps the brighter, darken the darker. Every other mode
+ * carries the excess at its own slope at white (a backward difference from the SDR side), so it is continuous in value and slope there.
+ * Where neither side has light above white this is the SDR blend.
+ */
+function blendHybrid(mode, b, s) {
+  const bd = tmin(b, vec3(1)).toVar(), bx = tmax(b.sub(vec3(1)), vec3(0)).toVar();
+  const sd = tmin(s, vec3(1)).toVar(), sx = tmax(s.sub(vec3(1)), vec3(0)).toVar();
+  const b0 = blendNode(mode, bd, sd).toVar();
+  const out = vec3(b0).toVar();
+  If(maxOf(bx).add(maxOf(sx)).greaterThan(0.0), () => {
+    const light = srgbLin(clamp(b0, 0.0, 1.0)).toVar();
+    const is = (k) => mode.equal(int(k));
+    If(is(M.multiply), () => {
+      light.addAssign(bx.mul(srgbLin(sd)).add(sx.mul(srgbLin(bd))).add(bx.mul(sx)));
+    }).ElseIf(is(M.screen).or(is(M.add)), () => {
+      light.addAssign(bx.add(sx));
+    }).ElseIf(is(M.lighten), () => {
+      light.addAssign(tmax(bx, sx));
+    }).ElseIf(is(M.darken), () => {
+      light.assign(srgbLin(tmin(b0, vec3(1))).add(tmin(bx, sx)));
+    }).Else(() => {
+      // any other mode: its own slope at white, from the SDR side, for each side's excess
+      const step1 = (x) => float(1e-3).div(tmax(maxOf(x.mul(SLOPE_AT_WHITE)), 1e-6));
+      If(maxOf(bx).greaterThan(0.0), () => {
+        const e = step1(bx);
+        light.addAssign(srgbLin(b0).sub(srgbLin(blendNode(mode, bd.sub(bx.mul(SLOPE_AT_WHITE).mul(e)), sd))).div(e));
+      });
+      If(maxOf(sx).greaterThan(0.0), () => {
+        const e = step1(sx);
+        light.addAssign(srgbLin(b0).sub(srgbLin(blendNode(mode, bd, sd.sub(sx.mul(SLOPE_AT_WHITE).mul(e))))).div(e));
+      });
+    });
+    out.assign(toHybrid(tmax(light, vec3(0))));
+  });
+  return out;
+}
+
+export function createBlendCompositeNodeMaterial({ flipLayer = false, hdr = false } = {}) {
   const u = {
     uTexture: makeSampler(),
     uLayer: makeSampler(flipLayer),
@@ -141,7 +192,8 @@ export function createBlendCompositeNodeMaterial({ flipLayer = false } = {}) {
       s.assign(vec4(cs.mul(k), k));
       mode.assign(int(M.normal));
     });
-    const b = blendNode(mode, cd, cs);
+    // (hdr3) `hdr`: an HDR render's float composite (hdrComposite.js) — the light above white carried through the blend (blendHybrid)
+    const b = hdr ? blendHybrid(mode, cd, cs) : blendNode(mode, cd, cs);
     const rgb = d.rgb.mul(float(1.0).sub(s.a)).add(s.rgb.mul(float(1.0).sub(d.a))).add(b.mul(s.a).mul(d.a));
     const a = s.a.add(d.a.mul(float(1.0).sub(s.a)));
     return vec4(rgb, a);

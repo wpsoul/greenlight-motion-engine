@@ -51,6 +51,21 @@ export function isRenderCacheJobId(id) {
   return !!id && readJobIds().has(id);
 }
 
+// "Disable caching" (owner, 2026-11-15): off for one project until the app restarts. sessionStorage lives as long as
+// the window, so a restart turns caching back on by itself.
+const SESSION_OFF_KEY = 'gl_ve_render_cache_off';
+function readSessionOff() {
+  try { return new Set(JSON.parse(sessionStorage.getItem(SESSION_OFF_KEY) || '[]')); } catch { return new Set(); }
+}
+function writeSessionOff(key, off) {
+  if (!key) return;
+  try {
+    const keys = readSessionOff();
+    if (off) keys.add(key); else keys.delete(key);
+    sessionStorage.setItem(SESSION_OFF_KEY, JSON.stringify([...keys].slice(-200)));
+  } catch { /* ignore */ }
+}
+
 function safeStorage() {
   try { return typeof window !== 'undefined' ? window.localStorage : null; } catch { return null; }
 }
@@ -78,6 +93,7 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
     idleArmedAt: null,      // when the idle timer was set: Smart renders at idleArmedAt + IDLE
     notifyTimer: null,
     drainQueue: false,      // "Render cache now": keep going until the plan is empty
+    sessionOff: false,      // "Disable caching": nothing renders for this project until the app restarts
     deps: null,             // { save, createJob, getJob, cancelJob, otherRenderActive, getPlayhead, cacheSize }
     listeners: new Set(),
     snapshot: null,
@@ -90,18 +106,22 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
   // segment (the ruler line, the healer), an entry (playback), a running job. A
   // project that plays in real time never computes one.
   const needsHashes = () => hasSlowSegments(st.costMap) || st.entries.length > 0 || !!st.job;
+  // Smart (automatic) caching never renders a 3D Scene's segments in the background: that is path tracing on the
+  // user's GPU. Render now (drainQueue) and User mode still render them: the user asked.
+  const skipFor = () => (st.mode === 'smart' && !st.drainQueue ? st.sceneSegments || null : null);
 
   function getHashes() {
     if (!st.inputs) return null;
     if (!st.hashes) {
       st.hashRuns += 1;
-      const { hashes, duration } = computeSegmentHashes({
+      const { hashes, duration, sceneSegments } = computeSegmentHashes({
         channels: st.inputs.channels,
         clips: st.inputs.clips,
         globalKey: st.inputs.globalKey,
       });
       st.hashes = hashes;
       st.duration = duration;
+      st.sceneSegments = sceneSegments;
       // Entries with no segment left valid are dead weight (their file stays in
       // the stash until the server's 7-day prune).
       const { live, dead } = partitionEntries(st.entries, hashes);
@@ -143,6 +163,7 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
         entries: st.entries,
         playhead: st.deps.getPlayhead?.() || 0,
         duration: st.duration,
+        skip: skipFor(),
         maxJobSec: RENDER_CACHE_JOB_SEC,
       });
       if (plan.length) {
@@ -163,6 +184,7 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
       job: st.job ? { t0: st.job.t0, t1: st.job.t1, progress: st.job.progress } : null,
       entries: st.entries.length,
       failures: st.failures,
+      sessionOff: st.sessionOff,
     };
   }
 
@@ -187,7 +209,7 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
     st.idleTimer = null;
     const wasArmed = st.idleArmedAt != null;
     st.idleArmedAt = null;
-    if (!active() || st.mode !== 'smart' || st.playing || !st.deps || !hasSlowSegments(st.costMap)) {
+    if (!active() || st.sessionOff || st.mode !== 'smart' || st.playing || !st.deps || !hasSlowSegments(st.costMap)) {
       if (wasArmed) notify();
       return;
     }
@@ -240,7 +262,7 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
 
   // ── The job runner ──
   async function runNext() {
-    if (st.job || !active() || !st.deps) return;
+    if (st.job || !active() || st.sessionOff || !st.deps) return;
     if (!hasSlowSegments(st.costMap)) {
       st.drainQueue = false;
       return;
@@ -253,6 +275,7 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
       entries: st.entries,
       playhead: st.deps.getPlayhead?.() || 0,
       duration: st.duration,
+      skip: skipFor(),
       maxJobSec: RENDER_CACHE_JOB_SEC,
     });
     if (!plan.length) {
@@ -367,6 +390,7 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
       if (storageKey === st.storageKey) return;
       if (st.job) st.job.cancelled = true;
       st.storageKey = storageKey;
+      st.sessionOff = readSessionOff().has(storageKey);
       st.entries = loadRenderCacheEntries(storage, storageKey);
       clearCostMap(st.costMap);
       st.hashes = null;
@@ -448,8 +472,23 @@ export function createRenderCacheController({ storage = safeStorage(), now = () 
       st.drainQueue = false;
       noteActivity();
     },
+    // Disable caching for this project until the app restarts (true), or turn it back on (false). A running render
+    // stops; what is already cached still plays.
+    setSessionOff(on) {
+      const v = !!on;
+      if (v === st.sessionOff) return;
+      st.sessionOff = v;
+      writeSessionOff(st.storageKey, v);
+      if (v) {
+        st.drainQueue = false;
+        const job = st.job;
+        if (job && !job.cancelled) { job.cancelled = true; stopServerJob(job); }
+      }
+      armIdle();
+      notify();
+    },
     renderNow() {
-      if (!active()) return;
+      if (!active() || st.sessionOff) return;
       st.drainQueue = true;
       st.failures = 0;
       runNext();

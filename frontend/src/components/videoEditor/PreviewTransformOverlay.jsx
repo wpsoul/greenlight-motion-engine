@@ -38,6 +38,9 @@ import {
   withShapeSizeKeyframes,
 } from './shapePath';
 import { objectMotionPathIsLive } from './objectMotionPath';
+import { RIG_MEDIA_TYPE, resolveRigAt, rigUsesWorld } from './rig3d';
+import { isText3dLayer } from './text3d';
+import { textKeepsOwnPass } from './world3dLayer';
 import { isNullClip, nullLayerSize } from './nullLayer';
 import { flattenRotoNodes, smoothRotoNodes } from './rotoRegion';
 import {
@@ -234,6 +237,18 @@ export function activeLayers(channels, clipsMap, time, width, height, fps = 30, 
   );
   const parentIndex = buildParentIndex(channels, (ch) => layouts.get(ch.id));
   const prsCtx = { W: width, H: height, evalKeyframes: getItemKeyframeValues };
+  // (enginebugs2) A world Scene at this time (the Rig the frame takes: the nearest one outside every Rig clip, rig3d.js resolveRigAt):
+  // a solid layer it stands in its world (a model, 3D Text) is turned and placed as the world turns its objects (sceneTurnPrs), so the
+  // box follows a parent's turn there as the world does
+  const rigEntries = [];
+  channels.forEach((channel) => {
+    const layout = layouts.get(channel.id) || [];
+    channel.items.forEach((item, index) => {
+      if (clipsMap.get(item.clipId)?.mediaType === RIG_MEDIA_TYPE && item.rig && layout[index]) rigEntries.push({ startTime: layout[index].startTime, endTime: layout[index].endTime, rig: item.rig });
+    });
+  });
+  const worldScene = rigUsesWorld(resolveRigAt(rigEntries, time)?.rig);
+  const scenePrsCtx = { ...prsCtx, sceneTurn: true };
   channels.forEach((channel, channelIndex) => {
     if (channel.visible === false) return;
     const layout = layouts.get(channel.id) || [];
@@ -254,8 +269,9 @@ export function activeLayers(channels, clipsMap, time, width, height, fps = 30, 
       // Selection geometry has to match what the renderer actually drew, so it goes
       // through the same PRS evaluator (Player.jsx's applyMeshTransform does too).
       // Unparented layers resolve to exactly the old arithmetic.
-      const parentXform = resolveParentTransform(parentIndex, item, time, prsCtx);
-      const prs = applyParenting(parentXform?.prs, localPrs(item, keyProps, width, height), parentXform?.type);
+      const sceneTurn = worldScene && !channel.cameraLocked && (clip.mediaType === 'model3d' || (isText3dLayer(item, clip) && !textKeepsOwnPass(item)));
+      const parentXform = resolveParentTransform(parentIndex, item, time, sceneTurn ? scenePrsCtx : prsCtx);
+      const prs = applyParenting(parentXform?.prs, localPrs(item, keyProps, width, height, { sceneTurn }), parentXform?.type);
       const centre = prsToFrameCenter(prs, width, height);
       // The box is sized per axis (Scale X / Scale Y stretch it independently),
       // but a corner drag writes the UNIFORM Scale — so `zoom` is the resolved

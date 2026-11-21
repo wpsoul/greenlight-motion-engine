@@ -1,6 +1,6 @@
 ---
 name: greenlight-motion
-description: "Make motion-design videos for a user with the GreenLight Motion Engine — the GreenLight Dash Video Editor's own engine, running in the user's browser with nothing to install for them. Use when the user asks for an animated video, a promo, a product teaser, a title sequence, an explainer, kinetic typography, a 3D product shot, or a video template they can tweak themselves. You write a project (JSON) and its files; the engine gives the user a page with a preview, options to change, and a Render button that saves an MP4."
+description: "Make motion-design videos for a user with the GreenLight Motion Engine — the GreenLight Dash Video Editor's own engine, running in the user's browser with nothing to install for them. Use when the user asks for an animated video, a promo, a product teaser, a title sequence, an explainer, kinetic typography, a 3D product shot, or a video template they can tweak themselves. You write a project (JSON) and its files; the engine gives the user a page with a preview, options to change, and a Render button that saves an MP4. A video asked for in the user's own words runs as the free Motion Design ▸ Custom workflow (motion-film / custom) on the greenlight MCP server when it is connected."
 ---
 
 # GreenLight Motion Engine
@@ -15,10 +15,48 @@ in `assets/`. The engine — the same one the GreenLight Dash Video Editor rende
 
 You never write UI or animation code. If something is not in the format, it is not in the engine — say so.
 
+## A video from the user's words: the free Motion Design ▸ Custom workflow
+
+When the user asks for a video in their own words, make it through GreenLight's free workflow **Motion Design ▸ Custom**
+(Build New Video by Prompt): workflow `motion-film`, variant `custom`, on the `greenlight` MCP server
+(`https://mcp.greenlightdash.pro/mcp`; this plugin connects it). It needs no account and no sign-in. Its steps come from
+the server and drive this CLI, with the user's approvals on the way. Not when they hand you a project or a scene script
+to change, ask to change the video you are making, or say to build it directly: then go on with this guide. In a
+GreenLight Dash terminal (`$GL_MCP_CALL` is set) the board's own skill runs workflows instead, with `env: "app"`.
+
+1. **Is it connected?** Its tools are there: `list_workflows`, `get_workflow`, `validate_brief`, `start_workflow`,
+   `get_step`, `get_reference`, `get_files`, `report_step` (in Claude Code `mcp__plugin_greenlight-motion_greenlight__…`
+   from this plugin, `mcp__greenlight__…` when added by hand; deferred tools: load them first).
+2. **Write the brief from their words.** `product.about` is what they asked for, in their words; add `product.name`,
+   `product.url`, `film.format` (`16:9`, `9:16`, `1:1`) and `film.language` when they say them, and their pictures and
+   clips as `product.assets` (`{ url, name, type }` each). Leave out `output` (here: a GreenLight Motion project made
+   with this CLI) and `variants` (several built ideas: PRO). `validate_brief { "id": "motion-film", "variant":
+   "custom", "brief": … }`: fix its errors, decide an `open` field yourself when the request implies it or its default
+   fits, and ask the user the rest in one message.
+3. **Run it.** `start_workflow { "id": "motion-film", "variant": "custom", "env": "standalone", "capabilities":
+   ["fs","shell"], "brief": … }`, then each step in order: `get_step`, what it names (`get_reference`, `get_files`),
+   the work, `report_step`. The first step checks this computer, and the run waits until it passes. Stop at every
+   approval step until the user answers. The steps say which commands to run (keep to the engine version they name for
+   the whole run); this guide is how to do each one well.
+4. **A result with `ok: false`** (a limit, a choice that needs PRO, the server down) is for the user: tell them its
+   message and offer to go on with this guide.
+5. **Not connected** (no such tools): say once how to connect it, and offer to make the video without it.
+   - Claude Code: this plugin brings it. By hand:
+     `claude mcp add --transport http greenlight https://mcp.greenlightdash.pro/mcp`, then a new session.
+   - Codex: `codex mcp add greenlight --url https://mcp.greenlightdash.pro/mcp`.
+
+   Without it, make the video with this guide alone, as below, and don't ask again.
+
+**A ready template** (Feature Overview, Logo animation, Screen tutorial, Rebuild video by style …) is a GreenLight Dash
+PRO workflow on the same server: `list_workflows` shows each one's tier, where it runs and a preview. Say so in one line
+and offer Custom. Only these ask the user to sign in, with their PRO account: in Claude Code `/mcp` → greenlight →
+Authenticate (from a shell `claude mcp login plugin:greenlight-motion:greenlight`, or `claude mcp login greenlight` when
+added by hand); in Codex `codex mcp login greenlight`. Their browser opens greenlightdash.pro: log in, press Allow.
+
 ## Setup (once per machine)
 
 ```
-npx greenlight-motion@0.4.0 doctor
+npx greenlight-motion@0.5.8 doctor
 ```
 
 It checks Node 18+, Chrome or Edge, WebGPU and H.264 encoding, and prints a fix for anything missing. Do not install
@@ -39,13 +77,31 @@ animation presets (the same converter the GreenLight Motion connector uses in Cl
 keyframes rarely look as good. The format, the design rules and the catalogues: `skill/references/scene-script.md`.
 
 ```
-npx greenlight-motion@0.4.0 script <folder> --from scenes.json   # or write <folder>/script.json, then: script <folder>
+npx greenlight-motion@0.5.8 script <folder> --from scenes.json   # or write <folder>/script.json, then: script <folder>
 ```
 
 Then `check` and `stills` (below), fix the SCRIPT and run `script` again — it rewrites `project.json`. A scene's
 `camera` can be a real 3D camera (the editor's camera moves and rigs, zooms on spots, depth of field, layers in depth with
 `z`). For what a script can't say (3D models, particles, motion paths, masks, text animators by hand), go on from `project.json` with the
 workflow below and stop running `script` (it refuses to overwrite a project edited since, unless `--force`).
+
+**3D in a video is GreenLight Dash's own 3D Scene: the script's `world`** — for any shot that is 3D (a product, a device, a
+room, a logo or title in depth, abstract forms, a camera moving through space), not only a product on a table. You model
+what the shot needs yourself: objects built from ops, materials (glass, liquids, metals, procedural patterns), lights, the
+environment (`scene.env`) and `scene.camera` or a ready move; Draft as it plays, Final (path traced) for the render. A device
+the brief names that is among the bundled presets (iPhone 17 Pro Max `iphone_pro_max`, iPhone Air `iphone_air`, two iPhones
+`double_iphone`, iPad `ipad`, iPad mini `ipad_mini`, MacBook Pro `macbook_pro`, MacBook Air `macbook_air`, iMac `imac`) may be
+taken ready-made: after `script`, add to `project.json` a `model3d` layer with `"url": "model-preset:<id>"`
+(`references/video-world3d.md`, a device from the preset table: the clip, its own channel and `model3dConfig`, with an example;
+its screen picture in `screen`, `{ "url": "asset:<file>", "fitMode": "cover" }`); it stands in the Scene's world — lit by it,
+path traced in Final, its screen artwork kept. Model a device yourself, or use another model, only when the brief asks for
+it. A `model3d` layer or a camera layer on a flat comp with no `world` is not how 3D is done. `script` checks the `world` strictly: a field the 3D engine
+would ignore fails with its path and the right name. Format and example: `skill/references/scene-script.md` (A 3D Scene); every field, op and material:
+`references/video-world3d.md` and `references/world3d-schema.json`. A folder with a Scene plays from a local server
+(`review`), not by double-click; `check`, `stills` and `render` open it that way themselves. Keep Final short (seconds per
+frame) and judge glass and liquids in a Final still: Draft shows no liquid inside glass. The 3D engine is a plugin,
+`greenlight-motion-3d`: the CLI downloads it by itself the first time a folder has a `world` (once, into the user's cache);
+`npx greenlight-motion@0.5.8 add-3d` gets it ahead, `doctor` shows it. Never tell the user to install it.
 
 ## Beyond the script: the signature visual
 
@@ -85,14 +141,14 @@ What the engine does there, so you don't learn it from a broken frame:
 
 ## Workflow
 
-1. `npx greenlight-motion@0.4.0 init <folder>` — starts from a working example (title, subtitle, accent line, four
+1. `npx greenlight-motion@0.5.8 init <folder>` — starts from a working example (title, subtitle, accent line, four
    options). `--from file.json` starts from a project you have (for example one exported from GreenLight Dash).
 2. Edit `<folder>/project.json` — for changes to an EXISTING project prefer `apply` (below): it checks every edit and
    applies all or nothing. Put pictures, video, sound and fonts in `<folder>/assets/` and refer to them as
    `"asset:<file>"` (e.g. `"url": "asset:product.png"`).
-3. `npx greenlight-motion@0.4.0 check <folder>` — fix everything it lists (missing files, template mistakes, blank
+3. `npx greenlight-motion@0.5.8 check <folder>` — fix everything it lists (missing files, template mistakes, blank
    frames, page errors), and read its notes: text the engine wraps where you did not break it. `--json` for machine output.
-4. `npx greenlight-motion@0.4.0 stills <folder>` — renders frames and **a labelled contact sheet**. Open and look at
+4. `npx greenlight-motion@0.5.8 stills <folder>` — renders frames and **a labelled contact sheet**. Open and look at
    it before you go on: layout, readability, timing. Fix and repeat. `--at 0.5,1.2,3` for exact times.
 5. Hand it over: tell the user to open `<folder>/index.html` (Chrome or Edge), or `pack` it into one file, or
    `render` the MP4 yourself (`--fps 60 --motion-blur` for fast motion).
@@ -120,6 +176,12 @@ the error names the edit number with a fix. Ops:
 `trace <folder> [--fps 30]` writes `trace.json`: every keyframed layer's animated values frame by frame (the engine's own
 curves) and its moments — start, end, `peak` (the fastest instant) and when each track settles. Use it to check
 timing and staggers in numbers instead of guessing from stills, and to place sound cues.
+`events <folder> [--fps 30]` writes `events.json`: the film's event timeline, with no browser and no render — each move's
+fastest frame (`move`, with its part: `travel`, `size` or `spin`) and the frame it comes to rest (`stop`, `gone` when it
+shrinks to nothing), appearances, cuts, transitions, each Text Animator letter's start (`text`), and in a 3D Scene its
+objects, camera, `visible` switches, lights and sims (read by the 3D plugin). Each event has `t`, `frame`, `strength`
+(0–1) and where it is on the frame (`x`, `y`, `pan`). A cue's sound goes on these frames: a whoosh's loudest moment on a
+`move`, a hit's on a `stop`, ticks on the first `text` letter.
 
 ## The project format — essentials
 
@@ -156,8 +218,12 @@ editor's own normalizer), so write only what you mean.
 
 Full references (generated from the editor's own docs; ignore the `/api/` routes they mention):
 `skill/references/` — video-design, scene-script, video-projects, video-text, video-text-kinetic, video-text-presets, video-shapes, video-keyframes,
-video-camera, video-3d, video-effects, video-transitions, video-particles, video-paths, video-backgrounds, video-grid.
-Machine-readable lists: `npx greenlight-motion@0.4.0 schema effects | transitions | easings | paths | expressions`.
+video-camera, video-3d, video-effects, video-transitions, video-particles, video-paths, video-backgrounds, video-grid,
+video-world3d (the 3D Scene, with world3d-schema.json); video-world3d-notes and video-motion-notes (what real films taught:
+wrong ways and the right one, with values; read them before you build); video-motion-grammar-examples (the films behind the
+motion grammar's rules), video-motion-in-code (its rules in a film made in code); `seam-craft/` (Seam Craft: the joins by
+recipe and by numbers, with Python tools).
+Machine-readable lists: `npx greenlight-motion@0.5.8 schema effects | transitions | easings | paths | expressions`.
 
 ## Template
 
@@ -204,7 +270,7 @@ an absolute moment; `align` `sync` (default) / `start` / `end`; `offset` seconds
 
 The library is 77 hand-picked sounds in categories (whooshes and swooshes, transitions, clicks, pop-ups and
 notifications, data blips, typing and writing, foley, bubbles, impacts and bass drops, camera, gears, voice clips).
-`npx greenlight-motion@0.4.0 schema sounds` lists every one with its `category`, `use` (what it is for), `duration`
+`npx greenlight-motion@0.5.8 schema sounds` lists every one with its `category`, `use` (what it is for), `duration`
 and `sync`. Pick by `category` and `use`, then by name.
 
 - **Where the files come from:** the GreenLight sound CDN. `build` downloads each sound a cue uses into
@@ -220,16 +286,59 @@ The page has **Notes**: the user marks what should change right on the frame (a 
 and writes a note for each mark. Every note carries the moment (seconds and frame), the mark in composition pixels
 and the layers under it (item ids in project.json), so you change exactly that and nothing else.
 
-- **They review on this computer:** run `npx greenlight-motion@0.4.0 review <folder>` and give them the URL it prints
-  (it keeps running; `--open` opens their browser, only when they ask). Their notes land in `<folder>/review/`: read
-  `review/NOTES.md`, look at the `at-<t>s.png` pictures (the marks are numbered), make the changes (`apply`), `build`
-  again and tell them to reload the page.
+- **They review on this computer:** run `npx greenlight-motion@0.5.8 review <folder>` and give them the URL it prints
+  (it keeps running; `--open` opens their browser, only when they ask). They mark notes and highlights and press
+  **Save for agent**: their notes land in `<folder>/review/` (the server prints a `saved:` line). Read `review/NOTES.md`,
+  open each note's picture beside it (`A-at-<t>s-n<note>.png`: the frame with their drawing), make the changes (`apply`),
+  `build` again and tell them to reload the page. `notes.json` is the same as data, in one format for one film or several
+  (`kind: "review"`, its `films` list). A folder with a render newer than its project.json plays the render (`--live`:
+  the project, with Edit). Several versions go in ONE page (below).
 - **They opened the page from a file:** **Save notes** gives them `<title>-notes.zip` (NOTES.md and the pictures) to
   hand you, and **Copy for agent** puts NOTES.md on the clipboard.
 - **In a Claude artifact:** publish with `capabilities: { downloads: true, comments: { customAnchors: true } }`. Each
   mark then opens the claude.ai comment box at that spot; the user writes the note and presses **Send to Claude**.
   The comment's location reads `12.40s · <layer name> · box x,y wxh` (`pin x,y`, `arrow x,y` = its tip) and its
   detail names the frame and the layer ids under the mark: fix that, republish, and answer in the thread.
+
+### Several versions: ONE review page
+
+When you made several versions or variants (other looks, pacing, endings), never show them one page each: put them in
+ONE review page, the same review card GreenLight Dash shows on a board, and ask the user to highlight, note and pick there.
+
+```
+npx greenlight-motion@0.5.8 review <a> <b> <c> --titles "Bold,Calm,Neon" [--subs "bigger type,slower,glow"]
+```
+
+Every folder is a source (A, B, C …, keys 1–9) on one shared timeline (frame n is the same moment in each):
+**Highlight** = the parts they like from any version, in the order of a new cut; **Notes** = drawings and words on any
+version's frames and ranges; **Pick** (top bar) = the version to go on with, or a mix, with a note. A folder whose MP4
+is newer than its project.json plays that render (smooth, exactly what they get: `render` each version first when you
+can), else its live project (`--live`: every project live). A scene script's scenes show as the version's parts. Start
+it in the background, give them the URL and one line: highlight, note, pick, then **Save for agent**.
+
+Save writes `<first folder>/review/` (`--out <dir>` for another) and the server prints a `saved:` line. Read
+`review/NOTES.md`: the pick, then per version its notes (moment, part, layers on screen, picture) and highlights
+(frames and seconds, ★ must), and the new cut in order; `notes.json` is the same as data (`kind: "review"`, each film's
+key → its folder).
+A note's picture, `<key>-at-<t>s-n<note>.png` beside it, is that version's frame with their drawing. Go on with the pick
+(a mix: as its note says), make each note's change in that version's folder, build a cut from the highlights in their
+order, then show the new version(s) in a new review page.
+
+### Pictures to choose from: the pick page
+
+When you generated several candidates for each frame or shot (stills, start frames, illustrations) and the user should
+choose before you build on them, don't choose yourself: put each frame's pictures in a subfolder (`<dir>/<frame>/*.png`,
+`.jpg`, `.webp`) or list them in `<dir>/pick.json` (`{ "title": "…", "frames": [{ "frame": "S01", "title": "the cold
+open", "files": ["S01/a.png", "S01/b.png"] }] }`), then:
+
+```
+npx greenlight-motion@0.5.8 pick <dir> [--title "Teaser stills"]
+```
+
+It is GreenLight Dash's pick card: a click picks a frame's **take** (the picture to use), more clicks add **extras**,
+a note per frame. Save writes `<dir>/PICKS.md` (`S01 = take S01/b.png · extras S01/a.png`, then their note) and
+`PICKS.json`. Build each frame on its take (an extra too, or instead when the take fails: say so); never a picture they
+did not pick for that frame, and don't generate it again unless its note asks; a frame not picked is yours to choose.
 
 ## Plugins: an effect or transition that isn't in the catalog
 
@@ -249,11 +358,11 @@ that fails (`plugin`); look at `stills` for the look. A package that carries its
 
 The same project opens in GreenLight Dash (the desktop editor this engine comes from) for full editing: the page's
 edit note offers **Open in GreenLight Dash** (it imports the folder as a new project on the open board; a page with
-changes saves a `.glvideo`). `npx greenlight-motion@0.4.0 pack <folder> --glvideo` writes that file yourself: ONE
+changes saves a `.glvideo`). `npx greenlight-motion@0.5.8 pack <folder> --glvideo` writes that file yourself: ONE
 `.glvideo` (the project + its files) that opens in GreenLight Dash on a double-click, or dropped on its board. Hand it
 over when the user wants to keep editing in the app. A
 GreenLight Dash project comes the other way through the app's **Export for agents** — a ready folder like the one
-`init` makes, with the options the author ticked. `npx greenlight-motion@0.4.0 init <folder> --from <its project.json>`
+`init` makes, with the options the author ticked. `npx greenlight-motion@0.5.8 init <folder> --from <its project.json>`
 starts from one too. Never tell the user they must install it: the page plays, changes options and renders on its own.
 
 ## Files
@@ -285,3 +394,6 @@ When the user has not named one, choose from these first. Each still has to suit
 Read `skill/references/video-design.md` before the first version and check every version against it: one idea per
 scene, words on screen, hierarchy, timing, easing by intent, text animation picks, transitions, camera, sound and what
 to look for in the contact sheet. It is the same text GreenLight Dash's agents and the chat connector use.
+Before you plan the joins and the moves, read its motion grammar (`video-design.md`, Motion grammar); check the joins by
+numbers with Seam Craft (`skill/references/seam-craft/`) only where Python 3 with OpenCV runs on this computer, and in a
+chat with no computer follow the rules alone.

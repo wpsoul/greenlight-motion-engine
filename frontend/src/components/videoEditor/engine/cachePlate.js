@@ -72,6 +72,8 @@ export function createCachePlate(engine, cacheOf) {
     }
     if (video.paused) video.play().catch(() => {});
     if (!plate.texture) {
+      // A VideoTexture even on WebGPU, unlike a video layer (./videoCanvasTexture.js): the cache file is our own render, tagged
+      // with the sRGB transfer, which Chrome's WebGPU upload passes through unchanged (measured: tests/video-levels/probe.mjs).
       const texture = new THREE.VideoTexture(video);
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;

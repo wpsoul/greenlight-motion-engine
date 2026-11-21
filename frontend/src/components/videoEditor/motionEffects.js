@@ -2037,7 +2037,7 @@ vec4 fx(vec2 uv){
     usesPath: true,
     // PRO like Running Glow: free to design and preview, paywalled at render —
     // containsProOverlayEffect in adjustmentEffects.js is the gate.
-    pro: true,
+    pro: false,   // free since 16.5.95 (the owner: all effects free)
     params: [
       { key: 'pathSpeed', slot: 0, label: 'Speed', min: -3, max: 3, step: 0.05, default: 0.35, suffix: 'x' },
       { key: 'pathTrimStart', slot: 1, label: 'Trim Start', min: 0, max: 100, step: 1, default: 0, suffix: '%' },
@@ -2201,7 +2201,7 @@ vec4 fx(vec2 uv) {
     layerMatte: 'expand',
     usesPath: true,
     // PRO like Neon Glow: free to design and preview, paywalled at render.
-    pro: true,
+    pro: false,   // free since 16.5.95 (the owner: all effects free)
     params: [
       { key: 'ldProfile', slot: 0, label: 'Speed Profile', type: 'select', default: 0, primary: true,
         options: LINES_DRAW_PROFILE_OPTIONS },

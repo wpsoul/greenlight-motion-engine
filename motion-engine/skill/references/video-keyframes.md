@@ -13,6 +13,7 @@
 - [Keyframe animations (per-property tracks)](#keyframe-animations-per-property-tracks)
   - [Easings](#easings)
   - [The easing catalogue](#the-easing-catalogue)
+  - [Common names of the curves](#common-names-of-the-curves)
   - [Animatable tracks](#animatable-tracks)
   - [Prefixed track namespaces](#prefixed-track-namespaces)
   - [Preview timing: keys between frames](#preview-timing-keys-between-frames)
@@ -34,6 +35,12 @@ Every timeline item can animate its visual properties over the clip's duration. 
 - **`easing`** shapes the segment **after** its key (see [Easings](#easings)).
 - A **single-key track holds its value** for the whole clip.
 - No two keys of one track may share a `position`; omit a track with zero keys.
+- **A move is two keys and the easing between them**, never a key on every frame: per-frame keys cannot be edited in
+  the Keyframes panel and run straight chords between frames. An overshoot or a settle is an easing or an expression,
+  not more keys. A curve you computed or measured is fitted to the fewest eased keys first
+  ([video-design.md](video-design.md#a-move-is-two-keys-and-an-easing), with Python `seam-craft/tools/lib/keyfit.py`). A curved trajectory (an
+  arc, a loop, an orbit) is a `motionPath` with a two-key `motionPathT`, not X and Y keys ([video-paths.md](video-paths.md)).
+  Scale or turn about a point with `keyframeTransformOrigin`, not with translate keys that compensate.
 
 ```json
 {
@@ -47,6 +54,7 @@ Every timeline item can animate its visual properties over the clip's duration. 
 ```
 
 **Transform origin** is one item-level field, `keyframeTransformOrigin` (`"center"`, `"top"`, `"bottom"`, `"left"`, `"right"`, a corner such as `"bottom left"`, or `"x% y%"`): the point every rotation (static and keyed, 2D and 3D) and the keyed scale turn about, while `panX`/`panY`/`panZ` stay the layer's resting centre — see [Turning a flat layer in 3D](video-3d.md#turning-flat-layers-in-3d--pivot-and-stacking).
+To scale or turn about a point, set it to `"x% y%"` of the item's box (a full-frame item: x / W, y / H of the point); the point then stays put under any keyed `scale` and rotation, so no `translateX` / `translateY` keys compensate. To move that point as well (a push that ends with it at the frame centre), key `translateX` / `translateY` by the distance in composition px: they are added after the scale.
 
 `propertyKeyframes` is baked by **`/render-onserver`** and the desktop render; the fast `/render` ignores keyframes entirely.
 
@@ -78,6 +86,33 @@ Aliases load and map to another name's curve (`easings.keyframe.retired`: `Power
 #### The easing catalogue
 
 `GET /api/video-editor/capabilities` → `easings` carries both vocabularies with the actual curve behind every name, so a look can be matched or carried into another tool without guessing. `easings.keyframe` covers keyframe and transition easings: `values` (all of them), `transitionValues` (the subset a transition accepts — `Custom` and `Hold` need per-key data and are rejected there), `retired` (alias → the value it maps to; accepted on load and by the API) and `curves[]`. `easings.motionTemplate` covers the camelCase names a template's ease field takes (`aeSmooth`, `power2`, …). In `curves[]`, `kind` says which field IS the curve — `bezier` → `cubicBezier` `[x1,y1,x2,y2]` plus a ready-to-paste `css`, `sampled` → `samples`, the curve at t = 0, 0.01 … 1 (values past 0..1 are real overshoot; as CSS that is `linear(<samples>)`). `gsap` names the ease that plays, and `keyframeEquivalent` / `motionTemplateEquivalent` link the same curve across the two vocabularies — only where the curves genuinely match, so treat a missing link as "these are different curves that happen to share a name" (template `smooth` is not keyframe `Smooth`; template `power2` is keyframe `Ease Out`). A `sampled` entry's `cubicBezier` (when marked `bezierIsApproximate`) is only the closest cubic — `bezierMaxError` says how far off, up to ~0.13 for `Expo Smooth`; match against the samples, not the handles. Two easings carry no curve: `Custom` reads the key's own `bezier`, and `Hold` steps to the next key.
+
+#### Common names of the curves
+
+The [motion grammar](video-design.md#motion-grammar) names curves by their common names (easeInQuart, easeOutExpo…). Here is
+each one's name in this editor. The editor **plays the exact curve for its sampled easings** (the power, sine, expo and
+back families), so their slopes are the exact curve's; a `Custom` key plays its own bezier. This editor's `Cubic` is
+quartic.
+
+| Editor name | Common name | Plays |
+| --- | --- | --- |
+| `Linear` | linear | exact |
+| `Ease In` / `Ease Out` / `Smooth` | easeInCubic / easeOutCubic / easeInOutCubic | the exact curve (sampled) |
+| `Cubic In` / `Cubic Out` | easeInQuart / easeOutQuart | the exact curve (sampled) |
+| `Expo In` / `Expo Out` / `Expo Smooth` | easeInExpo / easeOutExpo / easeInOutExpo | the exact curve (sampled) |
+| `Sine In` / `Sine Out` / `Sine Smooth` | easeInSine / easeOutSine / easeInOutSine | exact (sampled; `Sine Smooth` is a bezier) |
+| `Back In` / `Back Out` / `Back Smooth` | easeInBack / easeOutBack / easeInOutBack | the exact curve (sampled) |
+| `Power` | easeOutQuint-like `cubic-bezier(0.23, 1, 0.32, 1)` | the bezier |
+| `AE Smooth`, `AE In (arrive)`, `AE Out (leave)` | AE easy ease, arrive, leave | the bezier |
+| `Natural`, `Punch`, `Apple Out`, `Smooth Glide`, `Glide Easing Stop`, `Slow Down` | natural, punch, Apple-style out, glide, glide stop, slow down | the bezier |
+| `Overshoot`, `Smooth Overshoot`, `Impulse`, `Swing`, `Anticipate`, `Bounce Out`, `Elastic` | overshoot and the expressive family | the exact curve (sampled) |
+| `Custom` + `bezier` | any `cubic-bezier` | the bezier |
+| `Hold` | hold (step) | steps at the next key |
+
+Each curve's start and end slopes, and which may sit at a cut, are in the easing table of
+[seam-craft/match-velocity.md](seam-craft/match-velocity.md#the-easing-table) (with Python,
+`seam-craft/tools/lib/easing.py` evaluates any track offline with these curves; its snapshot of the catalogue is
+`seam-craft/tools/lib/editor_easings.json`).
 
 #### Animatable tracks
 
@@ -142,7 +177,7 @@ A track can be parked instead of deleted. `hiddenPropertyKeyframes` has the same
 
 ### Track expressions (`propertyKeyframeFx`)
 
-An AE-style expression layered on top of a track's keyframed value. Stored per track in the item-level map `propertyKeyframeFx: { "<trackKey>": { "type": "...", "params": { ... } } }`; the track key must exist in `propertyKeyframes` (orphans are dropped on load) and must be **numeric** (colour and path tracks are ignored). The catalogue with parameter ranges and defaults is `GET /api/video-editor/capabilities` → `keyframeExpressions`.
+An AE-style expression layered on top of a track's keyframed value. Stored per track in the item-level map `propertyKeyframeFx: { "<trackKey>": { "type": "...", "params": { ... } } }`; the track key must exist in `propertyKeyframes` (orphans are dropped on load) and must be **numeric** (colour and path tracks are ignored). The catalogue with parameter ranges and defaults is `GET /api/video-editor/capabilities` → `keyframeExpressions`. A 3D Scene's keys take the same ƒx, the same functions, as `"fx": { "<field>": { "glide": "soft" } }` beside their `keys`, and a Scene clock takes one as its `filter` ([video-world3d.md](video-world3d.md#the-editors-ƒx-on-scene-keys-fx)).
 
 ```json
 {

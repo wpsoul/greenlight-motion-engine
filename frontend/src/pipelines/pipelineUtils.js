@@ -295,12 +295,16 @@ export function isSocialPart(el) {
   return el?.data?.managedBy === "social" && !!el.data.social?.part;
 }
 
+// An Ads frame (data.social.kind "ads", Ads research: PLANS/ADS_RESEARCH_API.md) is laid out by the backend the same way, and the
+// Trends frame's layout, hide, take-out and roll-off routes take it too: the canvas treats both kinds, and their cards, alike.
 export function isSocialTrendsFrame(el) {
-  return el?.type === "frame" && el.data?.managedBy === "social" && el.data.social?.kind === "trends";
+  const kind = el?.data?.social?.kind;
+  return el?.type === "frame" && el.data?.managedBy === "social" && (kind === "trends" || kind === "ads");
 }
 
 export function isSocialTrendCard(el) {
-  return el?.data?.social?.kind === "trend" && !!el.data.social.frame;
+  const kind = el?.data?.social?.kind;
+  return (kind === "trend" || kind === "ad") && !!el.data.social.frame;
 }
 
 // --- AI Social (posting) ------------------------------------------------------
@@ -319,13 +323,55 @@ export function isPostsElement(el) {
   return isSocialPostsFrame(el) || isSocialPostCard(el) || (isSocialPart(el) && el.data.social.of === "posts");
 }
 
-/** What a board shows: every card but the Posts frames, their parts and their post cards. A post card whose frame is gone is
- *  a plain card again: Pulse doesn't list it, so hiding it would lose it. */
+// --- A research shown as its card (TrendsResearchCard.jsx, 16.5.x) -------------
+// A new research is a "trends-research" card on the board and lives in Pulse. Its Trends frame (data.social.view "card")
+// keeps the records, as a Posts frame does, and no board draws it or its trend cards (the backend lays out no parts for
+// it). Older research frames are drawn as before.
+export function isResearchCardFrame(el) {
+  return isSocialTrendsFrame(el) && el.data.social.view === "card";
+}
+
+// The research frames shown as a card that this window has met, so a trend card arriving alone from the change feed
+// (its frame not in hand) is known as one of them. Frame ids are unique across boards.
+const hiddenResearch = new Set();
+
+/** The research frame a hidden card belongs to (the change feed tells that card's research card to read it again), or
+ *  null when the card is drawn. */
+export function hiddenResearchOf(el) {
+  if (isResearchCardFrame(el)) { hiddenResearch.add(el.id); return el.id; }
+  const frame = el?.data?.social?.frame;
+  return frame && hiddenResearch.has(frame) && (isSocialTrendCard(el) || isSocialPart(el)) ? frame : null;
+}
+
+// --- Format Radar ▸ Saved and Reports (backend/social_radar.py, social_reports.py) -------------
+// A board's Format Radar frame (data.social.kind "formats") and Reports frame ("reports") keep the saved formats and the
+// reports as cards (data.social.kind "format" / "report"), as a Posts frame keeps posts: data behind Pulse. No board draws
+// the frames or their cards. Pulse lists these cards by their kind, so one whose frame is gone is still hidden, never lost.
+export function isPulseStoreElement(el) {
+  const s = el?.data?.social;
+  if (!s) return false;
+  if (el.type === "frame") return el.data.managedBy === "social" && (s.kind === "formats" || s.kind === "reports");
+  return (s.kind === "format" || s.kind === "report") && !!s.frame;
+}
+
+/** A card from the change feed that no board draws: a Posts frame's, a research frame's shown as its card, or a Format
+ *  Radar / Reports frame's. Pass every card of a batch to hiddenResearchOf first, so a frame arriving with its cards is
+ *  known before they are. */
+export function isHiddenOnBoard(el) {
+  return isPostsElement(el) || !!hiddenResearchOf(el) || isPulseStoreElement(el);
+}
+
+/** What a board shows: every card but the Posts frames, their parts and their post cards, and the research frames shown as
+ *  a card with theirs. A post card whose frame is gone is a plain card again: Pulse doesn't list it, so hiding it would lose it. */
 export function boardVisible(els) {
   if (!Array.isArray(els)) return els;
   const frames = new Set(els.filter(isSocialPostsFrame).map((el) => el.id));
-  if (!frames.size) return els;
-  return els.filter((el) => !frames.has(el.id) && !((isSocialPostCard(el) || isSocialPart(el)) && frames.has(el.data.social.frame)));
+  const research = new Set(els.filter(isResearchCardFrame).map((el) => el.id));
+  for (const id of research) hiddenResearch.add(id);
+  if (!frames.size && !research.size && !els.some(isPulseStoreElement)) return els;
+  return els.filter((el) => !frames.has(el.id) && !research.has(el.id) && !isPulseStoreElement(el)
+    && !((isSocialPostCard(el) || isSocialPart(el)) && frames.has(el.data.social.frame))
+    && !((isSocialTrendCard(el) || isSocialPart(el)) && research.has(el.data.social.frame)));
 }
 
 const POST_HOLD_MIN = 10;

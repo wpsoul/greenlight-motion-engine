@@ -42,7 +42,7 @@ import { DEPTH_SCAN_LAYER_EFFECT_ID, SCN_DEFAULTS, SCN_NUMBER_FIELDS, SCN_ENUM_F
 import { FRESNEL_RIM_LAYER_EFFECT_ID, FR_DEFAULTS, FR_NUMBER_FIELDS, FR_ENUM_FIELDS, FR_COLOR_FIELDS } from "./fresnelRimLayer";
 import { MOTION_BLUR_LAYER_EFFECT_ID, MBLUR_DEFAULTS, MBLUR_NUMBER_FIELDS, MBLUR_ENUM_FIELDS } from "./motionBlurLayer";
 import { POSTERIZE_TIME_EFFECT_ID, PT_DEFAULTS, PT_NUMBER_FIELDS } from './posterizeTime';
-import { sanitizeText3d } from './text3d';
+import { sanitizeText3d, sanitizeTextInWorld } from './text3d';
 import { MOTION_TRAIL_LAYER_EFFECT_ID, TRAIL_DEFAULTS, TRAIL_NUMBER_FIELDS, TRAIL_ENUM_FIELDS, TRAIL_COLOR_FIELDS } from "./motionTrailLayer";
 import { AUTOFILL_LAYER_EFFECT_ID, AF_DEFAULTS, AF_NUMBER_FIELDS, AF_ENUM_FIELDS, AF_COLOR_FIELDS, AF_GRADIENT_FIELDS, sanitizeAutoFillPoints, sanitizeAutoFillPoints3d } from "./autoFillLayer";
 import { RIG_LAYER_EFFECT_ID, RIG_DEFAULTS, RIG_NUMBER_FIELDS, RIG_ENUM_FIELDS, RIG_PIN_CHANNELS, RIG_KF_CHAN_META, sanitizeRigPins, sanitizeRigChains, parseRigKfKey } from "./rigDeform";
@@ -58,6 +58,7 @@ import { BEND_LAYER_EFFECT_ID, BN_DEFAULTS, BN_NUMBER_FIELDS } from "./bendLayer
 import { MESH_WARP_LAYER_EFFECT_ID, MW_DEFAULTS, MW_ENUM_FIELDS, MW_POINT_FIELDS, getMeshWarpEffect, mwActiveKeys } from "./meshWarp";
 import { BEZIER_WARP_LAYER_EFFECT_ID, BW_DEFAULTS, BW_NUMBER_FIELDS } from "./bezierWarp";
 import { sanitizeCameraRig, sanitizeCameraMoveMode } from "./cameraRig";
+import { sanitizeCameraRef } from "./cameraTargets";
 import { sanitizeSmartZoom, syncSmartZoomCameraSpans } from "./smartZoomCamera";
 import { sanitizeRecordingCursor } from "./recordingCursor";
 import { rigUsesWorld, sanitizeRig, sanitizeShadowPlate, rigKfKeysFor, buildRigKfPropsFor, isRigTrackKey, isRigColorTrackKey, RIG_MEDIA_TYPE, RIG_CHANNEL_KIND, pinRigChannelUnderCamera } from "./rig3d";
@@ -68,6 +69,7 @@ import { DEFAULT_PREVIEW_FPS, sanitizePreviewFps } from "./previewDeviceTier.js"
 import { sanitizeColorTokens } from "../colorTokens";
 import { getTimelineLayout, getTimelineEndTime, sanitizeSpeedPoints } from "./speedUtils";
 import { sanitizePhotoSlot, sanitizePhotoSlotSettings } from "./photoSlots";
+import { sanitizeRenderProfile } from "./renderProfile";
 import { SPEED_KF_KEY, SPEED_KF_PROP, deriveSpeedPoints } from "./speedKeyframes";
 import { sanitizeParentingField, repairParentingReferences } from "./keyframeParenting";
 import { sanitizeTrackMatteField, repairTrackMatteReferences } from "./trackMatte";
@@ -1437,17 +1439,37 @@ export const MODEL_SCREEN_UVS = ['mesh', 'planar'];
 export const MODEL_SCREEN_SHADING = ['screen', 'lit'];
 export const MODEL_SCREENS_MAX = 8;
 
+// A screen that shows a layer of the same timeline (liveLayers.js: `layer`, an item or channel id, in place of `url`) and a real monitor's
+// look (`look: "monitor"` with its glow `strength`, its glass's roughness `glass`, its black level and Draft's `light`). Only stored when set.
+function sanitizeScreenLive(s) {
+  const layer = typeof s?.layer === 'string' && s.layer.trim() ? s.layer.trim().slice(0, 128) : null;
+  const res = Array.isArray(s?.resolution) && s.resolution.length === 2 && s.resolution.every((v) => Number.isFinite(v) && v >= 16 && v <= 4096)
+    ? s.resolution.map((v) => Math.round(v)) : null;
+  return {
+    ...(layer ? { layer } : {}),
+    ...(s?.look === 'monitor' ? { look: 'monitor' } : {}),
+    ...(Number.isFinite(s?.strength) ? { strength: sanitizeNumber(s.strength, 1, { min: 0, max: 50 }) } : {}),
+    ...(Number.isFinite(s?.glass) ? { glass: sanitizeNumber(s.glass, 0.1, { min: 0, max: 1 }) } : {}),
+    ...(Number.isFinite(s?.blackLevel) ? { blackLevel: sanitizeNumber(s.blackLevel, 0.02, { min: 0, max: 0.5 }) } : {}),
+    ...(s?.light === false ? { light: false } : {}),
+    ...(res ? { resolution: res } : {}),
+  };
+}
+
 function sanitizeModelScreens(list) {
   if (!Array.isArray(list)) return [];
   const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
   const name = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 128) : null);
   return list.slice(0, MODEL_SCREENS_MAX).reduce((out, s) => {
-    if (!s || typeof s !== 'object' || typeof s.url !== 'string' || !s.url) return out;
+    if (!s || typeof s !== 'object') return out;
+    const live = sanitizeScreenLive(s);
+    if (!live.layer && (typeof s.url !== 'string' || !s.url)) return out;
     const material = name(s.material);
     const node = name(s.node);
     if (!material && !node) return out;
     out.push({
-      url: s.url.slice(0, 4096),
+      ...(live.layer ? {} : { url: s.url.slice(0, 4096) }),
+      ...live,
       ...(material ? { material } : {}),
       ...(node ? { node } : {}),
       fitMode: pick(s.fitMode, MODEL_SCREEN_FITS, 'stretch'),
@@ -1484,7 +1506,7 @@ export const MODEL_LOOPS = ['once', 'loop', 'pingpong'];
 export function sanitizeParticleSystemField(item) {
   const raw = item?.particleSystem;
   if (!raw || typeof raw !== 'object') return {};
-  return { particleSystem: sanitizeParticleSystem(raw), ...(item.particleLook === '3d' ? { particleLook: '3d' } : null) };
+  return { particleSystem: sanitizeParticleSystem(raw) };
 }
 
 export function sanitizeModel3dConfig(item) {
@@ -1518,10 +1540,11 @@ export function sanitizeModel3dConfig(item) {
         : {}),
       // Artwork on a preset device's screen: the media url plus the same framing
       // options the Mockup builder exposes. Only stored when there IS artwork.
-      ...(typeof raw.screen?.url === 'string' && raw.screen.url
+      ...((typeof raw.screen?.url === 'string' && raw.screen.url) || sanitizeScreenLive(raw.screen).layer
         ? {
             screen: {
-              url: raw.screen.url,
+              ...(sanitizeScreenLive(raw.screen).layer ? {} : { url: raw.screen.url }),
+              ...sanitizeScreenLive(raw.screen),
               scale: sanitizeNumber(raw.screen.scale, 1, { min: 0.1, max: 5 }),
               offsetX: sanitizeNumber(raw.screen.offsetX, 0, { min: -1, max: 1 }),
               offsetY: sanitizeNumber(raw.screen.offsetY, 0, { min: -1, max: 1 }),
@@ -1577,8 +1600,43 @@ export function sanitizeModel3dConfig(item) {
         opacity: sanitizeNumber(shadow.opacity, D.shadow.opacity, { min: 0, max: 1 }),
         blur: sanitizeNumber(shadow.blur, D.shadow.blur, { min: 0, max: 10 }),
       },
+      // (pose) A character's pose pipeline (modelPose.js): kept as written, as plain JSON. The pipeline reads it defensively (a field it
+      // does not know does nothing; a name the file lacks is a warning), so the stored pose survives a re-import of the file. Only
+      // stored when there is one.
+      ...sanitizeModelPose(raw.pose),
+      // (rigging) A skeleton made for a model file that has none (world3d/rig): plain JSON as written, like the pose. Only stored when
+      // there is one.
+      ...sanitizeModelSkeleton(raw.skeleton),
     },
   };
+}
+
+// (rigging) Plain JSON only, at most 512 KB: joints, landmarks, weight fixes and clips an agent wrote.
+function sanitizeModelSkeleton(skeleton) {
+  if (!skeleton || typeof skeleton !== 'object' || Array.isArray(skeleton)) return {};
+  try {
+    const text = JSON.stringify(skeleton);
+    if (!text || text.length > 512 * 1024) return {};
+    return { skeleton: JSON.parse(text) };
+  } catch {
+    return {};
+  }
+}
+
+// (pose) Plain JSON only (no functions, no undefined, no cycles), at most 512 KB of it: a pose with keys is data an agent wrote. The
+// pipeline's order goes into the project with it (modelPose.js POSE_ORDER, the only one there is), so a file says how it was drawn.
+const MODEL_POSE_ORDER = ['clips', 'morphs', 'bones', 'constraints', 'world'];
+function sanitizeModelPose(pose) {
+  if (!pose || typeof pose !== 'object' || Array.isArray(pose)) return {};
+  try {
+    const text = JSON.stringify(pose);
+    if (!text || text.length > 512 * 1024) return {};
+    const out = JSON.parse(text);
+    if (!Array.isArray(out.order)) out.order = [...MODEL_POSE_ORDER];
+    return { pose: out };
+  } catch {
+    return {};
+  }
 }
 
 // Grid layers: the layout rule. It lives on the ITEM rather than the clip for the
@@ -1937,6 +1995,7 @@ export function sanitizeTimelineItem(item) {
       camFocusDistance: sanitizeNumber(item.camFocusDistance, 0, { min: 0, max: 20000 }),
       camAperture: sanitizeNumber(item.camAperture, 24, { min: 0, max: 300 }),
       camBlurLevel: sanitizeNumber(item.camBlurLevel, 100, { min: 0, max: 300 }),
+      camFStop: sanitizeNumber(item.camFStop, 0, { min: 0, max: 64 }),
       camHighlightGain: sanitizeNumber(item.camHighlightGain, 0, { min: 0, max: 300 }),
       camFocusX: sanitizeNumber(item.camFocusX, 50, { min: 0, max: 100 }),
       camFocusY: sanitizeNumber(item.camFocusY, 50, { min: 0, max: 100 }),
@@ -1947,9 +2006,16 @@ export function sanitizeTimelineItem(item) {
       camPathOffsetZ: sanitizeNumber(item.camPathOffsetZ, 0, { min: -10000, max: 10000 }),
       camFollowTarget: sanitizeNumber(item.camFollowTarget, 1, { min: 1 }),
     } : {}),
+    // (vfx) A solved wide lens's one radial term (vfxCamera.js), only on a camera that has one. Not with the base values above: a solved
+    // camera carries its pose as tracks alone, and those fields are written only when an item has one of them.
+    ...(Number.isFinite(Number(item.camLensK1)) && Number(item.camLensK1) !== 0
+      ? { camLensK1: sanitizeNumber(item.camLensK1, 0, { min: -1, max: 1 }) } : {}),
     // The 3D camera path, when the clip has one. Points are world pixels, so it
     // has its own sanitizer rather than a numeric range.
     ...(item.cameraPath ? { cameraPath: sanitizeCameraPath(item.cameraPath) } : {}),
+    // (camlayer) what a free camera looks at and what any camera keeps in focus: a 3D Scene object ("@<id>"), a layer, a point
+    ...(sanitizeCameraRef(item.cameraLookAt) ? { cameraLookAt: sanitizeCameraRef(item.cameraLookAt) } : {}),
+    ...(sanitizeCameraRef(item.cameraFocusOn) ? { cameraFocusOn: sanitizeCameraRef(item.cameraFocusOn) } : {}),
     // Motion tracking. Both fields are conditional spreads (absent by default,
     // like cameraPath) so nothing is added to the millions of items that have no
     // track. motionTracks is rebuilt from scratch — a malformed sample would
@@ -2261,6 +2327,13 @@ export function sanitizeTimelineItem(item) {
     ...sanitizeShadowPlate(item),
     // 3D Text (text3d.js): extruded letters for a text layer. Stored only when set.
     ...(sanitizeText3d(item.text3d) ? { text3d: sanitizeText3d(item.text3d) } : {}),
+    // Flat text in the Scene's world (text3d.js): its letters as flat cards there. Stored only when set.
+    ...(sanitizeTextInWorld(item.textInWorld) ? { textInWorld: sanitizeTextInWorld(item.textInWorld) } : {}),
+    // A picture layer (an HTML clip, a video, an image) standing in a 3D Scene's world as a card (world3dText.js isPictureInWorldLayer):
+    // the same options as text's. Only stored when set.
+    ...(sanitizeTextInWorld(item.inWorld) ? { inWorld: sanitizeTextInWorld(item.inWorld) } : {}),
+    // (animtools) the 3D Scene object a layer standing in the world (3D Text, flat text, a picture card) rides: its id. Only stored when set.
+    ...(typeof item.worldParent === 'string' && item.worldParent.trim() ? { worldParent: item.worldParent.trim().slice(0, 200) } : {}),
     // Grid layers: the layout rule (mode, spacing, fit, orientation, reveal).
     ...sanitizeGridConfig(item),
     // Particle Solver layers: seed, solver box, emitter, forces and look.
@@ -2644,6 +2717,8 @@ export function normalizeEditorState(rawState) {
     textVariables: sanitizeTextVariables(parsedState.textVariables),
     // The photo slots' series name and fewer-photos rule (photoSlots.js); the slots themselves are marks on layers.
     photoSlotSettings: sanitizePhotoSlotSettings(parsedState.photoSlotSettings),
+    // The export settings a render of this project last started with (renderProfile.js); null when it was never rendered so.
+    renderProfile: sanitizeRenderProfile(parsedState.renderProfile),
     // A bare colour string (agents/API callers write `"background": "#3366cc"`)
     // is coerced to a solid config instead of being silently dropped — dropping
     // it renders a black stage with no error anywhere.

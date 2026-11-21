@@ -13,23 +13,27 @@ import * as THREE from 'three';
 
 // ── Adjustment-layer compositing ──
 // Lazily allocate/resize the ping-pong render targets to the drawing buffer.
+// (hdr2) While an HDR render composites a frame in float (engine.hdrComposite, ../hdrComposite.js), the stack accumulates in a half-float
+// set of its own, so the 3D Scene's light above white survives every hop; made on that render's first frame and given back at its end.
 export function ensureAdjustmentTargets(engine, w, h) {
   const width = Math.max(1, Math.round(w));
   const height = Math.max(1, Math.round(h));
-  let rt = engine.adjustmentRT;
+  const hdr = !!engine.hdrComposite;
+  const slot = hdr ? 'adjustmentRTHdr' : 'adjustmentRT';
+  let rt = engine[slot];
   if (!rt) {
     const make = (depth = false) => new THREE.WebGLRenderTarget(width, height, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
-      type: THREE.UnsignedByteType,
+      type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
       // Only the ping-pong pair the stack accumulates into carries depth; the scratch
       // targets are single-pass blits that never test it.
       depthBuffer: depth,
       stencilBuffer: false,
     });
     rt = { a: make(true), b: make(true), c: make(), d: make(), e: make(), f: make() };
-    engine.adjustmentRT = rt;
+    engine[slot] = rt;
     return rt;
   }
   if (rt.a.width !== width || rt.a.height !== height) {

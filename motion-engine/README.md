@@ -17,21 +17,32 @@ The agent writes the video as data: a `project.json` and its files. The engine t
 ## Quick start
 
 ```bash
-npx greenlight-motion@0.4.0 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
-npx greenlight-motion@0.4.0 init my-video   # a working starter: index.html, project.json, assets/
+npx greenlight-motion@0.5.8 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
+npx greenlight-motion@0.5.8 init my-video   # a working starter: index.html, project.json, assets/
 # edit my-video/project.json, put pictures / video / sound in my-video/assets/
 # or: write my-video/script.json (a scene script, skill/references/scene-script.md), then
-npx greenlight-motion@0.4.0 script my-video # script.json → project.json with the Video Editor's own presets
-npx greenlight-motion@0.4.0 check my-video  # what to fix: missing files, template mistakes, blank frames, broken plugins
-npx greenlight-motion@0.4.0 stills my-video # frames + a labelled contact sheet, to look at
-npx greenlight-motion@0.4.0 render my-video --fps 60 --motion-blur
-npx greenlight-motion@0.4.0 pack my-video   # everything in ONE html file
-npx greenlight-motion@0.4.0 pack my-video --glvideo   # ONE .glvideo: double-clicked, it opens in GreenLight Dash
+npx greenlight-motion@0.5.8 script my-video # script.json → project.json with the Video Editor's own presets
+npx greenlight-motion@0.5.8 check my-video  # what to fix: missing files, template mistakes, blank frames, broken plugins
+npx greenlight-motion@0.5.8 stills my-video # frames + a labelled contact sheet, to look at
+npx greenlight-motion@0.5.8 render my-video --fps 60 --motion-blur
+npx greenlight-motion@0.5.8 pack my-video   # everything in ONE html file
+npx greenlight-motion@0.5.8 pack my-video --glvideo   # ONE .glvideo: double-clicked, it opens in GreenLight Dash
+```
+
+For the user's review, on this computer only (127.0.0.1):
+
+```bash
+npx greenlight-motion@0.5.8 review my-video          # the page with Edit, Notes and Highlight for one film; Save for
+                                                     # agent writes my-video/review/ (NOTES.md, notes.json, pictures)
+npx greenlight-motion@0.5.8 review v1 v2 v3 --titles "Bold,Calm,Neon"   # ONE page for several versions: Notes,
+                                                     # Highlight and a Pick across them; Save writes v1/review/ (NOTES.md)
+npx greenlight-motion@0.5.8 pick stills/             # choose among generated pictures (stills/<frame>/*.png):
+                                                     # a take and extras per frame; Save writes stills/PICKS.md
 ```
 
 Also: `trace` (every animated layer's values frame by frame, plus the layer's moments), `set key=value`
 (template values), and `schema effects | transitions | easings | sounds | …` (the machine-readable
-catalog).
+catalog). `npx greenlight-motion --help` lists every command and flag.
 
 ## For AI agents
 
@@ -66,13 +77,24 @@ Setup for each agent is in the
 
   For Codex, copy it to `~/.agents/skills/greenlight-motion` instead.
 
+**The free film workflow.** The plugin also connects GreenLight's workflows server, `greenlight`
+(`https://mcp.greenlightdash.pro/mcp`). A video you ask for in your own words then runs as the free **Motion Design ▸
+Custom** workflow: its steps come from the server and drive this CLI, and the agent stops for your OK where the
+workflow asks for it. No account and no sign-in. Only the PRO templates on the same server (Feature Overview, Logo
+animation …) ask you to sign in, once, with a GreenLight Dash PRO account. With only the skill, add the server by hand:
+
+```bash
+claude mcp add --transport http greenlight https://mcp.greenlightdash.pro/mcp   # Claude Code, then a new session
+codex mcp add greenlight --url https://mcp.greenlightdash.pro/mcp               # Codex
+```
+
 ## In a web page or a Claude artifact
 
 The engine is one classic script, so it runs from a double-clicked file, a CDN or an artifact:
 
 ```html
 <div id="app"></div>
-<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.4.0/dist/greenlight-motion.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.5.8/dist/greenlight-motion.js"></script>
 <script>
   GreenLightMotion.mountStudio(document.getElementById('app'), {
     project: { /* project.json */ },
@@ -108,6 +130,38 @@ const { blob } = await engine.export({ format: 'mp4', fps: 60 });
 In a Claude artifact a page can't start a download by itself, so the page saves the MP4 through the
 artifact's `downloads` capability.
 
+**A 3D Scene** (a layer with `rig.scene`, a scene script's `world`) is drawn by the **3D plugin**, a package of its own:
+[`greenlight-motion-3d`](https://www.npmjs.com/package/greenlight-motion-3d) (GreenLight Dash's 3D engine: live Draft and
+path-traced Final; not open source, see its licence). You never install it by hand:
+
+- **In a browser** the engine fetches it from jsDelivr the first time a project has a Scene: the newest release of the range
+  this engine takes (`peerDependencies`), read from its `manifest.json` and then pinned to that exact release. A 2D video
+  never loads a byte of it. A page that serves the plugin's `dist/world3d/` itself names the folder before mounting:
+
+```js
+GreenLightMotion.setWorldBase('https://cdn.jsdelivr.net/npm/greenlight-motion-3d@0.1.4/dist/world3d/');   // or your own copy
+await GreenLightMotion.world3d.load();          // a "Download 3D plugin" button: get it before any Scene
+GreenLightMotion.world3d.status();              // { state: 'idle' | 'loading' | 'ready' | 'failed', version, bytes, error }
+const { png, hints, objects, lights } = await engine.critique(2);   // the frame at 2 s and what its shot shows, with hints
+```
+
+- **The CLI** downloads it once into this computer's cache (`~/Library/Caches/greenlight-motion/` on a Mac,
+  `%LOCALAPPDATA%\greenlight-motion\Cache` on Windows, `~/.cache/greenlight-motion` on Linux; `GREENLIGHT_MOTION_3D_CACHE`
+  moves it) the first time a folder has a Scene, checks it against the registry's sha512 and copies its `dist/world3d/` beside
+  the page. `npx greenlight-motion add-3d` gets it ahead; `doctor` says which release is there. Offline:
+  `GREENLIGHT_MOTION_3D=<an unpacked copy or its .tgz>`; an installed `greenlight-motion-3d` next to the project is used as it is.
+
+Its files load as modules, so a page that carries them in its own folder runs from a server (the CLI's `review` serves one),
+not from a double-clicked file.
+
+**Final in a page you host:** `GreenLightMotion.setFinalCap({ seconds: 10, spp: 64 })` makes a Final (path-traced) render costlier
+than 10 s at 64 samples per pixel (1080p, 30 fps) wait for a second press of Render (or `page.renderVideo({ confirmLongFinal:
+true })`); the GreenLight Motion connector sets that. No cap is the default; `GreenLightMotion.finalCost(project)` says what a render costs.
+
+**Driving a page from code:** `GreenLightMotion.page.ready` says the page is up; its player follows a moment later (the GPU and
+the project's first load): `page.player` is true then, and `await page.whenPlayer(ms)` waits for it or throws why it cannot
+start. `renderVideo`, `renderAudio`, `renderFrame` and `critique` wait for the player themselves.
+
 ## Requirements
 
 - **Viewing and rendering:** desktop Chrome or Edge with WebGPU (Chrome 113+).
@@ -120,6 +174,31 @@ A project made here opens in the desktop editor for full editing: the page's **O
 Dash** imports it as a new project. The editor's **Export for agents** works the other way: one
 `.glvideo` file to open in a Claude chat, or a ready folder with this page for an agent. MotionFast templates and effect packages with their own image or video files
 play in GreenLight Dash only. The page shows such layers but leaves them out.
+
+## What's new in 0.5.8
+
+- A video you ask for in your own words runs as the free **Motion Design ▸ Custom** workflow: the plugin connects
+  GreenLight's workflows server, with no account and no sign-in (above). The engine is the same as 0.5.7's.
+
+## What's new in 0.5.7
+
+- Several versions of a video in ONE review page (`review v1 v2 v3`): Highlight, Notes and a Pick across them, saved for
+  the agent; `pick <folder>` lets the user choose among generated pictures.
+- The Camera layer films a 3D Scene the way the Scene's own camera does (look at, follow, a path, focus, zoom), and Camera
+  Rigs go the way their names say.
+- Titles moving over a path-traced 3D Scene render about ten times faster.
+- It takes the 3D plugin greenlight-motion-3d 0.1.4 (cloth tied to moving objects, cloth with a thickness, a camera that
+  acts like a real device) and gets it by itself.
+
+Every change: [CHANGELOG.md](CHANGELOG.md).
+
+## Works with REA Viral
+
+[REA Viral](https://github.com/wpsoul/rea-viral) is an open agent skill (Apache 2.0) that works out what goes viral:
+why an account grows, why a post took off, which video formats work in a niche. When it finds a format worth making, it
+can build it as an editable video with GreenLight Motion: the skill turns the format's beats, timing and hook into a
+scene script for this engine, with your own footage and words. The skill calls the engine (through the connector's tools
+or this CLI); the engine itself carries no REA Viral code.
 
 ## License
 

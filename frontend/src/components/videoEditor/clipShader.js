@@ -1177,6 +1177,8 @@ export function resetMaterialUniforms(mat) {
   u.uGrayscale.value = 0.0;
   u.uSepia.value = 0.0;
   if (u.uInvert) u.uInvert.value = 0.0;
+  // (hdr2) display white is the top of every layer's colour; only an HDR render's float composite lifts it, for the Scene's own light
+  if (u.uRgbMax) u.uRgbMax.value = 1.0;
   // Pooled materials must not carry one layer's grade onto the next.
   if (u.uCcCtl) u.uCcCtl.value.set(0, -1, 0, 0);
   u.uBlur.value = 0.0;
@@ -1830,6 +1832,8 @@ export function applyAdjustmentUniforms(mat, item, keyframeProps, rttW, rttH, op
   let opacity = Number.isFinite(item?.opacity) ? item.opacity / 100 : 1;
   if (Number.isFinite(keyframeProps?.opacity)) opacity *= keyframeProps.opacity;
   u.uOpacity.value = Math.max(0, Math.min(1, opacity));
+  // (hdr2) display white is the grade's top; only an HDR render's float composite lifts it, after this (adjustmentComposite.js)
+  if (u.uRgbMax) u.uRgbMax.value = 1.0;
 }
 
 // Clip-mask pass: keeps the accumulated below-composite only where the mask

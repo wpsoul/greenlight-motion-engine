@@ -162,7 +162,7 @@ export const DOUBLE_EXPOSURE_EFFECT = {
   name: 'Double Exposure',
   group: 'Color',
   animated: false,
-  pro: true,
+  pro: false,   // free since 16.5.95 (the owner: all effects free)
   // Whole-frame / Outside write beyond this layer's alpha on purpose.
   layerMatte: 'expand',
   usesLayerRef: 'sourceLayer',

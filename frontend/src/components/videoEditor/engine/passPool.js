@@ -29,9 +29,16 @@ const PERSISTENT_BAKE_RE = /^(rig|af|scn):(?!norm:)/;
 // `hdr` = a half-float target (pass.hdr): values above 1 and the faint tail of a
 // linear-light glow survive between passes, where 8 bits would clip and band. The
 // caller's key must carry the flag, so an 8-bit and a float target never share a slot.
+// (hdr3) The pooled targets that hold a copy or a blur of the stack itself (a linear-light draw's held stack, deferred cards, the locked
+// backdrop, an adjustment mask's ungraded capture, Backdrop Blur / Glass's blur of what is behind a shape): while an HDR render composites
+// a frame in float (engine.hdrComposite, ../hdrComposite.js) they hold the 3D Scene's light above white, so they are half floats there, in
+// slots of their own (an SDR frame's targets are never touched).
+const STACK_COPY_KEY = /^(linearBelow|cards:|lockedBackdrop|adjMask:|backdrop:)/;
+
 export function ensurePassTarget(engine, key, w, h, nearest, hdr = false) {
   const renderer = engine.renderer;
   if (!renderer) return null;
+  if (engine.hdrComposite && STACK_COPY_KEY.test(key)) { key = `hdr:${key}`; hdr = true; }
   const width = Math.max(1, Math.round(w));
   const height = Math.max(1, Math.round(h));
   const pool = engine.passPool;

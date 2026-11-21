@@ -412,14 +412,45 @@ function applyPivot(prs, item, kf, W, H) {
  * byte-identical numbers through this path.
  *
  * A layer with a Transform origin turns about it (applyPivot above).
+ *
+ * (enginebugs2) `sceneTurn`: the PRS of a solid layer a world Scene stands in its world (a model layer, 3D Text), which turns about X
+ * and Y as the Scene's objects do (sceneTurnPrs), its Transform origin included.
  */
-export function localPrs(item, kf, W, H) {
+export function localPrs(item, kf, W, H, { sceneTurn = false } = {}) {
   if (!item) return identityPrs();
-  const prs = ownPrs(item, kf, W, H);
+  const own = ownPrs(item, kf, W, H, sceneTurn);
+  const prs = sceneTurn ? sceneTurnPrs(own) : own;
   return item.keyframeTransformOrigin ? applyPivot(prs, item, kf, num(W, 1920), num(H, 1080)) : prs;
 }
 
-function ownPrs(item, kf, W, H) {
+/**
+ * (enginebugs2) A canonical PRS as a world Scene turns its objects. The editor writes Rotate X / Y / Z negated into three's angles (Rotate
+ * Y +30 is a Scene object's `rot` [0, -30, 0]); a solid layer standing in a world (a model layer, 3D Text) turns about X and Y as a Scene
+ * object's `rot` does (rotateX = rot[0], rotateY = rot[1]) and keeps the on-screen sense of its turn in the picture's plane (Rotation /
+ * Rotate Z clockwise = rot[2] negated, as the editor's rotate handle and selection box draw it). That is the turn seen from a frame half a
+ * turn about z, which on three's XYZ angles changes the sign of x and y and nothing else; it maps a product of turns to the product of the
+ * mapped turns, so a chain resolved from mapped local PRS (resolveItemPrs with `ctx.sceneTurn`) is the chain the world composes.
+ */
+export function sceneTurnPrs(prs) {
+  return prs ? { ...prs, rx: -prs.rx, ry: -prs.ry } : prs;
+}
+
+/**
+ * (enginebugs2) The XYZ angles (radians, three's Euler order) a model layer's object is turned by: its PRS turn and its Base Rotation
+ * (`base`, degrees: a turn of the layer's own, read as Rotate X / Y / Z are), in the sense `prs` was resolved in (`sceneTurn`: as a world
+ * Scene turns its objects, where Base Rotation X and Y add as Rotate X / Y do; Z keeps its sense everywhere).
+ */
+export function solidLayerEuler(prs, base, sceneTurn = false) {
+  const b = base || {};
+  const sense = sceneTurn ? -1 : 1;
+  return [
+    num(prs?.rx) - sense * num(b.x) * DEG2RAD,
+    num(prs?.ry) - sense * num(b.y) * DEG2RAD,
+    num(prs?.rz) - num(b.z) * DEG2RAD,
+  ];
+}
+
+function ownPrs(item, kf, W, H, sceneTurn = false) {
   if (!item) return identityPrs();
   const width = num(W, 1920);
   const height = num(H, 1080);
@@ -455,7 +486,7 @@ function ownPrs(item, kf, W, H) {
   // Free leaves all rotation fields/tracks intact.
   // Text on Path hands the curve to the glyph run inside the text canvas — the
   // quad must stay put, or the path would apply twice.
-  const pathPose = textOnPathIsLive(item) ? null : resolveObjectMotionPath(item, kf);
+  const pathPose = textOnPathIsLive(item) ? null : resolveObjectMotionPath(item, kf, { sceneTurn });
   if (pathPose) {
     px = pathPose.position.x;
     py = pathPose.position.y;
@@ -623,7 +654,9 @@ export function progressAt(entry, t) {
 
 /**
  * The fully resolved (parent-inclusive) PRS of one indexed item at absolute time
- * `t`. `ctx` = { W, H, evalKeyframes(item, progress) }.
+ * `t`. `ctx` = { W, H, evalKeyframes(item, progress), sceneTurn }: with `sceneTurn`
+ * every link of the chain turns as a world Scene turns its objects (sceneTurnPrs),
+ * so a parent's turn carries its child's place the way it turns the child.
  *
  * `visited` guards against cycles that sanitization missed (hand-edited or
  * agent-authored JSON) — a repeat visit resolves to the item's own local PRS
@@ -636,7 +669,7 @@ export function resolveItemPrs(index, itemId, t, ctx, visited = new Set()) {
   visited.add(itemId);
 
   const kf = ctx?.evalKeyframes ? ctx.evalKeyframes(entry.item, progressAt(entry, t)) : null;
-  const local = localPrs(entry.item, kf, ctx?.W, ctx?.H);
+  const local = localPrs(entry.item, kf, ctx?.W, ctx?.H, { sceneTurn: !!ctx?.sceneTurn });
   const parenting = getParenting(entry.item);
   if (!parenting) return local;
   const parentPrs = resolveItemPrs(index, parenting.parentItemId, t, ctx, visited);
@@ -658,6 +691,38 @@ export function resolveParentTransform(index, item, t, ctx) {
   const prs = resolveItemPrs(index, parenting.parentItemId, t, ctx, new Set([item.id]));
   if (!prs) return null;
   return { prs, type: parenting.type };
+}
+
+/**
+ * (enginebugs2) Where a world Scene puts a solid layer that the editor's quad pose alone does not give: its pose with every link of its
+ * chain turned as the world turns its objects (`ctx.sceneTurn`), against the editor's, at absolute time `t` (`kf` = the layer's own
+ * keyframe values then; `ctx` as resolveItemPrs's). A world's 3D Text takes the editor's quad with its turn mapped (world3dText.js
+ * `sceneTurn`): `shift` (px) is added to its place, since a parent's turn carries the child's place and a Transform origin is turned
+ * about; `turn` ([x, y, z, w], or null) replaces the quad's quaternion when the mapped turn is not the world's (a path that aims the layer
+ * along itself: that aim is a direction in space, the same in both senses). Null when the layer has no parent, no Transform origin and no
+ * path aimed along it: the mapped quad is then exactly the world's pose.
+ */
+export function sceneTurnFix(index, item, kf, t, ctx) {
+  const parenting = index ? getParenting(item) : null;
+  if (!item || (!parenting && !parseTransformOrigin(item.keyframeTransformOrigin) && item.motionPath?.aim !== 'tangent')) return null;
+  const poseOf = (sceneTurn) => {
+    const c = { ...ctx, sceneTurn };
+    const parent = parenting ? resolveParentTransform(index, item, t, c) : null;
+    return applyParenting(parent?.prs, localPrs(item, kf, c.W, c.H, { sceneTurn }), parent?.type);
+  };
+  const a = poseOf(false);
+  const b = poseOf(true);
+  // the world's turn, pre-mapped as the quad's is (world3dText.js maps it back), against the editor's quad turn
+  const want = quatOfEuler(-b.rx, -b.ry, b.rz);
+  const have = quatOfEuler(a.rx, a.ry, a.rz);
+  const dot = want[0] * have[0] + want[1] * have[1] + want[2] * have[2] + want[3] * have[3];
+  return { shift: { x: b.px - a.px, y: b.py - a.py, z: b.pz - a.pz }, turn: Math.abs(dot) > 1 - 1e-12 ? null : want };
+}
+
+function quatOfEuler(x, y, z) {
+  // three's Euler XYZ as a quaternion [x, y, z, w]
+  const c1 = Math.cos(x / 2), s1 = Math.sin(x / 2), c2 = Math.cos(y / 2), s2 = Math.sin(y / 2), c3 = Math.cos(z / 2), s3 = Math.sin(z / 2);
+  return [s1 * c2 * c3 + c1 * s2 * s3, c1 * s2 * c3 - s1 * c2 * s3, c1 * c2 * s3 + s1 * s2 * c3, c1 * c2 * c3 - s1 * s2 * s3];
 }
 
 // ── 2D helpers for the preview gizmo ─────────────────────────────────────────

@@ -666,7 +666,7 @@ export function preparePreTransitionOverlayEffects(engine, env, {
   const renderer = engine.renderer;
   const camera = engine.camera;
   // A model's 3D entries render in its own pass, never in this bake.
-  item = withFlatEffects(item, clip);
+  item = withFlatEffects(item, clip, engine.worldScene);
   const effects = item?.effects;
   const hasChain = Array.isArray(effects) && effects.length > 0;
   // A layer mask enters this path too, chain or no chain. Without that, a

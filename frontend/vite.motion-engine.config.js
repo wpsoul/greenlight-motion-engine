@@ -201,6 +201,9 @@ export default defineConfig({
     __GL_SELF_HOSTED__: 'false',
     // GreenLightMotion.version: the package's own version, never a hand-kept constant
     __GLM_VERSION__: JSON.stringify(JSON.parse(readFileSync(path.resolve(__dirname, '../motion-engine/package.json'), 'utf8')).version),
+    // (motion3d) the 3D plugin releases this engine takes (its peer range on greenlight-motion-3d): a page with a Scene and no
+    // world folder of its own gets the newest of them from jsDelivr (src/motionEngine/world3dPlugin.js)
+    __GLM3D_RANGE__: JSON.stringify(JSON.parse(readFileSync(path.resolve(__dirname, '../motion-engine/package.json'), 'utf8')).peerDependencies?.['greenlight-motion-3d'] || null),
     // Library mode doesn't replace process.env; React reads NODE_ENV.
     'process.env.NODE_ENV': JSON.stringify('production'),
     'import.meta.env.VITE_API_BASE_URL': JSON.stringify(''),

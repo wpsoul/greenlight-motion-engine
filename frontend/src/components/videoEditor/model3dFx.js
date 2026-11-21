@@ -2234,8 +2234,9 @@ const EFFECTS = {
     run(renderer, res, ctx, fx, src, dst, p) {
       const T = fx.targets;
       const cam = ctx.cam;
-      const camR = res.camR || (res.camR = new THREE.PerspectiveCamera());
-      const camB = res.camB || (res.camB = new THREE.PerspectiveCamera());
+      // (gaps1) copies of the pass camera's own kind: a world Scene's orthographic camera films them orthographic too
+      const camR = res.camR?.constructor === cam.constructor ? res.camR : (res.camR = new cam.constructor());
+      const camB = res.camB?.constructor === cam.constructor ? res.camB : (res.camB = new cam.constructor());
       camR.copy(cam); camB.copy(cam);
       const Z = Math.max(1, ctx.viewDistance || 1000);
       const fPx = (fx.h / 2) / Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
@@ -2248,7 +2249,8 @@ const EFFECTS = {
         camB.position.addScaledVector(_fwd, dz);
       } else {
         const a = THREE.MathUtils.degToRad(p.angle || 0);
-        const d = (shiftPx * Z) / fPx;
+        // (an orthographic frame is as wide at every depth: px to world units by its own height)
+        const d = cam.isOrthographicCamera ? (shiftPx * cam.orthoHeight) / fx.h : (shiftPx * Z) / fPx;
         const ox = Math.cos(a) * d, oy = Math.sin(a) * d;
         camR.position.addScaledVector(_right, -ox).addScaledVector(_up, -oy);
         camB.position.addScaledVector(_right, ox).addScaledVector(_up, oy);

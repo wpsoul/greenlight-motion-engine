@@ -35,7 +35,7 @@ export const RIG_LAYER_EFFECT_ID = 'rig';
 // PRO, gated exactly like Running Glow: free to design and preview, paywalled at
 // render (containsProRigEffect below + the gate in VideoEditor's
 // handleRenderInBackground). The effect IS the flag — no feature-id list.
-export const RIG_IS_PRO = true;
+export const RIG_IS_PRO = false;   // free since 16.5.95 (the owner: "open all effects, let them all be free")
 
 export const RIG_DEFAULTS = {
   rigDensity: 24,     // mesh cells across the layer box's longer side

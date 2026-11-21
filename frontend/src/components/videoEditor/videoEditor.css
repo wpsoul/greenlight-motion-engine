@@ -3431,6 +3431,8 @@ body.gl-tablet .ve-tl-ripple-btn {
   box-shadow: inset 0 0 0 1.25px currentColor;
 }
 .ve-rc-icon.is-wait { opacity: 0.55; }
+/* "Disable caching": a slashed ring, dimmed like the wait */
+.ve-rc-icon.is-off { opacity: 0.55; }
 .ve-rc-icon.is-count::before,
 .ve-rc-icon.is-wait::before {
   content: '';
@@ -11638,6 +11640,14 @@ background: #121212f0;
   transition: width 180ms ease;
 }
 
+/* A 3D Scene loading, or Final 3D getting going, with no count to show (WorldLoadBadge): a segment that sweeps the bar. Transform only,
+   so it keeps moving while the page is held building the tracer. */
+.ve-render-progress-fill.is-indeterminate {
+  width: 35%;
+  animation: ve-world-load-sweep 1.3s cubic-bezier(0.645, 0.045, 0.355, 1) infinite;
+}
+@keyframes ve-world-load-sweep { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+
 /* The job as a checklist under the bar: every step of the render in order, so
    the whole plan is visible and a long step is obviously a step rather than a
    hang. One row per step; only the running row carries live detail. */
@@ -12441,8 +12451,8 @@ button:focus-visible {
   border-radius: 10px;
   cursor: pointer;
   text-align: left;
-  background: rgba(139, 92, 246, 0.07);
-  border: 1px solid rgba(139, 92, 246, 0.28);
+    background: #151718;
+    border: 1px solid rgb(94 93 96 / 28%);
   transition: all 0.15s ease;
 }
 .ve-voice-launch:hover {
@@ -17363,6 +17373,9 @@ color: var(--accent, #33efab);
   border: 0;
   border-radius: 0;
 }
+/* …and so does the Chat view (its frame line is the panel's, not this pane's) */
+.ve-agent-pane .tc-frame { inset: 0; border: 0; border-radius: 0; }
+.ve-agent-pane .tc-frame-line { display: none; }
 .ve-agent-pane ::-webkit-scrollbar { width: 6px; height: 6px; }
 .ve-agent-pane ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.12);
@@ -27649,23 +27662,32 @@ label.ve-scene-row { margin: 6px -6px 0; }
 .ve-world-final-status { font-size: 12px; color: #8a8a93; font-variant-numeric: tabular-nums; white-space: nowrap; margin-right: 4px; }
 .ve-world-final-status[data-done="1"] { color: #35d6a0; }
 /* A 3D Scene that is loading, over the preview (WorldLoadBadge). */
-.ve-world-load-badge {
+@keyframes ve-world-load-in { from { opacity: 0; } to { opacity: 1; } }
+/* A 3D Scene on the WebGL engine, or with no WebGPU: said where the Scene would draw, and in the Scene panel with the switch
+   (WorldNeedsWebGpu.jsx). Over the preview it stays out of the pointer's way, so the 2D layers around it can still be picked. */
+.ve-world-webgpu { display: flex; flex-direction: column; gap: 3px; }
+.ve-world-webgpu p { margin: 0; }
+.ve-world-webgpu-title { font-weight: 600; }
+.ve-world-webgpu.is-preview {
   position: absolute; left: 50%; top: 50%; z-index: 5; transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  min-width: 180px; padding: 10px 18px 12px; overflow: hidden; border-radius: 10px;
+  align-items: center; width: max-content; max-width: min(340px, calc(100% - 32px)); padding: 11px 18px 12px; border-radius: 10px;
   background: rgba(12, 14, 20, 0.86); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  font-size: 11.5px; line-height: 1.45; color: #aeb3bb; text-align: center; text-wrap: balance;
   pointer-events: none; animation: ve-world-load-in 0.48s cubic-bezier(0.645, 0.045, 0.355, 1) both;
 }
-.ve-world-load-title { font-size: 12.5px; font-weight: 600; color: #e8ecf2; white-space: nowrap; }
-.ve-world-load-stage { font-size: 11px; color: #aeb3bb; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ve-world-load-badge i { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: #35d6a0; transform-origin: left; transition: transform 0.2s cubic-bezier(0.645, 0.045, 0.355, 1); }
-@keyframes ve-world-load-in { from { opacity: 0; } to { opacity: 1; } }
-.ve-world-final-menu { min-width: 190px; }
+.ve-world-webgpu.is-preview .ve-world-webgpu-title { font-size: 12.5px; color: #e8ecf2; }
+.ve-world-webgpu.is-panel {
+  margin: 8px 0 4px; padding: 10px 12px 12px; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  font-size: 11.5px; line-height: 1.45; color: var(--text-muted, #9aa0a8);
+}
+.ve-world-webgpu.is-panel .ve-world-webgpu-title { color: var(--text-primary, #e8ecf2); }
+.ve-world-webgpu-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; pointer-events: auto; }
+.ve-world-webgpu.is-preview .ve-world-webgpu-actions { justify-content: center; }
+.ve-world-webgpu .ve-world-webgpu-switch { padding: 6px 14px; font-size: 12px; }
 .ve-world-final-pop { position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 200; width: 280px; max-height: 70vh; overflow: auto; padding: 10px 12px; border-radius: 10px; background: #1b1b1f; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 .ve-world-quality.ve-editor-panel { display: block; width: auto; height: auto; min-width: 0; padding: 0; border: 0; background: none; overflow: visible; }
 .vrs-world .ve-world-quality { margin-top: 10px; }
-.ve-world-final-needs { min-width: 240px; padding: 10px 12px; white-space: normal; }
-.ve-world-final-needs p { margin: 0 0 8px; color: #d6d9dc; font-size: 12px; line-height: 1.4; }
 .ve-world-final-link { padding: 0; border: 0; background: none; color: #74ceae; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .ve-world-final-link:hover { color: #a2e6cc; }
 
@@ -27698,3 +27720,10 @@ label.ve-scene-row { margin: 6px -6px 0; }
 .ve-world-node.is-off .ve-scene-row-name { opacity: 0.45; }
 .ve-world-node-more { align-self: flex-start; }
 .ve-rig-obj-nodes { margin-left: auto; }
+
+/* The preview's Final traces otherwise than the render (renderProfile.js traceDifferences): a dot on the quality button's corner and a
+   line in its popover, and the same line in the Render dialog. */
+.ve-world-final-differs { position: relative; }
+.ve-world-final-differs::after { content: ''; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: #e0b34a; }
+.ve-world-final-diff { margin-top: 10px; font-size: 11.5px; line-height: 1.45; color: #c9b27a; }
+.vrs-world-diff { margin-top: 6px; color: #c9b27a; }

@@ -13,24 +13,62 @@
 //   npx greenlight-motion set <dir> key=value …      template values (what the page's options panel changes)
 //   npx greenlight-motion apply <dir> <edits.json|-> [--dry-run] [--json]   an atomic, validated batch of edits (cli/apply.mjs)
 //   npx greenlight-motion trace <dir> [--fps 30] [--items a,b] [--out f.json]   every keyframed layer's values per frame + its moments
-//   npx greenlight-motion review <dir> [--port 4810] [--open]   the page for the user's review: the notes they mark on it land in <dir>/review/
+//   npx greenlight-motion events <dir> [--fps 30] [--out f.json] [--json]   when things move, stop, appear, cut and type on: where sounds go
+//   npx greenlight-motion review <dir> [--live] [--port 4810] [--open]   the page for the user's review (Edit · Notes · Highlight):
+//                                                    Save for agent writes <dir>/review/ (NOTES.md, notes.json, the pictures)
+//   npx greenlight-motion review <dir> <dir2> … [--titles "A,B,C"] [--subs "…,…"] [--title t] [--out d] [--live] [--port 4810] [--open]
+//                                                    ONE page for several films (the board's review card: Notes, Highlight across
+//                                                    them, a pick); Save writes <first dir or --out>/review/ (cli/compare.mjs)
+//   npx greenlight-motion pick <dir> [--title t] [--port 4811] [--open]   a pick page for generated pictures: <dir>/<frame>/*.png|jpg|webp
+//                                                    (or <dir>/pick.json); Save writes <dir>/PICKS.json + PICKS.md (cli/pick.mjs)
 //   npx greenlight-motion schema [topic]             the project format (format | template | effects | transitions | easings | paths | expressions | sounds)
+//   npx greenlight-motion add-3d [--json]            the 3D plugin (greenlight-motion-3d) into this computer's cache now (doctor says what is there)
+//   npx greenlight-motion pod-serve [--port 8080]    a render part on a GPU machine you own, driven from your page (GL_POD_TOKEN; cli/podServe.mjs)
+//   A 3D Scene (a script's `world`) gets the 3D plugin by itself the first time (downloaded once); its folder plays from a local server
+//   (review), and check / stills / render serve it themselves.
 //
 // Needs Node 18+ and Chrome or Edge (the engine draws with WebGPU; a headless *shell* has no WebGPU, so the CLI
 // drives the real browser in its new headless mode). No ffmpeg: the page encodes the MP4 itself.
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, copyFileSync, rmSync } from 'node:fs';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { applyEdits } from './apply.mjs';
 import { glvideoBytes } from './glvideo.mjs';
+import { find3d, cacheRoot, cached, NAME as NAME3D } from './plugin3d.mjs';
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const ENGINE = path.join(PKG, 'dist', 'greenlight-motion.js');
-const VERSION = JSON.parse(readFileSync(path.join(PKG, 'package.json'), 'utf8')).version;
+// A 3D Scene (a Scene layer: rig.renderer "world", a script's `world`): its 3D engine is the 3D plugin, a package of its own
+// (greenlight-motion-3d, at the release range this engine takes: package.json peerDependencies). The CLI finds it, or downloads it
+// once into this computer's cache (cli/plugin3d.mjs), and copies its dist/world3d/ into the project folder as world3d/; assets.js
+// tells the page to load it from there. Its files load as modules, which a file:// page cannot, so a page with a Scene is opened
+// from a server on this computer (127.0.0.1) — review, and stills / render / check headless.
+const hasWorld = (project) => {
+  const walk = (channels, clips) => (channels || []).some((ch) => (ch?.items || []).some((it) => it?.rig?.renderer === 'world'))
+    || (clips || []).some((c) => c?.sequence && walk(c.sequence.channels, c.sequence.clips));
+  return !!project && walk(project.channels, project.clips);
+};
+const META = JSON.parse(readFileSync(path.join(PKG, 'package.json'), 'utf8'));
+const VERSION = META.version;
+// the plugin's releases this engine takes, and the world API its Scene layer speaks (schema/capabilities.json world3d, written by
+// scripts/prepare.mjs from frontend/src/motionEngine/world3dContract.js)
+const RANGE3D = META.peerDependencies?.[NAME3D] || null;
+const API3D = () => SCHEMA().world3d?.api ?? 1;
+let plugin = null;
+function plugin3d({ quiet = false } = {}) {
+  if (plugin) return plugin;
+  try {
+    plugin = find3d({ range: RANGE3D, api: API3D(), from: [process.cwd(), PKG], log: quiet ? null : (m) => console.log(m) });
+  } catch (e) {
+    fail(`this video has a 3D Scene, and the 3D plugin (${NAME3D}${RANGE3D ? `@${RANGE3D}` : ''}) is not here: ${e.message}`,
+      'run npx greenlight-motion add-3d while online, or set GREENLIGHT_MOTION_3D to an unpacked copy or its .tgz');
+  }
+  return plugin;
+}
 
 // ── arguments ──
 const argv = process.argv.slice(2);
@@ -119,10 +157,11 @@ const indexHtml = (title) => `<!doctype html>
 // JSON inside a <script>: no "</script", no "<!--" (both escapes stay valid JSON and JS, so the app can read a page back)
 const scriptSafe = (s) => s.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\u0021--');
 
-const assetsJs = (assets, aliases) => `window.GL_ASSETS = ${scriptSafe(JSON.stringify(assets))};
+// world: the folder holds the 3D plugin's files (world3d/): the page loads its 3D Scene's engine from there, not from the CDN
+const assetsJs = (assets, aliases, world = false) => `window.GL_ASSETS = ${scriptSafe(JSON.stringify(assets))};
 window.GL_ASSET_ALIASES = ${scriptSafe(JSON.stringify(aliases))};
 (function (a, m) { for (var k in m) if (!(k in a)) a[k] = a[m[k]]; })(window.GL_ASSETS, window.GL_ASSET_ALIASES);
-`;
+${world ? 'window.GL_WORLD_BASE = "world3d/";\n' : ''}`;
 
 // The sounds a project's cues play: the library's files are on the sound CDN (schema/capabilities.json sounds.cdn;
 // GREENLIGHT_SOUND_CDN overrides it). A cue's file is downloaded into assets/sounds/ once. Returns the refs still missing.
@@ -183,6 +222,8 @@ function ensure3dFiles(dir, project) {
     else if (hdrs.has(`${s}.hdr`)) addHdr(`${s}.hdr`);
   }
   if ((project.clips || []).some((c) => c?.mediaType === 'model3d') && f.defaultHdr) addHdr(f.defaultHdr);
+  // a 3D Scene without an environment of its own is lit by the Scene's default one (rig3d.js ENV_DEFAULTS)
+  if (hasWorld(project)) addHdr('studio_small_03_1k.hdr');
   const missing = [];
   for (const [rel, [url, ref]] of want) {
     const dest = path.join(dir, 'assets', rel);
@@ -194,10 +235,11 @@ function ensure3dFiles(dir, project) {
   return missing;
 }
 
-function build(dir, { quiet = false } = {}) {
+function build(dir, { quiet = false, sounds = true } = {}) {
   if (!existsSync(ENGINE)) fail('the engine bundle is missing from this package', 'reinstall greenlight-motion');
   const project = readProject(dir);
-  const soundsMissing = [...ensureSoundFiles(dir, project), ...ensure3dFiles(dir, project)];
+  // (chatfarm2) a picture-only part (pod-serve) needs no sound files
+  const soundsMissing = [...(sounds ? ensureSoundFiles(dir, project) : []), ...ensure3dFiles(dir, project)];
   const assets = {};
   const aliases = {};   // other names of the same file: stored once, pointed at
   let bytes = 0;
@@ -210,26 +252,60 @@ function build(dir, { quiet = false } = {}) {
   }
   const missing = [...[...refsIn(project)].filter((r) => !assets[r] && !aliases[r]), ...soundsMissing];
   writeFileSync(path.join(dir, 'project.js'), `window.GL_PROJECT = ${scriptSafe(JSON.stringify(project))};\n`);
-  writeFileSync(path.join(dir, 'assets.js'), assetsJs(assets, aliases));
+  const world = hasWorld(project);
+  writeFileSync(path.join(dir, 'assets.js'), assetsJs(assets, aliases, world));
   copyFileSync(ENGINE, path.join(dir, 'greenlight-motion.js'));
+  if (world) {
+    // the 3D plugin's files beside the page (copied again only when its release changed)
+    const p = plugin3d({ quiet });
+    const to = path.join(dir, 'world3d');
+    let had = null;
+    try { had = JSON.parse(readFileSync(path.join(to, 'manifest.json'), 'utf8')).version; } catch { /* none yet */ }
+    if (had !== p.version || readdirSync(p.world).some((f) => !existsSync(path.join(to, f)))) {
+      rmSync(to, { recursive: true, force: true });
+      mkdirSync(to, { recursive: true });
+      for (const f of readdirSync(p.world)) copyFileSync(path.join(p.world, f), path.join(to, f));
+    }
+  }
   if (!existsSync(path.join(dir, 'index.html'))) writeFileSync(path.join(dir, 'index.html'), indexHtml(project.template?.title || project.name));
   if (!quiet) {
     console.log(`built ${path.join(dir, 'index.html')} — ${filesUnder(path.join(dir, 'assets')).length} file(s), ${(bytes / 1048576).toFixed(1)} MB of assets`);
+    if (world) console.log(`it has a 3D Scene (the 3D plugin ${plugin?.version} in ${path.join(dir, 'world3d')}): it plays from a local server, not by double-click — npx greenlight-motion review ${dir}`);
     if (missing.length) console.log(`missing (put them in assets/): ${missing.join(', ')}`);
   }
   return { project, assets, aliases, missing, bytes };
 }
 
-// The page, headless: built, opened from file://, settled (files are asked for in waves — a model, then its HDR).
+// A project folder served read-only on 127.0.0.1 (a free port), for a page whose 3D Scene loads its engine as modules.
+async function serveFolder(dir) {
+  const http = await import('node:http');
+  const root = path.resolve(dir);
+  const types = { ...MIME, '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8' };
+  const server = http.createServer((req, res) => {
+    const p = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    const file = path.resolve(root, p === '/' ? 'index.html' : p.replace(/^\/+/, ''));
+    if (!file.startsWith(root + path.sep) || !existsSync(file) || statSync(file).isDirectory() || (req.method !== 'GET' && req.method !== 'HEAD')) {
+      res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); return;
+    }
+    res.writeHead(200, { 'content-type': types[path.extname(file).toLowerCase()] || 'application/octet-stream', 'cache-control': 'no-store' });
+    res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
+  });
+  await new Promise((ok, no) => { server.once('error', no); server.listen(0, '127.0.0.1', ok); });
+  return { url: `http://127.0.0.1:${server.address().port}/`, close: () => server.close() };
+}
+
+// The page, headless: built, opened from file:// (a 3D Scene's from a local server), settled (files are asked for in waves — a
+// model, then its HDR).
 async function withPage(dir, fn) {
-  build(dir, { quiet: true });
+  const { project } = build(dir, { quiet: true });
+  const served = hasWorld(project) ? await serveFolder(dir) : null;
   const browser = await launch();
   try {
     const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e.message || e)));
-    await page.goto('file://' + path.resolve(dir, 'index.html'));
+    await page.goto(served ? served.url : 'file://' + path.resolve(dir, 'index.html'));
     await page.waitForFunction(() => window.GreenLightMotion?.page?.ready, null, { timeout: 90000 });
     const duration = await page.evaluate(() => window.GreenLightMotion.page.duration);
     for (const t of [0, duration / 2, Math.max(0, duration - 0.05)]) await page.evaluate((x) => window.GreenLightMotion.page.renderFrame(x), t);
@@ -237,6 +313,7 @@ async function withPage(dir, fn) {
     return await fn({ page, errors, duration });
   } finally {
     await browser.close();
+    served?.close();
   }
 }
 const parseTimes = (duration) => {
@@ -254,6 +331,13 @@ async function doctor() {
   const chrome = findChrome();
   add('Chrome or Edge', !!chrome, chrome || 'not found', 'install Google Chrome, or set GREENLIGHT_MOTION_CHROME to its executable');
   add('engine bundle', existsSync(ENGINE), existsSync(ENGINE) ? path.relative(process.cwd(), ENGINE) : 'missing', 'reinstall greenlight-motion');
+  // the 3D plugin: not a fault when it is not here yet (a video with a 3D Scene downloads it), only when what is here does not fit
+  let found3d = null, why3d = null;
+  try { found3d = find3d({ range: RANGE3D, api: API3D(), from: [process.cwd(), PKG], download: false }); } catch (e) { why3d = e.message; }
+  const others = cached().filter((c) => c.version !== found3d?.version).map((c) => c.version);
+  add(`3D plugin (${NAME3D}${RANGE3D ? ` ${RANGE3D}` : ''})`, !why3d,
+    found3d ? `${found3d.version} (${found3d.from === 'cache' ? 'cache' : found3d.from}: ${found3d.world})` : why3d || `not downloaded yet: a video with a 3D Scene gets it (once, ~19 MB into ${cacheRoot()}), or now: npx greenlight-motion add-3d${others.length ? `; other releases cached: ${others.join(', ')}` : ''}`,
+    'unset GREENLIGHT_MOTION_3D or point it at a release that fits, then npx greenlight-motion add-3d');
   if (chrome) {
     try {
       const browser = await launch();
@@ -263,16 +347,18 @@ async function doctor() {
       const gpu = await page.evaluate(async () => {
         const a = await navigator.gpu?.requestAdapter();
         const h264 = typeof VideoEncoder === 'function' && (await VideoEncoder.isConfigSupported({ codec: 'avc1.640028', width: 1920, height: 1080, bitrate: 8e6, framerate: 30 })).supported;
-        return { webgpu: !!a, adapter: a?.info ? [a.info.vendor, a.info.architecture].filter(Boolean).join(' ') : '', h264 };
+        return { webgpu: !!a, adapter: a?.info ? [a.info.vendor, a.info.architecture].filter(Boolean).join(' ') : '', h264,
+          storage: a?.limits?.maxStorageBuffersPerShaderStage || 0, maxBuffer: a?.limits?.maxBufferSize || 0 };
       });
       await browser.close();
       add('WebGPU (headless)', gpu.webgpu, gpu.adapter || (gpu.webgpu ? 'adapter' : 'no adapter'), 'update Chrome; on Linux servers WebGPU needs Vulkan or SwiftShader');
       add('H.264 encoding (WebCodecs)', gpu.h264, gpu.h264 ? 'supported' : 'not supported', 'use Google Chrome (open-source Chromium on Linux lacks H.264)');
+      if (gpu.webgpu) add('WebGPU limits for a 3D Scene', gpu.storage >= 8, `${gpu.storage} storage buffers per stage, largest buffer ${Math.round(gpu.maxBuffer / 1048576)} MB`, 'a Final 3D Scene needs 8+ storage buffers per shader stage: update Chrome or the graphics driver');
     } catch (e) {
       add('browser starts headless', false, String(e.message || e).split('\n')[0], 'check that Chrome opens on this computer');
     }
   }
-  if (flags.json) console.log(JSON.stringify({ version: VERSION, ok: checks.every((c) => c.ok), checks }, null, 2));
+  if (flags.json) console.log(JSON.stringify({ version: VERSION, ok: checks.every((c) => c.ok), checks, plugin3d: found3d ? { version: found3d.version, from: found3d.from, dir: found3d.world } : null, range3d: RANGE3D }, null, 2));
   else {
     for (const c of checks) console.log(`${c.ok ? 'ok  ' : 'FIX '} ${c.name.padEnd(28)} ${c.detail}${c.fix ? `\n      → ${c.fix}` : ''}`);
     console.log(checks.every((c) => c.ok) ? '\nready' : '\nfix the lines marked FIX');
@@ -296,10 +382,28 @@ then: npx greenlight-motion check ${dir}  →  stills ${dir}  →  render ${dir}
 
 async function check() {
   const dir = rest[0] || '.';
-  const { missing: unbuilt } = build(dir, { quiet: true });
+  const { missing: unbuilt, project: built } = build(dir, { quiet: true });
+  // a 3D Scene: the scene script's own strict check (the same as `script` and the chat connector), and its critique below
+  const S = hasWorld(built) ? await import(pathToFileURL(path.join(PKG, 'dist', 'greenlight-motion-script.mjs')).href) : null;
+  // a folder `script` made: its Scene is the script's `world`, so fields are named the script's way (world.render.mode)
+  const fromScript = existsSync(path.join(dir, 'script.json'));
+  const asScript = (t) => (!fromScript || !t ? t : String(t).replace(/(^|`)rig\.(?=[a-z])/g, '$1world.').replace(/(^|`)scene\./g, '$1world.scene.')
+    .replace(/(^|`)materials\./g, '$1world.scene.materials.'));
   const result = await withPage(dir, async ({ page, errors, duration }) => {
     const problems = [];
+    const notes = [];
     const project = JSON.parse(readFileSync(path.join(dir, 'project.json'), 'utf8'));
+    if (S?.validateWorld) {
+      for (const ch of project.channels || []) for (const it of ch?.items || []) {
+        if (it?.rig?.renderer !== 'world') continue;
+        const r = S.validateWorld(it.rig, { path: fromScript && it.id === 'world' ? 'world' : `${it.id}.rig` });
+        for (const e of r.errors) problems.push({ code: 'scene', ref: e.path, detail: e.message, fix: 'fix that field (skill/references/video-world3d.md, world3d-schema.json)' });
+        for (const w of r.warnings) notes.push({ code: 'scene', ref: w.path, detail: w.message, fix: 'the 3D engine does not use it as written' });
+      }
+      // what the shot shows, the lights, the picture's numbers: hints naming the field to change (the middle frame)
+      const crit = await page.evaluate(async (t) => (window.GreenLightMotion.page.critique ? window.GreenLightMotion.page.critique(t) : null), duration / 2).catch((e) => ({ hints: [{ kind: 'critique', text: `the 3D critique could not run: ${e.message}` }] }));
+      for (const h of crit?.hints || []) notes.push({ code: '3d-critique', ref: h.kind, detail: asScript(h.text), fix: h.fix ? `change ${asScript(h.fix)}` : 'see the hint' });
+    }
     for (const r of unbuilt) {
       problems.push(r.startsWith('asset:sounds/')
         ? { code: 'missing-file', ref: r, fix: `a cue's sound is downloaded from the GreenLight sound CDN and that failed: check the internet connection and run build again, or put the file at assets/${r.slice(6)}` }
@@ -345,7 +449,6 @@ async function check() {
     }
     for (const e of errors) problems.push({ code: 'page-error', detail: e, fix: 'a value in project.json the engine cannot use; compare with the references in the skill' });
     // notes: worth a look, not wrong by themselves — text the engine wraps onto more lines than it was written with
-    const notes = [];
     for (const w of await page.evaluate((proj) => window.GreenLightMotion.textWraps?.(proj) || [], project)) {
       notes.push({ code: 'text-wraps', ref: w.id, rows: w.rows, written: w.written,
         detail: `"${w.text}" (${w.fontPx} px) wraps onto ${w.rows} lines in its ${w.widthPx} px box, written as ${w.written}`,
@@ -412,6 +515,9 @@ async function render() {
   writeFileSync(out, Buffer.from(res.base64, 'base64'));
   const sound = `${mix.volume !== 100 ? `, sound ${mix.volume}%` : ''}${mix.sfx ? '' : ', no sound effects'}`;
   console.log(`rendered ${out} — ${fps} fps${res.motionBlur ? ', motion blur' : ''}${sound}, ${(res.size / 1048576).toFixed(2)} MB, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  // frames the render drew again because their first picture was not whole (a blank Scene picture, a lost GPU device, an unfinished
+  // Final trace): the file is whole; this says it happened
+  if (res.frameGuard) console.log(`frames drawn again: ${res.frameGuard.retries} (${Object.entries(res.frameGuard.byReason || {}).map(([k, n]) => `${k} ${n}`).join(', ')}); frames ${[...new Set((res.frameGuard.events || []).map((e) => e.frame))].join(', ')}`);
 }
 
 function pack() {
@@ -427,6 +533,10 @@ function pack() {
     console.log(`packed ${out} — ${(bytes.length / 1048576).toFixed(1)} MB, ${files.length} file(s). Double-clicked, it opens in GreenLight Dash as a new video project.`);
     if (missing.length) console.log(`missing (not inside): ${missing.join(', ')}`);
     return;
+  }
+  if (hasWorld(project)) {
+    fail('a video with a 3D Scene does not fit in one HTML file (its 3D engine is the 3D plugin: ~19 MB of files it loads as modules)',
+      `render the MP4: npx greenlight-motion render ${dir} — or show the folder: npx greenlight-motion review ${dir} — or --glvideo for GreenLight Dash`);
   }
   const out = path.resolve(String(flags.out || path.join(dir, `${(project.template?.title || project.name || 'video').replace(/[^\w-]+/g, '-')}.html`)));
   const engine = readFileSync(ENGINE, 'utf8');
@@ -625,70 +735,55 @@ async function trace() {
   }
 }
 
-// The page served on this computer for the user's review (`localhost`, nothing leaves it). The notes they mark on the
-// frame — each a pin, box, arrow or drawing with their words, the moment and the layers under it — are written to
-// <dir>/review/: notes.json, NOTES.md (what the agent reads) and a picture of each moment with the marks numbered.
-async function review() {
-  const dir = path.resolve(rest[0] || '.');
-  build(dir, { quiet: true });
-  const http = await import('node:http');
-  const out = path.join(dir, 'review');
-  const types = { ...MIME, '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.md': 'text/markdown; charset=utf-8' };
-  const send = (res, code, body, type = 'application/json') => {
-    res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' });
-    res.end(body);
-  };
-  const body = (req) => new Promise((ok, no) => {
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => ok(Buffer.concat(chunks)));
-    req.on('error', no);
-  });
-  const server = http.createServer(async (req, res) => {
-    try {
-      const p = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-      if (p === '/__glm/review') {
-        if (req.method === 'GET') {
-          const f = path.join(out, 'notes.json');
-          return send(res, 200, existsSync(f) ? readFileSync(f) : JSON.stringify({ notes: [] }));
-        }
-        if (req.method === 'PUT') {
-          const j = JSON.parse((await body(req)).toString('utf8'));
-          mkdirSync(out, { recursive: true });
-          writeFileSync(path.join(out, 'notes.json'), JSON.stringify({ notes: Array.isArray(j.notes) ? j.notes : [] }, null, 1));
-          writeFileSync(path.join(out, 'NOTES.md'), String(j.markdown || ''));
-          console.log(`${new Date().toLocaleTimeString()}  ${(j.notes || []).length} note(s) → ${path.join(out, 'NOTES.md')}`);
-          return send(res, 200, '{"ok":true}');
-        }
-      }
-      const img = /^\/__glm\/review\/image\/(at-[\d.]+s\.png)$/.exec(p);
-      if (img) {
-        const f = path.join(out, img[1]);
-        if (req.method === 'PUT') { mkdirSync(out, { recursive: true }); writeFileSync(f, await body(req)); return send(res, 200, '{"ok":true}'); }
-        if (req.method === 'DELETE') { rmSync(f, { force: true }); return send(res, 200, '{"ok":true}'); }
-      }
-      if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'not allowed', 'text/plain');
-      const file = path.resolve(dir, p === '/' ? 'index.html' : p.replace(/^\/+/, ''));
-      if (!file.startsWith(dir + path.sep) || !existsSync(file) || statSync(file).isDirectory()) return send(res, 404, 'not found', 'text/plain');
-      return send(res, 200, readFileSync(file), types[path.extname(file).toLowerCase()] || 'application/octet-stream');
-    } catch (e) {
-      return send(res, 500, JSON.stringify({ error: String(e?.message || e) }));
-    }
-  });
-  const port = flags.port !== undefined ? Number(flags.port) : 4810;
-  await new Promise((ok, no) => { server.once('error', no); server.listen(port, '127.0.0.1', ok); });
-  const url = `http://127.0.0.1:${server.address().port}/`;
-  console.log(`review: ${url}\n  Open it in Chrome or Edge. Notes marked on the page land in ${out}/ (NOTES.md, notes.json, a picture of each moment).\n  Ctrl+C to stop.`);
-  if (flags.open) {
-    const opener = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
-    spawn(opener[0], opener[1], { stdio: 'ignore', detached: true }).unref();
+// The event timeline (frontend/src/motionEngine/events.js): every move's fastest moment and its stop, appearances, cuts, transitions, text
+// letters arriving, a Scene's switches, lights and sims, from the project's own data with no browser and no render; the moments a sound
+// lands on. A project with a 3D Scene is read by the 3D plugin's timeline (its world3d-events.mjs), one without by this package's own.
+function events() {
+  const dir = rest[0] || '.';
+  const project = readProject(dir);
+  const bundle = hasWorld(project) ? path.join(plugin3d({ quiet: !!flags.json }).world, 'world3d-events.mjs') : path.join(PKG, 'dist', 'greenlight-motion-events.mjs');
+  if (!existsSync(bundle)) fail(`no event timeline at ${bundle}`, hasWorld(project) ? 'update the 3D plugin: npx greenlight-motion add-3d' : 'reinstall greenlight-motion');
+  const fps = flags.fps ? Number(flags.fps) : undefined;
+  const r = spawnSync(process.execPath, [bundle], { input: JSON.stringify({ project, fps }), maxBuffer: 1 << 28 });
+  if (r.status !== 0) fail(`the event timeline failed: ${String(r.stderr || '').slice(-600)}`);
+  const out = flags.out ? path.resolve(String(flags.out)) : path.join(dir, 'events.json');
+  const data = JSON.parse(r.stdout.toString('utf8'));
+  writeFileSync(out, JSON.stringify(data, null, 1) + '\n');
+  if (flags.json) { console.log(r.stdout.toString('utf8')); return; }
+  const by = {};
+  for (const e of data.events) by[e.kind] = (by[e.kind] || 0) + 1;
+  console.log(`${data.events.length} events over ${data.duration} s at ${data.fps} fps → ${out}`);
+  console.log(Object.entries(by).map(([k, n]) => `${k} ${n}`).join(' · '));
+  for (const e of data.events.filter((x) => x.strength >= 0.3 && x.kind !== 'text').slice(0, 40)) {
+    console.log(`- f${e.frame} ${e.t} s  ${e.kind}${e.channel ? ` (${e.channel})` : ''}${e.what ? ` ${e.what}` : ''}  ${e.name}  strength ${e.strength}${e.pan !== undefined ? `  pan ${e.pan}` : ''}`);
   }
-  await new Promise(() => {});   // serves until stopped
+  for (const n of data.notes || []) console.log(`note: ${n}`);
 }
 
-const COMMANDS = { doctor, init, script, build: () => build(rest[0] || '.'), check, stills, render, pack, set, apply, schema, trace, review };
+// The page served on this computer for the user's review (`localhost`, nothing leaves it): one film or several, the
+// engine's studio (cli/compare.mjs). Save for agent writes <dir>/review/ (the first folder's, or --out's): notes.json,
+// NOTES.md (what the agent reads) and a picture of every noted moment with the user's drawing on it.
+async function review() {
+  return (await import('./compare.mjs')).compare({ dirs: rest.length ? rest : ['.'], flags,
+    ctx: { build, readProject, filesUnder, assetKeys, hasWorld, launch, serveFolder, ENGINE, fail } });
+}
+
+// The 3D plugin now, before a video needs it (a scene built from zero, an offline day ahead)
+function add3d() {
+  const p = plugin3d({ quiet: !!flags.json });
+  if (flags.json) console.log(JSON.stringify({ ok: true, package: NAME3D, version: p.version, from: p.from, dir: p.world, range: RANGE3D }));
+  else console.log(`3D plugin ${NAME3D} ${p.version} ready (${p.from}): ${p.world}`);
+}
+
+// (chatfarm2) a render part on a GPU machine the user owns, driven from the user's page (cli/podServe.mjs)
+const podServe = async () => (await import('./podServe.mjs')).podServe({ build, serveFolder, findChrome, require, VERSION, flags });
+// a pick page for generated pictures (cli/pick.mjs)
+const pick = async () => (await import('./pick.mjs')).pick({ dir: rest[0] || '.', flags, ctx: { fail, PKG } });
+const COMMANDS = { doctor, init, script, build: () => build(rest[0] || '.'), check, stills, render, pack, set, apply, schema, trace, events, review, pick, 'add-3d': add3d, 'pod-serve': podServe };
 if (!cmd || cmd === 'help' || flags.help || !COMMANDS[cmd]) {
-  console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 20).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+  // the help is this file's opening comment (every line after the #! up to the first that is not a comment)
+  const head = readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1);
+  console.log(head.slice(0, head.findIndex((l) => !l.startsWith('//'))).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
   process.exit(cmd && !COMMANDS[cmd] && cmd !== 'help' ? 1 : 0);
 }
 try {

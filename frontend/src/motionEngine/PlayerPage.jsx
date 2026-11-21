@@ -12,7 +12,7 @@
  * the changes made here, to the app (./pageEdits.js). An agent never writes UI.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { EngineCanvas } from './EngineCanvas';
+import { EngineCanvas, engineSettle } from './EngineCanvas';
 import { useVideoEditorStore } from '../components/videoEditor/videoEditorStore';
 import { getTimelineLayout } from '../components/videoEditor/speedUtils';
 import { waitForMediaReady } from '../components/videoEditor/renderWarmup';
@@ -43,6 +43,15 @@ import {
 import { ReviewLayer } from './ReviewLayer';
 import { ReviewBar, NoteComposer, NotesSection } from './ReviewUI';
 import { useReview } from './useReview';
+import { critiqueFrame } from './critique';
+// (motion3d) a Final 3D Scene's render cost against the host's cap (the chat's: 10 s at 64 samples), confirmed before a longer one
+import { checkFinalCap } from './finalCap';
+import { FarmPane, useFarm } from './FarmPane';
+// (chatswitch) the studio's Draft | Final switch: the film's 3D Scenes in the viewer's mode, and the app's own Final in the preview
+// (it traces only on pause)
+import { filmWorldMode, withWorldMode, sceneRender, worldTraceOptions } from './worldMode';
+import { setWorldFinal, worldStatus, watchWorldLoad, worldInUse } from '../components/videoEditor/world3dLayer';
+import { normalizeRigRender } from '../components/videoEditor/rig3d';
 import { REVIEW_TOOLS } from './reviewNotes';
 import './playerPage.css';
 
@@ -96,6 +105,8 @@ const OPEN_IN_APP = (() => {
   return `greenlightdash://open?path=${encodeURIComponent(p)}`;
 })();
 const FRAME = 1 / 30;
+// (0.5.5) how long a render waits for the page's player (a cold pod's GPU start is seconds; pod-serve waits for the page this long too)
+const PLAYER_WAIT_MS = 180000;
 
 // Every layer on the timeline, in the editor's order (one row per channel), with its place in time.
 function layersOf(channels, clips) {
@@ -179,6 +190,10 @@ const Icon = {
   warn: <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" d="M12 4 2.8 20h18.4zM12 10v4.5M12 17.5v.01" /></svg>,
   loop: <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" d="M3 7.5V7a3 3 0 0 1 3-3h6.5M10.5 2l2 2-2 2M13 8.5V9a3 3 0 0 1-3 3H3.5M5.5 14l-2-2 2-2" /></svg>,
   film: <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="2" fill="none" stroke="currentColor" strokeWidth="1.4" /><path fill="currentColor" d="M6.8 6.1v3.8L10 8z" /></svg>,
+  // (chatfarm2) the farm pane's
+  stop: <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1.2" fill="currentColor" /></svg>,
+  cloud: <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12.5h7a2.8 2.8 0 0 0 .4-5.57A4 4 0 0 0 4.2 6.1 3.2 3.2 0 0 0 4.5 12.5z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /></svg>,
+  info: <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M8 7.2v3.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /><circle cx="8" cy="5.1" r=".85" fill="currentColor" /></svg>,
   back: <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" d="M10 3.5 5.5 8l4.5 4.5" /></svg>,
   close: <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" d="m4 4 8 8M12 4l-8 8" /></svg>,
   chat: <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" d="M2.5 4.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v4.5a2 2 0 0 1-2 2H7l-3 2.5v-2.5h0a1.5 1.5 0 0 1-1.5-1.5z" /></svg>,
@@ -722,6 +737,22 @@ function OpenInAppDialog({ title, direct, onSave, onClose }) {
 
 export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   const playerRef = useRef(null);
+  // (0.5.5) the page is up (`page.ready`) a moment before its player: the engine's GPU device and the project's first load (measured
+  // 0.1–0.6 s on this Mac; longer on a cold pod, where 0.5.4's pod-serve called renderVideo into the null player). Everything that
+  // draws or renders waits for the player here, with a limit and the engine's own reason when it cannot start.
+  const [playerUp, setPlayerUp] = useState(false);
+  const playerError = useRef(null);
+  const onPlayerState = useCallback(({ ready, error }) => { playerError.current = error || null; setPlayerUp(!!ready); }, []);
+  const needPlayer = useCallback(async (ms = PLAYER_WAIT_MS) => {
+    for (const t0 = Date.now(); !playerRef.current;) {
+      if (playerError.current) throw Object.assign(new Error(`The player did not start: ${playerError.current}`), { code: 'player' });
+      if (Date.now() - t0 > ms) throw Object.assign(new Error(`The player did not start in ${Math.round(ms / 1000)} s`), { code: 'player' });
+      await new Promise((ok) => { setTimeout(ok, 50); });
+    }
+    return playerRef.current;
+  }, []);
+  // (smallfix) the warm-ups' `settle` (renderWarmup): React committed and the engine has the project, instead of four fixed paints
+  const settle = useMemo(() => engineSettle(() => playerRef.current), []);
   const viewRef = useRef(null);
   const frameRef = useRef(null);
   const abortRef = useRef(null);
@@ -739,6 +770,11 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   const [pane, setPane] = useState('options');   // 'options' | 'render'
   const [render, setRender] = useState(null);    // { progress, phase } while rendering
   const [notice, setNotice] = useState(null);    // { text, tone }
+  const [capAsked, setCapAsked] = useState(null);   // (motion3d) the Final cost a Render press was warned about: pressed again, it renders
+  const farmHost = useFarm();   // (chatfarm2) a host's GPU farm (GreenLightMotion.setRenderFarm), or null
+  const renderAtRef = useRef(0);   // (chatfarm2) when the Render pane's render started
+  // (chatswitch) the viewer's Draft | Final for the film's 3D Scenes (page.world3d.set, the studio's switch); null = the film's own
+  const [worldMode, setWorldMode] = useState(null);
   const [missing, setMissing] = useState([]);
   // the viewer's own changes (./pageEdits.js): a layer's values, a replaced picture, where layers sit
   const [selectedId, setSelectedId] = useState(null);
@@ -795,7 +831,11 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   const valued = useMemo(() => (base ? applyTemplateValues(applyItemEdits(base, itemEdits, clipEdits), values, template) : null),
     [base, itemEdits, clipEdits, values, template]);
   const settled = useMemo(() => applyTiming(applyItemEdits(valued, structEdits, null), timing), [valued, structEdits, timing]);
-  const project = useMemo(() => (dragTiming ? applyTiming(settled, dragTiming) : settled), [settled, dragTiming]);
+  const edited = useMemo(() => (dragTiming ? applyTiming(settled, dragTiming) : settled), [settled, dragTiming]);
+  // (chatswitch) what the page plays, renders, draws as stills and critiques: the film with its 3D Scenes in the switch's mode (the same
+  // object with no switch set, or with no Scene)
+  const ownWorld = useMemo(() => filmWorldMode(edited), [edited]);
+  const project = useMemo(() => withWorldMode(edited, worldMode), [edited, worldMode]);
   // what the Player plays and renders: the project with the page's mix (the same object at 100 % with effects on)
   const mixed = useMemo(() => mixProject(project, { volume, sfx }), [project, volume, sfx]);
   // Playback speed, measured as it plays (the engine reports each painted frame's gap): the slow seconds show as the
@@ -871,6 +911,28 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [size.w, size.h, hasProject]);
+
+  // (chatswitch) Final on the switch: the app's own Final 3D in the preview (world3dLayer setWorldFinal, the player bar's): playing shows
+  // Draft, and on pause the frame path traces in place (not while playing or rendering, nor right after a seek or an edit: it comes back
+  // once they settle), with the Scene's own render settings, so the paused picture is the frame Render MP4 makes. Set once the world is
+  // there (its trace settings go on the world itself). Draft, or no switch set: nothing here, the preview as before.
+  const traceKey = useMemo(() => { const r = sceneRender(edited); return r ? JSON.stringify(worldTraceOptions(r, normalizeRigRender)) : ''; }, [edited]);
+  useEffect(() => {
+    if (worldMode !== 'final' || !ownWorld) return undefined;
+    let timer = 0, used = null;
+    const apply = () => {
+      const inner = playerRef.current?.engine?.engine;
+      if (!inner || !worldInUse()) { timer = setTimeout(apply, 120); return; }
+      used = inner;
+      setWorldFinal(inner, true, traceKey ? JSON.parse(traceKey) : undefined);
+    };
+    apply();
+    return () => {
+      clearTimeout(timer);
+      // back to Draft; a page going away (a rebuild mounts the next one) draws nothing more with its engine
+      if (used) setWorldFinal(playerRef.current?.engine?.engine === used ? used : {}, false);
+    };
+  }, [worldMode, ownWorld, traceKey]);
 
   const seek = useCallback((t) => {
     setPlayingState(false);
@@ -1100,7 +1162,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   // review notes: marks on the paused frame, each with the viewer's words (./useReview.js)
   const capture = useCallback(async (t) => {
     if (!project || !playerRef.current) return null;
-    await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: { start: t, end: t + 1e-3 } });
+    await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: { start: t, end: t + 1e-3 }, settle });
     return playerRef.current?.captureFrameAtTime(Math.max(0, t));
   }, [project]);
   const review = useReview({
@@ -1159,8 +1221,9 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   // changes written in, pictures picked here added to the files.
   const exportProject = useCallback(async () => {
     const changed = applyTemplateValues(applyItemEdits(applyItemEdits(applyTiming(source, timing), structEdits, null), itemEdits, clipEdits), values, source?.template);
-    return bakeForExport(changed, assets);
-  }, [source, timing, structEdits, itemEdits, clipEdits, values, assets]);
+    // (chatswitch) the switch's Draft | Final goes with it (a version sent from the page, a .glvideo, a rebuild of the page)
+    return bakeForExport(withWorldMode(changed, worldMode), assets);
+  }, [source, timing, structEdits, itemEdits, clipEdits, values, assets, worldMode]);
   const saveForApp = useCallback(async () => {
     const { project: p, assets: a } = await exportProject();
     const name = `${slug(title)}.glvideo`;
@@ -1172,13 +1235,22 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     const player = playerRef.current;
     if (!player || render) return;
     if (!player.isWebCodecsSupported?.()) { setNotice({ text: 'This browser cannot encode video. Try Chrome or Edge.', tone: 'bad' }); return; }
+    // (motion3d) over the host's Final cap: the first press says what it costs, the second renders
+    const capped = checkFinalCap(project, { fps });
+    if (capped?.over && capAsked !== capped.cost) {
+      setCapAsked(capped.cost);
+      setNotice({ text: `${capped.text} Press Render again to render it anyway.`, tone: 'bad' });
+      return;
+    }
+    setCapAsked(null);
     setPlayingState(false);
     setNotice(null);
     const abort = new AbortController();
     abortRef.current = abort;
+    renderAtRef.current = Date.now();   // (chatfarm2) the render's own pace says whether it is a long one (the busy note)
     setRender({ progress: 0, phase: 'Preparing' });
     try {
-      await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: null });
+      await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: null, settle });
       setRender({ progress: 0, phase: 'Rendering' });
       const res = await player.exportVideo('mp4', (p) => setRender({ progress: p, phase: 'Rendering' }), abort.signal, fps);
       if (!res?.blob) throw new Error('the render produced no file');
@@ -1211,6 +1283,9 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     if (!window.GreenLightMotion || !project) return undefined;
     window.GreenLightMotion.page = {
       ready: true,
+      // (0.5.5) the player can draw and render now; whenPlayer(ms) waits for it (true), or throws the engine's reason / the limit
+      player: playerUp,
+      whenPlayer: (ms) => needPlayer(ms).then(() => true),
       duration,
       layers: () => rows.flatMap((r) => r.layers.map((l) => ({ ...l }))),
       values: () => ({ ...values }),
@@ -1257,20 +1332,72 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
       pause: () => setPlayingState(false),
       seek,
       // A whole render without the UI (the CLI's `render`): base64 MP4, so a headless driver can read it.
-      renderVideo: async ({ fps: f = 30, motionBlur: mb = false, volume: v, sfx: x, onProgress = noop } = {}) => {
+      // (motion3d) `confirmLongFinal`: a Final 3D render over the host's cap (setFinalCap) renders only when asked for by name
+      // (chatfarm2) `range: { start, end }` (seconds) renders only those frames — one part of a render shared by several machines (the
+      // exporter's own partial render: frames at film time, the file's clock from 0); `audio: false` leaves the sound out (the page that
+      // joins the parts puts the film's one sound under them: renderAudio). `elsewhere: true` = not this computer's GPU (a farm): the
+      // host's Final cap is about this computer, so it does not apply.
+      renderVideo: async ({ fps: f = 30, motionBlur: mb = false, volume: v, sfx: x, onProgress = noop, confirmLongFinal = false, range = null, audio = true, elsewhere = false } = {}) => {
+        const capped = elsewhere ? null : checkFinalCap(project, { fps: Number(f) || 30 });
+        if (capped?.over && !confirmLongFinal) {
+          const e = new Error(`${capped.text} To render it anyway, pass confirmLongFinal: true.`);
+          e.code = 'final-cap';
+          e.cap = capped;
+          throw e;
+        }
         setPlayingState(false);
         setMotionBlur(Boolean(mb));
         if (v !== undefined) setVolume(Math.max(0, Math.min(100, Number(v) || 0)));
         if (x !== undefined) setSfx(x !== false);
-        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-        await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: null });
-        const res = await playerRef.current.exportVideo('mp4', onProgress, undefined, Number(f) || 30);
+        // those settings committed and handed to the engine (was one fixed paint)
+        await settle();
+        await needPlayer();
+        await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: null, settle });
+        const part = range && Number.isFinite(Number(range.end)) ? { start: Number(range.start) || 0, end: Number(range.end) } : null;
+        const res = await (await needPlayer()).exportVideo('mp4', onProgress, undefined, Number(f) || 30, null, null, part, audio === false ? { noAudio: true } : null);
         if (!res?.blob) throw new Error('the render produced no file');
         const b64 = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = no; r.readAsDataURL(res.blob); });
-        return { base64: b64, size: res.blob.size, fps: Number(f) || 30, motionBlur: Boolean(mb), volume: v ?? volume, sfx: x ?? sfx };
+        // (badframes) the frames the frame guard drew again, by reason (frameGuard.js): the file is whole, the render says so
+        return { base64: b64, size: res.blob.size, fps: Number(f) || 30, motionBlur: Boolean(mb), volume: v ?? volume, sfx: x ?? sfx,
+          ...(res.frameGuard ? { frameGuard: res.frameGuard } : {}) };
+      },
+      // (chatfarm2) the film's sound alone, as an audio-only MP4 (AAC + its priming edit list): what joinParts puts under parts rendered
+      // elsewhere. Seconds of this computer's time, no frame drawn. { base64, size } or null (no sound in the film, or no AAC here)
+      renderAudio: async ({ volume: v, sfx: x, onProgress = noop, codec = null } = {}) => {
+        if (v !== undefined) setVolume(Math.max(0, Math.min(100, Number(v) || 0)));
+        if (x !== undefined) setSfx(x !== false);
+        await needPlayer();
+        await settle();
+        const res = await (await needPlayer()).exportVideo('mp4', onProgress, undefined, 30, null, null, null, { audioOnly: true, ...(codec ? { audioCodec: codec } : {}) });
+        if (!res?.blob) return null;
+        const b64 = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = no; r.readAsDataURL(res.blob); });
+        return { base64: b64, size: res.blob.size };
+      },
+      // (chatswitch) the film's 3D Scenes, Draft or Final: `own` the film's (its Scenes' render.mode), `mode` what the page plays, renders,
+      // draws as stills and critiques (set(): the switch's, once set; null = the film's own again). `status()`: the paused preview's
+      // trace under Final ({ done, spp, target, seconds } or null); `watchLoad(fn)`: the world loading or Final starting ({ stage } or null)
+      world3d: {
+        has: !!ownWorld,
+        own: ownWorld,
+        mode: ownWorld ? (worldMode || ownWorld) : null,
+        set: (m) => { if (m === null || m === 'draft' || m === 'final') setWorldMode(m); },
+        status: () => worldStatus(),
+        watchLoad: (fn) => watchWorldLoad(fn),
+        rendering: () => !!playerRef.current?.engine?.engine?.exporting,   // an MP4 under way: its mode stays as it started
+      },
+      // a 3D Scene's critique of the frame at t (motionEngine/critique.js): what the shot shows, the lights, the picture's numbers, hints.
+      // `png`: the frame at t this page has JUST drawn (renderFrame(t) as its last frame), so a Final frame is not traced twice
+      critique: async (t, { objects = null, png: drawn = null } = {}) => {
+        const time = Math.max(0, Number(t) || 0);
+        if (!(typeof drawn === 'string' && drawn.startsWith('data:image/'))) await needPlayer();
+        await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: { start: time, end: time + 1e-3 }, settle });
+        const png = typeof drawn === 'string' && drawn.startsWith('data:image/') ? drawn : await playerRef.current?.captureFrameAtTime(time);
+        if (!png) throw new Error('the frame could not be drawn');
+        return critiqueFrame(png, { project, objects, time });
       },
       renderFrame: async (t) => {
-        await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: { start: t, end: t + 1e-3 } });
+        await needPlayer();
+        await waitForMediaReady({ channels: project.channels, clips: project.clips, getPlayer: () => playerRef.current, range: { start: t, end: t + 1e-3 }, settle });
         // A phone keeps no scene it left: a video inside one has only just been asked for this time. It lands by the second look.
         if (phoneMode()) { await playerRef.current?.captureFrameAtTime(Math.max(0, Number(t) || 0)); await new Promise((r) => setTimeout(r, 400)); }
         return playerRef.current?.captureFrameAtTime(Math.max(0, Number(t) || 0));
@@ -1329,6 +1456,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
               textVariables={project.textVariables || []}
               timecodeFps={fps}
               renderCache={slowMeter}
+              onState={onPlayerState}
             />
             {cacheHold && <img className="glm-hold" src={cacheHold} alt="" />}
             <div className="glm-pick" onPointerDown={onPreviewDown} aria-hidden="true" />
@@ -1414,34 +1542,60 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
           </div>
 
           <section className="glm-deliver" id="glm-render-pane" aria-labelledby="glm-h-render" inert={!isRender}>
-            <div className="glm-dhead">
-              <button type="button" className="glm-icon" onClick={() => setPane('options')} aria-label="Back to Options" title="Back (Esc)" disabled={!!render}>{Icon.back}</button>
-              <div><h2 id="glm-h-render">Render</h2><p>An MP4 of the whole video, saved to your computer.</p></div>
-              <kbd>Esc</kbd>
-            </div>
-            <div className="glm-dbody">
-              <section className="glm-sec">
-                <h3 className="glm-h">Frame rate <span>{size.w}×{size.h} · {seconds(duration)}</span></h3>
-                <div className="glm-fmts" role="group" aria-label="Frame rate">
-                  {[[30, 'Plays anywhere'], [60, 'Smoother motion']].map(([f, sub]) => (
-                    <button key={f} type="button" aria-pressed={fps === f} disabled={!!render} onClick={() => setFps(f)}><b>{f} fps</b><span>{sub}</span></button>
-                  ))}
-                </div>
-                <label className="glm-toggle"><b>Motion blur</b><small>Smoother fast moves, slower render</small>
-                  <input type="checkbox" checked={motionBlur} disabled={!!render} onChange={(e) => setMotionBlur(e.target.checked)} /><u aria-hidden="true" />
-                </label>
-                {render ? (
-                  <div className="glm-progress" role="status">
-                    <div className="glm-pbar"><span style={{ transform: `scaleX(${render.progress})` }} /></div>
-                    <div className="glm-prow"><span>{render.phase} · {Math.round(render.progress * 100)}%</span>
-                      <button type="button" className="glm-btn" onClick={() => abortRef.current?.abort()}>Stop</button></div>
+            {/* (chatfarm2) with a host's GPU farm (the chat page's RunPod) and a long render here: where to render (FarmPane) */}
+            {(() => {
+              const plain = ({ estimate, probing, farm, busyNote } = {}) => (
+                <>
+                  <div className="glm-dhead">
+                    <button type="button" className="glm-icon" onClick={() => setPane('options')} aria-label="Back to Options" title="Back (Esc)" disabled={!!render}>{Icon.back}</button>
+                    <div><h2 id="glm-h-render">{farm ? farm.head.title : 'Render'}</h2><p>{farm ? farm.head.sub : 'An MP4 of the whole video, saved to your computer.'}</p></div>
+                    {farm?.info && <button type="button" className="glm-icon cf-info" onClick={farm.info} aria-label="How it works" title="How it works">{Icon.info}</button>}
+                    <kbd>Esc</kbd>
                   </div>
-                ) : (
-                  <button type="button" className="glm-go" onClick={startRender}>{Icon.film}Render MP4</button>
-                )}
-                {notice && isRender && <p className={`glm-status is-${notice.tone || 'plain'}`} role="status">{notice.text}</p>}
-              </section>
-            </div>
+                  <div className="glm-dbody">
+                    {farm ? farm.body : (
+                      <section className="glm-sec">
+                        <h3 className="glm-h">Frame rate <span>{size.w}×{size.h} · {seconds(duration)}{probing ? ' · measuring' : estimate ? ` · ${estimate.sec < 60 ? `≈ ${Math.max(1, Math.round(estimate.sec))} s` : `≈ ${Math.round(estimate.sec / 60)} min`} here` : ''}</span></h3>
+                        <div className="glm-fmts" role="group" aria-label="Frame rate">
+                          {[[30, 'Plays anywhere'], [60, 'Smoother motion']].map(([f, sub]) => (
+                            <button key={f} type="button" aria-pressed={fps === f} disabled={!!render} onClick={() => setFps(f)}><b>{f} fps</b><span>{sub}</span></button>
+                          ))}
+                        </div>
+                        <label className="glm-toggle"><b>Motion blur</b><small>Smoother fast moves, slower render</small>
+                          <input type="checkbox" checked={motionBlur} disabled={!!render} onChange={(e) => setMotionBlur(e.target.checked)} /><u aria-hidden="true" />
+                        </label>
+                        {render ? (
+                          <div className="glm-progress" role="status">
+                            <div className="glm-pbar"><span style={{ transform: `scaleX(${render.progress})` }} /></div>
+                            <div className="glm-prow"><span>{render.phase} · {Math.round(render.progress * 100)}%</span>
+                              <button type="button" className="glm-btn" onClick={() => abortRef.current?.abort()}>Stop</button></div>
+                          </div>
+                        ) : (
+                          <button type="button" className="glm-go" onClick={startRender}>{Icon.film}Render MP4</button>
+                        )}
+                        {/* (chatfarm2) a long render here says the computer stays busy: before (the pane's probe) and while it runs (the probe, or
+                            the render's own pace when no farm host measured it) */}
+                        {!render && estimate && estimate.sec >= 120 && <p className="glm-status cf-amber" role="status"><i className="cf-dot is-warn" />This computer stays busy {estimate.sec < 3600 ? `≈ ${Math.round(estimate.sec / 60)} min` : `≈ ${Math.floor(estimate.sec / 3600)} h ${Math.round((estimate.sec % 3600) / 60)} min`}</p>}
+                        {render && (busyNote || (render.progress > 0.02 && renderAtRef.current && (Date.now() - renderAtRef.current) / render.progress >= 120000)) && <p className="glm-status cf-amber" role="status"><i className="cf-dot is-warn" />Computer busy · keep this chat open</p>}
+                        {notice && isRender && <p className={`glm-status is-${notice.tone || 'plain'}`} role="status">{notice.text}</p>}
+                      </section>
+                    )}
+                  </div>
+                </>
+              );
+              if (!isRender || !farmHost) return plain();
+              const fr = Math.round(duration * fps);
+              const sr = sceneRender(project) || {};
+              return (
+                <FarmPane project={project} frames={fr} fps={fps} mode={filmWorldMode(project) || null} spp={Number(sr.spp) || 64} pixels={size.w * size.h} title={title}
+                  full={farmHost.full?.() ?? false} probe={async (t) => (await needPlayer()).captureFrameAtTime(Math.max(0, t))} renderHere={startRender} here={!!render} hereProgress={render?.progress} stopHere={() => abortRef.current?.abort()}
+                  exportProject={exportProject} saveFile={saveFile}
+                  renderAudio={async () => { const res = await (await needPlayer()).exportVideo('mp4', noop, undefined, fps, null, null, null, { audioOnly: true }); return res?.blob ? new Uint8Array(await res.blob.arrayBuffer()) : null; }}
+                  icons={{ film: Icon.film, stop: Icon.stop, cloud: Icon.cloud, info: Icon.info }}>
+                  {plain}
+                </FarmPane>
+              );
+            })()}
           </section>
         </div>
       </aside>

@@ -30,8 +30,9 @@ import { getItemKeyframeValues, itemHasKeyframes, evaluatePathTrack } from '../g
 import { MOTION_PATH_KF_KEY } from '../objectMotionPath';
 import { posterizedLayerTime } from '../posterizeTime';
 import { htmlLiveBeginFrame } from '../htmlLive';
+import { setLiveLayerFrame } from '../liveLayers';
 import { setKeyframeFxScene } from '../keyframeFx';
-import { applyParenting, localPrs } from '../keyframeParenting';
+import { applyParenting, localPrs, resolveParentTransform } from '../keyframeParenting';
 import { isLayerMaskEnabled } from '../layerMask';
 import { isMeshWarpEnabled } from '../meshWarp';
 import { isMockupFrameActive } from '../mockupFrame';
@@ -47,8 +48,10 @@ import { isRepetileEnabled } from '../repetileLayer';
 import { isCameraBaked3dPlate, isDepthPlate, isWorld3dLayer, resolveRigAt, RIG_MEDIA_TYPE, rigDrawsBackdrop } from '../rig3d';
 import { isRigEnabled } from '../rigDeform';
 import { isRunningGlowEnabled } from '../runningGlow';
-import { getTrackMatte } from '../trackMatte';
+import { getTrackMatte, worldMaskKey } from '../trackMatte';
 import { releaseIdleTransitionCaptures } from '../transitionPackageRuntime';
+import { finishWorldFrame, isWorldRig, textKeepsOwnPass, worldClaySource, worldViewShotFov } from '../world3dLayer';
+import { isText3dLayer } from '../text3d';
 import { renderAdjustmentComposite as renderAdjustmentCompositeInEngine, setLayerDepthMode as setLayerDepthModeInEngine } from './adjustmentComposite';
 import { repaintAnimatedBackground } from './background';
 import { poseEngineCamera } from './camera';
@@ -96,19 +99,30 @@ export function renderFrame(engine, env) {
   // pass reuses them. A comp with a cyclorama and four models is five passes;
   // without this it would be five full shadow renders for one frame.
   engine.frameToken += 1;
+  // (stilltime2) On WebGPU a composited frame is a frame of three's own too: three poses a skinned model's bones, draws a shadow map
+  // again and updates a light once per frame of its animation loop, which ticks once per browser frame, and an export composites
+  // several frames in one (WebGL does these per render).
+  const nodeFrame = renderer._nodes?.nodeFrame;
+  if (nodeFrame) nodeFrame.frameId += 1;
   // Animated project background (shader / animated gradient): repaint the
   // rasterization canvas from the current playhead time before compositing.
   repaintAnimatedBackground(engine);
   // Playhead moved while paused → this is a scrub: thin the geometry plates for
   // the duration of the drag, and schedule the one full-quality repaint.
+  // `burst`: this move came before the previous one settled — a drag or a held
+  // arrow key, whose videos keep their scrub thresholds; a move after a rest (a
+  // step, a click) and the settle repaint land each video on its frame
+  // (getPreviewVideoSeekPolicy `onFrame`).
   {
     const sc = engine.scrubPlate;
     const now = performance.now();
     const t = engine.currentTime;
     if (engine.isPlaying || engine.exporting) {
       sc.active = false;
+      sc.burst = false;
       sc.t = t;
     } else if (Math.abs(t - sc.t) > 1e-4) {
+      sc.burst = sc.active;
       sc.t = t;
       sc.at = now;
       sc.active = true;
@@ -116,12 +130,15 @@ export function renderFrame(engine, env) {
       sc.timer = setTimeout(() => {
         sc.timer = null;
         sc.active = false;
+        sc.burst = false;
         if (!engine.isPlaying && !engine.exporting) engine.renderFrame?.();
       }, env.SCRUB_SETTLE_MS);
     }
   }
   const frameStart = performance.now();
   env.ensureChannelStates();
+  // 3D surfaces that show a layer of this timeline find it here (liveLayers.js).
+  setLiveLayerFrame(engine, env);
   // Publish this frame's clock and layer table for ƒx Custom expressions:
   // `time`/`frame` need the project clock and fps, and layer("Name").prop needs
   // every other layer's placement. Set here rather than in the evaluator so the
@@ -161,6 +178,8 @@ export function renderFrame(engine, env) {
     // shared shadow map (channelRender.prePoseWorldModels).
     prePoseWorldModels(engine, env, engine.currentTime);
     for (const channel of env.channels) renderChannelInEngine(engine, env, channel, engine.currentTime);
+    // A Scene frame with 3D Text in it is posed and drawn now, with the letters every channel laid out (world3dLayer.js).
+    if (engine.worldTakesText) finishWorldFrame(engine);
   } finally {
     engine.rcMediaOnly = false;
   }
@@ -243,8 +262,16 @@ export function renderFrame(engine, env) {
       const item = channel.items[ai];
       const entry = layout[ai];
       const span = Math.max(1e-6, entry.endTime - entry.startTime);
-      const parentXform = resolveParentingInEngine(engine, env.parentIndex, item, t);
+      // (enginebugs2) a solid layer a world Scene stands in its world (a model, 3D Text it takes) turns as the Scene's objects do: the
+      // gizmo writes its turn back in that sense (worldView.js), and a child's drag is undone through its parent's turn in that sense
+      const layerClip = env.clipsMap.get(item?.clipId);
+      const sceneTurn = !!engine.worldScene && !channel.cameraLocked
+        && (layerClip?.mediaType === 'model3d' || (isText3dLayer(item, layerClip) && !textKeepsOwnPass(item)));
+      const parentXform = sceneTurn
+        ? resolveParentTransform(env.parentIndex, item, t, { W: engine.videoSize.w, H: engine.videoSize.h, evalKeyframes: getItemKeyframeValues, sceneTurn })
+        : resolveParentingInEngine(engine, env.parentIndex, item, t);
       layers.push({
+        sceneTurn,
         itemId: item.id,
         channelId: channel.id,
         item,
@@ -347,14 +374,17 @@ export function renderFrame(engine, env) {
       if (!isCameraBaked3dPlate(lClip, l.item) || lClip?.mediaType === 'model3d') continue;
       if (lClip?.mediaType === RIG_MEDIA_TYPE) continue;
       liveModels.add(l.itemId);
-      const object = mod3d?.getPlateObject?.(l.itemId) || null;
+      // (enginebugs2) 3D Text lends its letters as a model lends its geometry (its 3D pass poses them where the world stands them):
+      // the gizmo and the selection box sit on the letters and turn with them, not on the frame-sized quad at the centre
+      const text3d = isText3dLayer(l.item, lClip);
+      const object = (text3d ? mod3d?.getText3dObject?.(l.itemId) : mod3d?.getPlateObject?.(l.itemId)) || null;
       const held = engine.worldModels.get(l.itemId);
       if (held && held.object !== object) {
         try { held.detach(); } catch { /* already home */ }
         engine.worldModels.delete(l.itemId);
       }
       if (object && mod3d && worldScene && !engine.worldModels.has(l.itemId)) {
-        const detach = mod3d.attachPlateToScene?.(l.itemId, worldScene);
+        const detach = text3d ? mod3d.attachText3dToScene?.(l.itemId, worldScene) : mod3d.attachPlateToScene?.(l.itemId, worldScene);
         if (detach) engine.worldModels.set(l.itemId, { detach, object });
       }
       if (object) l.worldObject = object;
@@ -380,6 +410,16 @@ export function renderFrame(engine, env) {
       if (mod3d) l.worldObject = object;
       if (l.mesh?.visible) { l.mesh.visible = false; hidden.push(l.mesh); }
       liveModels.add(l.itemId);
+    }
+    // (bugsB) A Scene the world renderer draws (`renderer: "world"`) showed nothing here: its objects live in the world's own renderer,
+    // which films only through the shot's camera, and its layer draws no quad in this view. The view shows them as untextured clay
+    // (WorldView.setWorldClay over world3dLayer.js worldClaySource), placed as the shot sees them, and the Camera layer's frustum takes the
+    // shot's own field of view.
+    {
+      const sceneRig = engine.activeRigAt(t);
+      const worldRig = isWorldRig(sceneRig);
+      worldView.setWorldClay?.(worldRig ? worldClaySource(engine, sceneRig, t) : null);
+      worldView.setShotFov?.(worldRig ? worldViewShotFov(sceneRig) : null);
     }
     // A Solver Box is lent the same way, and for the same reason: as an ordinary
     // layer it showed up here as its particles painted flat on a full-frame quad
@@ -634,6 +674,11 @@ export function renderFrame(engine, env) {
     } else {
       layerItems.set(channel.id, item);
       if (isShaderBlendMode(item?.blendMode)) shaderBlendLayers.set(channel.id, item.blendMode);
+      // (hdr3) an HDR render's float composite (../hdrComposite.js): multiply and screen act on the 3D Scene's light above white as light,
+      // which the GPU's blend cannot do on numbers past 1, so there they go through the blend pass too (the SDR frame keeps its GPU blend)
+      else if (engine.hdrComposite && clip?.mediaType !== 'text' && (item?.blendMode === 'multiply' || item?.blendMode === 'screen')) {
+        shaderBlendLayers.set(channel.id, item.blendMode);
+      }
       // Every per-layer collector below skips an item whose stack already baked
       // into its plate in preparePreTransitionOverlayEffects — the check is
       // load-bearing, exactly as it is for the mask: collecting it again would
@@ -731,7 +776,7 @@ export function renderFrame(engine, env) {
       }
       // On a model, entries that render in 3D are not the flat chain's
       // (withFlatEffects returns the same item for everything else).
-      const flatItem = withFlatEffects(item, clip);
+      const flatItem = withFlatEffects(item, clip, engine.worldScene);
       if (hasActiveLayerOverlayEffects(flatItem, overlayLiveAt(flatItem, layout[ai])) && !engine.preTransitionFxItemIds.has(item.id)) {
         // `clip` rides along for Neon Glow's outline bake: the path SOURCE is
         // decided by the clip's media type (shape path / traced text canvas /
@@ -778,11 +823,14 @@ export function renderFrame(engine, env) {
     const srcEntry = env.parentIndex.get(matte.sourceId);
     const srcActive = !!srcEntry && srcEntry.channelId !== channelId
       && layerItems.get(srcEntry.channelId)?.id === matte.sourceId;
+    // (octane2) a world matte reads the 3D Scene's masks of some of its objects (world3dLayer.js); the Scene stays in the picture
+    const worldMask = worldMaskKey(matte);
     trackMatteLayers.set(channelId, {
       mode: matte.mode,
       sourceChannelId: srcActive ? srcEntry.channelId : null,
+      ...(worldMask ? { worldMask } : {}),
     });
-    if (srcActive) matteSourceChannels.set(srcEntry.channelId, matte.sourceId);
+    if (srcActive && !worldMask) matteSourceChannels.set(srcEntry.channelId, matte.sourceId);
   }
 
   // Copy Color Profile: which layers are referenced by an Overlay Effect this

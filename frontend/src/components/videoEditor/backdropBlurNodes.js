@@ -66,7 +66,9 @@ export function createBackdropBlurNodeMaterial() {
   return finish(material, u);
 }
 
-export function createBackdropMixNodeMaterial({ flipMatte = false } = {}) {
+/** (hdr3) `hdr`: an HDR render's float composite (hdrComposite.js) — the blurred stack keeps the 3D Scene's light above white (the clamp's
+ *  top lifted); below white the mix is the SDR one. */
+export function createBackdropMixNodeMaterial({ flipMatte = false, hdr = false } = {}) {
   const u = {
     uTexture: makeSampler(),
     uBlur: makeSampler(),
@@ -82,7 +84,7 @@ export function createBackdropMixNodeMaterial({ flipMatte = false } = {}) {
     const m = clamp(u.uMatte.sample(uv).a.div(u.uAlphaRef), 0.0, 1.0);
     const b = u.uBlur.sample(uv).toVar();
     const l = dot(b.rgb, vec3(0.2126, 0.7152, 0.0722));
-    const rgb = clamp(mix(vec3(l), b.rgb, u.uSaturation), vec3(0.0), vec3(b.a));
+    const rgb = hdr ? tslMax(mix(vec3(l), b.rgb, u.uSaturation), vec3(0.0)) : clamp(mix(vec3(l), b.rgb, u.uSaturation), vec3(0.0), vec3(b.a));
     return mix(src, vec4(rgb, b.a), m);
   })();
   return finish(material, u);

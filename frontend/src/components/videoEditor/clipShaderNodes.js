@@ -92,6 +92,9 @@ function buildClipNodes() {
   const uGrayscale = uniform(0.0);
   const uSepia = uniform(0.0);
   const uInvert = uniform(0.0);
+  // (hdr2) The top of the layer's colour: 1 (display white) for every picture, raised only while an HDR render composites in float and this
+  // layer shows the 3D Scene's own light (hdrComposite.js, set by layerMesh.js from the plate it binds).
+  const uRgbMax = uniform(1.0);
   // Color Correction — names and defaults as clipShader.js createColorCorrectionUniforms.
   const uCcCtl = uniform(new THREE.Vector4(0, -1, 0, 0));
   const uCcGain = uniform(new THREE.Vector3(1, 1, 1));
@@ -952,7 +955,7 @@ function buildClipNodes() {
       If(uFlashAmount.greaterThan(0.001), () => {                                // flash
         color.rgb.assign(mix(color.rgb, uFlashColor, uFlashAmount));
       });
-      color.rgb.assign(clamp(color.rgb, 0.0, 1.0));
+      color.rgb.assign(clamp(color.rgb, 0.0, uRgbMax));
       color.a.mulAssign(uOpacity);
 
       If(hasFraming, () => {
@@ -1037,7 +1040,7 @@ function buildClipNodes() {
   });
 
   const uniforms = {
-    uTexture, uDepthMap, uOpacity, uBlendCustom, uBlendIdentity,
+    uTexture, uDepthMap, uOpacity, uBlendCustom, uBlendIdentity, uRgbMax,
     uBrightness, uContrast, uSaturation, uHueRotate,
     uGrayscale, uSepia, uInvert, uBlur, uZoomBlur, uZoomCenter, uMoveBlur, uRgbSplit, uSplitMove,
     uCcCtl, uCcGain, uCcTone, uCcTone2, uCcFlags, uCcLvInB, uCcLvInW, uCcLvGam, uCcLvOutB, uCcLvOutW,

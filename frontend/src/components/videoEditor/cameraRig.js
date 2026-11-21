@@ -23,6 +23,8 @@
  * subject at the origin.
  */
 
+import { sanitizeCameraRef } from './cameraTargets.js';
+
 const D2R = Math.PI / 180;
 
 // 'smartZoom' is the Zoom tab (smartZoomCamera.js): zoom ranges on the camera layer, automatic from a screen
@@ -120,6 +122,10 @@ export function normalizeCameraRig(raw) {
   out.targets = Array.isArray(source.targets)
     ? source.targets.filter((id) => typeof id === 'string' && id).slice(0, 50)
     : [];
+  // (camlayer) what every type is built round instead of the comp centre: a 3D Scene object ("@<id>"), a layer (its item id) or a point
+  // { x, y, z } (world px); it moves the whole move with it. Absent: the comp centre (the world's origin), as before.
+  const center = sanitizeCameraRef(source.center);
+  if (center) out.center = center;
   return out;
 }
 
@@ -237,7 +243,7 @@ function rigPosition(r, t, c) {
     case 'dolly': {
       const a = ang(r.startAngle);
       const d = r.radius + r.distance * (1 - t);
-      pos = { x: Math.sin(a) * d, y: -r.height, z: Math.cos(a) * d };
+      pos = { x: c.x + Math.sin(a) * d, y: c.y - r.height, z: c.z + Math.cos(a) * d };
       break;
     }
     case 'pushIn': {
@@ -246,7 +252,7 @@ function rigPosition(r, t, c) {
       const a = ang(r.startAngle);
       const e = 1 - (1 - t) ** 3;
       const d = r.radius + r.distance * (1 - e);
-      pos = { x: Math.sin(a) * d, y: -r.height, z: Math.cos(a) * d };
+      pos = { x: c.x + Math.sin(a) * d, y: c.y - r.height, z: c.z + Math.cos(a) * d };
       break;
     }
     case 'truck': {
@@ -254,43 +260,52 @@ function rigPosition(r, t, c) {
       const a = ang(r.startAngle);
       const off = r.distance * (t - 0.5);
       pos = {
-        x: Math.sin(a) * r.radius + Math.cos(a) * off,
-        y: -r.height,
-        z: Math.cos(a) * r.radius - Math.sin(a) * off,
+        x: c.x + Math.sin(a) * r.radius + Math.cos(a) * off,
+        y: c.y - r.height,
+        z: c.z + Math.cos(a) * r.radius - Math.sin(a) * off,
       };
       break;
     }
     case 'crane': {
       const a = ang(r.startAngle + r.sweep * t);
-      pos = { x: Math.sin(a) * r.radius, y: -(r.height + r.rise * t), z: Math.cos(a) * r.radius };
+      pos = { x: c.x + Math.sin(a) * r.radius, y: c.y - (r.height + r.rise * t), z: c.z + Math.cos(a) * r.radius };
       break;
     }
     case 'spiral': {
       const a = ang(r.startAngle + r.sweep * r.turns * t);
       const rad = r.radius * (1 - 0.35 * t);
-      pos = { x: Math.sin(a) * rad, y: -(r.height + r.rise * t), z: Math.cos(a) * rad };
+      pos = { x: c.x + Math.sin(a) * rad, y: c.y - (r.height + r.rise * t), z: c.z + Math.cos(a) * rad };
       break;
     }
     case 'handheld': {
       const a = ang(r.startAngle);
       const p = t * Math.max(0, r.frequency);
       pos = {
-        x: Math.sin(a) * r.radius + drift(r.seed, p) * r.amplitude,
-        y: -r.height + drift(r.seed + 51, p) * r.amplitude * 0.7,
-        z: Math.cos(a) * r.radius + drift(r.seed + 97, p) * r.amplitude * 0.5,
+        x: c.x + Math.sin(a) * r.radius + drift(r.seed, p) * r.amplitude,
+        y: c.y - r.height + drift(r.seed + 51, p) * r.amplitude * 0.7,
+        z: c.z + Math.cos(a) * r.radius + drift(r.seed + 97, p) * r.amplitude * 0.5,
       };
       break;
     }
     case 'orbit':
     default: {
       const a = ang(r.startAngle + r.sweep * t);
-      pos = { x: Math.sin(a) * r.radius, y: -r.height, z: Math.cos(a) * r.radius };
+      pos = { x: c.x + Math.sin(a) * r.radius, y: c.y - r.height, z: c.z + Math.cos(a) * r.radius };
       break;
     }
   }
 
   return pos;
 }
+
+/**
+ * (camlayer) The rig's maths above is in its own space, +Y DOWN (the file's convention, the lab's, the presets': Crane Down descends, Rise &
+ * Reveal and the Product Spiral climb, a positive Height stands above the subject). The camera's world (projectCamera.js, the 3D Scene,
+ * the 3D view) is +Y up, so every point crosses with its Y negated; the flipbook does the same (flipbookModel.js rigPointToWorld). The
+ * Camera layer took the rig's points as they were: every rig ran upside down, a positive Height filming from below.
+ */
+export const rigToWorld = (p) => (p ? { x: p.x, y: -p.y, z: p.z } : p);
+export const worldToRig = rigToWorld;
 
 /** Sampled polyline of the whole move — the 3D view draws this, and the endpoint
  *  handles are its first and last entries. */
@@ -315,7 +330,8 @@ export function cameraRigFromEndpoint(rig, which, point, ctx = null) {
   // A Follow rig lives in the followed object's frame, so the dragged world point
   // is re-based onto the same centre the evaluator adds — then the orbit solve
   // below applies unchanged.
-  if (r.type === 'follow' && ctx?.center) {
+  // (camlayer) so does a rig built round a centre of its own (`center`)
+  if ((r.type === 'follow' || r.center) && ctx?.center) {
     x -= num(ctx.center.x, 0);
     y -= num(ctx.center.y, 0);
     z -= num(ctx.center.z, 0);

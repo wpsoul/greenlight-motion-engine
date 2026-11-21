@@ -23,10 +23,18 @@ import { calculateVideoTime } from './layerHelpers';
 import { ensureVideoFrameLoop as ensureVideoFrameLoopInEngine, getClipPlaybackUrl, normalizeUrl, queueTextureDisposal as queueTextureDisposalInEngine, recordPresentedMediaTime as recordPresentedMediaTimeInEngine } from './mediaTextures';
 import { mediaActivation, PREVIEW_TIER } from './previewMedia';
 import { JUMP_HOLD, SEEKED_FRAME_GRACE_MS, mapSourceToTimeline } from './mediaHelpers';
+import { FRAME_AT_EPS_S, createLandedFrames, frameSeekTime, seekVideoFrame } from './seekFrame.js';
 
 // Buffers that already took their one start-alignment seek (resolveStartAlignment):
 // cleared when the buffer starts or changes source.
 const startRealigned = new WeakSet();
+
+// The frame callbacks of paused on-frame seeks, asked for before the seek (seekFrame.createLandedFrames).
+const landedFrames = createLandedFrames();
+// The seek time of each buffer's last on-frame seek. An element that reports a position a hair off the time it was sought to (a
+// browser with its own rounding) is not sought again for that frame: one seek per frame, never a loop of seeks at rest.
+const frameSought = new WeakMap();
+const FRAME_SOUGHT_SLACK_S = 0.002;
 
 // CATCH-UP (resolveRateTrim). Per video: { err, factor, nominal } — `err` its smoothed
 // offset from its target in timeline seconds (currentTime against the clock). Per
@@ -169,6 +177,8 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
     video.addEventListener('error', triggerRender, { once: true });
     startRealigned.delete(video);
     endRateTrim(video);
+    landedFrames.disarm(video);
+    frameSought.delete(video);
     video.load();
     changedSource = true;
     engine.pendingSeek.delete(video);
@@ -200,7 +210,13 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
   // was off, holding the last good texture between seeks and making playback jump.
   // Inactive cut buffers (`allowPlayback:false`) keep half-frame precision, and
   // deterministic export uses its decoder path rather than this preview policy.
-  const { seekThreshold, pendingTolerance } = getPreviewVideoSeekPolicy({
+  // Paused with the playhead at rest, the buffer that owns it lands ON the playhead's frame (`onFrame`): seekFrame's seek time
+  // (just past a frame boundary) and its frame callback asked for before the seek. Mid-scrub (frameRender's `burst`) the
+  // thresholds below stay as they were; the settle repaint then lands the last frame. So do they while a still is captured
+  // (`engine.exporting`): the capture seeks the element itself (seekAllVideosForTime), and a preview seek made under it (after
+  // a prime's play() moved the element) held the layer's texture back from the still's render.
+  const scrub = engine.scrubPlate;
+  const { seekThreshold, pendingTolerance, onFrame } = getPreviewVideoSeekPolicy({
     allowPlayback,
     frameAccurate,
     isPlaying: env.isPlaying,
@@ -208,8 +224,11 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
     forceMuteAudio: engine.forceMuteAudio,
     fps: env.projectFps,
     slowSeeks: isWebKitEngine && !video.paused, // a held/paused buffer seeks precisely
+    scrubbing: !!(scrub && scrub.active && scrub.burst) || !!engine.exporting,
   });
-  const seekDelta = Math.abs(video.currentTime - clampedTargetTime);
+  const frameTime = onFrame ? frameSeekTime(clampedTargetTime, hasKnownDuration ? video.duration : NaN) : clampedTargetTime;
+  let seekDelta = Math.abs(video.currentTime - frameTime);
+  if (onFrame && seekDelta < FRAME_SOUGHT_SLACK_S && frameSought.get(video) === frameTime && !video.seeking) seekDelta = 0;
   // WebKit, playing for real: learn this buffer's start-up lag from the settled
   // drift and allow ONE early correction when it is still > 0.3 s off — the
   // same rule as audio clips (audioDriftSync.js). `webkitPlaying` also routes
@@ -260,7 +279,7 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
   if ((seekDelta > seekThreshold && !alignOwnsStart) || earlyCorrection || startAlign === 'seek') {
     // A playing WebKit buffer: at most one seek per cooldown, aimed ahead so the
     // picture lands on the clock once the ~0.4 s post-seek stall ends.
-    let seekTo = clampedTargetTime;
+    let seekTo = frameTime;
     if (startAlign === 'seek') {
       seekTo = hasKnownDuration ? Math.min(clampedTargetTime + startLead, Math.max(clampedTargetTime, video.duration - 0.05)) : clampedTargetTime + startLead;
       startRealigned.add(video);
@@ -278,11 +297,17 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
     engine.preparedVideoTexturePrime.delete(video);
     endRateTrim(video, options.rate);
 
+    // An on-frame seek of a paused element asks for its frame callback first (a new one replaces the callback of a seek still
+    // pending); any other seek drops it, and 'seeked' below asks for its own as before.
+    if (onFrame && video.paused) landedFrames.arm(video);
+    else landedFrames.disarm(video);
     try {
       video.currentTime = seekTo;
     } catch {
+      landedFrames.disarm(video);
       return false;
     }
+    if (onFrame) frameSought.set(video, seekTo);
 
     if (!engine.pendingSeek.has(video)) {
       engine.pendingSeek.add(video);
@@ -333,8 +358,19 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
             landed = true;
             onSeeked(now, metadata);
           };
-          video.requestVideoFrameCallback(settle);
-          setTimeout(() => settle(performance.now(), undefined), SEEKED_FRAME_GRACE_MS);
+          // An on-frame seek asked for its callback before the seek: its landed frame was presented just before 'seeked', or
+          // comes later; nothing presented, the grace lets it through.
+          const early = landedFrames.take(video, settle);
+          if (early?.presented) {
+            settle(performance.now(), early.metadata);
+            return;
+          }
+          if (!early) video.requestVideoFrameCallback(settle);
+          setTimeout(() => {
+            if (landed) return;
+            early?.release();
+            settle(performance.now(), undefined);
+          }, SEEKED_FRAME_GRACE_MS);
         }, { once: true });
       } else {
         video.addEventListener('seeked', onSeeked, { once: true });
@@ -384,35 +420,26 @@ export function syncVideo(engine, env, video, clip, targetTime, options = {}) {
   return video.readyState >= 2 && !video.seeking;
 }
 
+// A still's or an exported frame's seek: the frame callback asked for before the seek, a boundary time shown as its own frame
+// (engine/seekFrame.js; it used to wait 3 s on every still of the headless render page).
 export function seekVideoAndWait(engine, video, targetTime) {
-  return new Promise((resolve) => {
-    if (!video.src || video.readyState < 1) { resolve(); return; }
-    const clampedTime = Number.isFinite(video.duration)
-      ? Math.max(0, Math.min(targetTime, video.duration - 0.001))
-      : Math.max(0, targetTime);
-    if (Math.abs(video.currentTime - clampedTime) < 0.02) {
-      // Already close enough
-      if (video.readyState >= 2) { resolve(); return; }
-      video.addEventListener('canplay', () => resolve(), { once: true });
-      setTimeout(resolve, 2000);
-      return;
-    }
-    video.currentTime = clampedTime;
-    const onReady = () => {
-      // Wait for actual frame via RVFC if available
-      if (typeof video.requestVideoFrameCallback === 'function') {
-        video.requestVideoFrameCallback(() => resolve());
-      } else {
-        resolve();
-      }
-    };
-    video.addEventListener('seeked', () => {
-      if (video.readyState >= 2) onReady();
-      else video.addEventListener('canplay', onReady, { once: true });
-    }, { once: true });
-    // Safety timeout
-    setTimeout(resolve, 3000);
-  });
+  return seekVideoFrame(video, targetTime);
+}
+
+// A still's own seek has landed on `video` (seekAllVideosForTime): the preview's gates on that element — a paused seek of its own
+// still waiting for its frame callback (pendingSeek: the texture keeps its last frame, or none), a new source's first frame
+// (awaitingFreshFrame) — would keep the layer out of the still's one render. On a cold WebGPU render page the Player's first frame
+// (drawn once the renderer is up) puts its video on frame 0 just before the still: its seek was still in that window, and the still
+// came out without the video. The still's seek supersedes it; the preview's own listeners still end it harmlessly later.
+export function releasePreviewSeekGate(engine, video) {
+  if (!video || video.seeking || video.readyState < 2) return;
+  engine.pendingSeek.delete(video);
+  const pendingTimeout = engine.seekTimeout.get(video);
+  if (pendingTimeout) {
+    clearTimeout(pendingTimeout);
+    engine.seekTimeout.delete(video);
+  }
+  engine.awaitingFreshFrame.delete(video);
 }
 
 export async function seekParticleObjectVideos(engine, env, time) {
@@ -451,6 +478,29 @@ export async function seekParticleObjectVideos(engine, env, time) {
   await Promise.all(waits);
 }
 
+// A preview prime (syncVideo / transitions: play() then pause() of an element that has no frame yet, so it decodes one) still in
+// flight when a still seeks that element plays it on after the seek and pauses it a frame or two later: the still showed the next
+// frame (a cold page's first still, once the fixed waits before it were gone). The still lets the prime end (at most 1 s), seeks,
+// and seeks again while one moved it; nothing in flight, it is the one seek it always was.
+const PRIME_SETTLE_CAP_MS = 1000;
+
+async function primeSettled(engine, video) {
+  const started = performance.now();
+  while (engine.primeInFlight.has(video) && performance.now() - started < PRIME_SETTLE_CAP_MS) {
+    await new Promise((resolve) => setTimeout(resolve, 4));
+  }
+}
+
+async function landStillFrame(engine, video, targetTime) {
+  for (let round = 0; round < 3; round += 1) {
+    await primeSettled(engine, video);
+    await seekVideoFrame(video, targetTime);
+    const at = Math.abs(video.currentTime - frameSeekTime(targetTime, video.duration)) < FRAME_AT_EPS_S;
+    if (at && video.paused && !engine.primeInFlight.has(video)) return;
+    if (!video.src || video.readyState < 1) return;
+  }
+}
+
 export async function seekAllVideosForTime(engine, env, time) {
   const seekPromises = [];
   for (const channel of env.channels) {
@@ -485,7 +535,7 @@ export async function seekAllVideosForTime(engine, env, time) {
       });
     }
 
-    seekPromises.push(seekVideoAndWait(engine, activeVideo, targetVideoTime));
+    seekPromises.push(landStillFrame(engine, activeVideo, targetVideoTime));
 
     // Also handle overlap (previous clip during transition)
     const inOverlap = activeIndex > 0 && itemLayout.overlapIn > 0 && timeInClip <= itemLayout.overlapIn;
@@ -507,7 +557,7 @@ export async function seekAllVideosForTime(engine, env, time) {
             setTimeout(r, 5000);
           });
         }
-        seekPromises.push(seekVideoAndWait(engine, previousVideo, prevTargetTime));
+        seekPromises.push(landStillFrame(engine, previousVideo, prevTargetTime));
       }
     }
   }

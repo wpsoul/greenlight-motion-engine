@@ -680,6 +680,52 @@ export function applyModelGrowFill(entry, growFill, renderer = null) {
   }
 }
 
+/**
+ * Grow Fill for a model in a world Scene (src/world3d/render/growFill.js), where it is the object's own material: the bake and the numbers
+ * its own pass would use (applyModelGrowFill), as plain data, since the world has a three of its own. `meshes` holds each mesh's arrival
+ * in the root's traversal order, the order the world finds them in its copy of the file and the order of a shape's parts; `values` every
+ * uniform applyModelGrowFill writes (colours in linear rgb, as THREE.Color holds them); `ramps` the three gradients as bytes.
+ */
+export function growFillForWorld(entry, growFill) {
+  if (!entry?.root || !growFill) return null;
+  const { params, progress01 } = growFill;
+  const baked = getBake(entry, {
+    seedMode: params.afSeedMode, seedCount: params.afSeedCount, seedSeed: params.afSeedSeed,
+    seedStagger: params.afSeedStagger, speedType: params.afSpeedType,
+    noiseScale: params.afNoiseScale, noiseContrast: params.afNoiseContrast, noiseSeed: params.afNoiseSeed,
+    bridges: params.afBridges, bridgeReach: params.afBridgeReach, bridgeSlow: params.afBridgeSlow,
+    points: params.points3d || [],
+  });
+  if (!baked) return null;
+  const originals = entry.growState?.originals;
+  const meshes = [];
+  entry.root.traverse((n) => {
+    if (!n.isMesh || !n.geometry?.attributes?.position) return;
+    meshes.push(baked.bake.byGeometry.get((originals?.get(n)?.geometry || n.geometry).uuid) || null);
+  });
+  const fe3 = splitEdgeColor(params.afFeColor);
+  const be3 = splitEdgeColor(params.afBeColor);
+  const size = entry.box?.getSize ? entry.box.getSize(new THREE.Vector3()).length() : 1;
+  const ramp = (css) => {
+    const t = getRampTexture(sanitizeEffectGradient(css), 0);
+    return { data: t.image.data, key: t.uuid };
+  };
+  return {
+    key: baked.key,
+    meshes,
+    values: {
+      progress: progress01, mode: params.afMode, style: params.afStyle, loops: params.afLoops, flow: params.afFlow,
+      soft: params.afSoftness, wavAmp: params.afWavAmp, feW: params.afFeWidth, feMode: params.afFeColorMode,
+      feGlowW: params.afFeGlowW, feGlowI: params.afFeGlowI / 100, beOn: params.afBeEnable, beOff: params.afBeOffset, beW: params.afBeWidth,
+      beMode: params.afBeColorMode, beGlowW: params.afBeGlowW, beGlowI: params.afBeGlowI / 100,
+      noiseFreq: 1 / Math.max((size || 1) * (params.afWavScale / 400), 1e-6),
+      fill: new THREE.Color(params.afFillColor).toArray(), fe: new THREE.Color(fe3.rgb).toArray(), feAlpha: fe3.alpha,
+      be: new THREE.Color(be3.rgb).toArray(), beAlpha: be3.alpha,
+    },
+    ramps: { fill: ramp(params.afRamp), fe: ramp(params.afFeRamp), be: ramp(params.afBeRamp) },
+  };
+}
+
 export function removeModelGrowFill(entry) {
   const state = entry?.growState;
   if (!state) return;

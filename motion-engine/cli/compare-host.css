@@ -1,0 +1,57 @@
+/* `greenlight-motion review a b c` (compare-host.js): what differs from the studio. The video rules are the board card's
+   (frontend/public/review-card/card.css). */
+/* a render source fills the preview over the empty film, under the note ink */
+.rvc-videos{position:absolute;inset:0;z-index:1;pointer-events:none;background:#000}
+.rvc-videos[hidden]{display:none}
+.rvc-v{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;visibility:hidden}
+.rvc-v.rvc-on{visibility:visible}
+.rvc-busy{position:absolute;z-index:3;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;background:rgba(15,15,15,.78);pointer-events:none}
+.rvc-busy-spin{box-sizing:border-box;flex:none;width:14px;height:14px;border:2px solid rgba(255,255,255,.2);border-top-color:#edf1ee;border-radius:50%;animation:rvc-spin .7s linear infinite}
+.rvc-busy-label{font:600 11px system-ui,-apple-system,sans-serif;color:#e5e7eb;white-space:nowrap}
+.rvc-busy-failed .rvc-busy-spin{display:none}
+@keyframes rvc-spin{to{transform:rotate(360deg)}}
+/* a review without Edit (several films, or a render) renders nothing itself: no Render, no Open in GreenLight Dash, no layer
+   count. One live film keeps them, as its own page has them */
+body.glmc-noedit .glm-top .glm-xbtn,body.glmc-noedit .glm-top .glm-tbtn,body.glmc-noedit .glm-top .glm-badge>span:nth-child(3){display:none}
+/* one film: no film key beside its name on the timeline */
+body.glmc-single .hl-track .hl-lab-tx b{display:none}
+/* posters keep the film's shape in the Sources list */
+.rv-src-po{width:var(--rvc-po-w,64px);height:var(--rvc-po-h,36px)}
+@media(max-width:900px){body:not(.cl-c) .rv-src-po{width:100%;height:auto;aspect-ratio:var(--rvc-po-ar,16/9)}}
+
+/* the pick: in the top bar between the save state and Save for agent (review.css orders them 5 and 8) */
+.glmc-pickb{order:6;display:inline-flex;align-items:center;gap:7px;flex:none;height:28px;padding:0 10px;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:#151718;color:#a4aaa6;font:600 11.5px system-ui,-apple-system,sans-serif;white-space:nowrap;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.glmc-pickb:hover{color:#edf1ee;background:#1c1f20}
+.glmc-pickb svg{flex:none;width:14px;height:14px}
+.glmc-pickb b{font-weight:700;color:#edf1ee}
+.glmc-pickb.glmc-on{color:#edf1ee;border-color:rgba(51,239,171,.45);background:rgba(51,239,171,.08)}
+.glmc-pickb.glmc-on svg{color:#33efab}
+.glmc-pickb:focus-visible{outline:2px solid #33efab;outline-offset:1px}
+body.rv-mode-edit .glmc-pickb{display:none}
+.glmc-pop{position:fixed;z-index:300;width:340px;max-width:calc(100vw - 16px);max-height:calc(100vh - 70px);overflow:auto;box-sizing:border-box;padding:10px;display:flex;flex-direction:column;gap:8px;background:#1b1d1e;border:1px solid #303436;border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.6);font:12px system-ui,-apple-system,sans-serif;color:#ddd}
+.glmc-pop[hidden]{display:none}
+.glmc-pop-h{padding:2px 4px 0;font-size:12px;color:#edf1ee}
+.glmc-opts{display:flex;flex-direction:column;gap:2px}
+.glmc-opt{display:flex;align-items:center;gap:10px;width:100%;padding:6px 8px 6px 6px;border:1px solid transparent;border-radius:8px;background:transparent;color:#e5e5e5;text-align:left;cursor:pointer;font:12px system-ui,-apple-system,sans-serif;transition:background .15s,border-color .15s}
+.glmc-opt:hover{background:#232628}
+.glmc-opt.glmc-sel{background:#202326;border-color:rgba(51,239,171,.55)}
+.glmc-opt .rv-src-po{background-color:#000;background-position:center;background-size:cover;background-repeat:no-repeat}
+.glmc-opt-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.glmc-opt-tx b{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:#edf1ee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.glmc-opt-tx small{font-size:10.5px;color:#868d8b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.glmc-mixic{width:var(--rvc-po-w,64px);height:var(--rvc-po-h,36px);flex:none;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#151718;box-shadow:0 0 0 1px #2a2a2a;color:#a4aaa6}
+.glmc-tick{flex:none;display:flex;color:transparent}
+.glmc-opt.glmc-sel .glmc-tick{color:#33efab}
+.glmc-notef{display:flex;flex-direction:column;gap:5px;padding:0 2px}
+.glmc-notef span{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#868d8b}
+.glmc-notef textarea{width:100%;resize:vertical;min-height:54px;box-sizing:border-box;padding:7px 8px;border:1px solid #303436;border-radius:6px;background:#111;color:#dfe6e3;font:12px/1.45 system-ui,-apple-system,sans-serif}
+.glmc-notef textarea:focus{outline:none;border-color:#33efab}
+.glmc-grow{flex:1}
+.glmc-pop .rv-pop-row{align-items:center}
+.glmc-done{border-color:rgba(51,239,171,.45)}
+/* the pick's film in the Sources list */
+.glmc-srcpick{flex:none;display:inline-flex;color:#33efab}.glmc-srcpick svg{width:13px;height:13px}
+.glmc-srcpick[hidden]{display:none}
+@media(max-width:1150px){.glmc-pickb span{display:none}.glmc-pickb{padding:0 8px}}
+/* a film without parts (compare-host.js showParts) */
+.hl-tl .hl-prow[hidden]{display:none}

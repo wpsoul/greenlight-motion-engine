@@ -28,7 +28,7 @@
  * local files itself.
  */
 import { createRoot } from 'react-dom/client';
-import { EngineCanvas } from './EngineCanvas';
+import { EngineCanvas, engineSettle } from './EngineCanvas';
 import { activateVideoRenderer } from '../components/videoEditor/videoRenderer';
 import { activateMaterialBackendForRenderer } from '../components/videoEditor/materialFactory';
 import { installGpuResetWatch } from '../components/videoEditor/gpuReset';
@@ -45,6 +45,18 @@ import { installFetchLayer, createResolver, setActiveResolver, resolveProject, m
 import { mountStudio } from './studio';
 import { PREVIEW_TIER } from '../components/videoEditor/engine/previewMedia';
 import { setPhoneMode } from '../components/videoEditor/engine/phoneMode';
+// a 3D Scene: its world is the 3D plugin (greenlight-motion-3d: a folder the host names, else jsDelivr at the release range this engine
+// takes; world3dPlugin.js), loaded only when a Scene needs it or the page asks; its critique; and the cap a host may set on a Final render
+import { world3d, setBase as setWorldBase } from './world3dPlugin';
+import { hasWorld } from './world3dContract';
+import { finalCost, checkFinalCap, setFinalCap, CHAT_FINAL_CAP } from './finalCap';
+import { critiqueFrame } from './critique';
+// (chatswitch) a film's own Draft | Final (its 3D Scenes' render.mode; null with no Scene), and the film in the other one
+import { filmWorldMode, withWorldMode } from './worldMode';
+// (chatfarm2) a render shared by several machines: the parts' ranges, the plan, and the remux that joins them in the page
+import { joinParts, partRanges, readMp4 } from './joinParts';
+import { planFarm, estimateHere, FARM_LIMITS } from './farmPlan';
+import { setRenderFarm, farmEstimate } from './FarmPane';
 
 // the package version, put in at build time (vite.motion-engine.config.js); 'dev' when built some other way
 const VERSION = typeof __GLM_VERSION__ === 'string' ? __GLM_VERSION__ : 'dev';
@@ -91,8 +103,9 @@ const waitFor = async (test, timeoutMs, label) => {
   }
 };
 
-async function create(container, { renderer = 'webgpu', assets = null } = {}) {
+async function create(container, { renderer = 'webgpu', assets = null, worldBase = null } = {}) {
   if (!container) throw new Error('GreenLightMotion.create needs a container element');
+  if (worldBase) setWorldBase(worldBase);
   if (renderer === 'webgpu' && !navigator.gpu) throw new Error('This browser has no WebGPU');
   activateVideoRenderer(renderer);
   activateMaterialBackendForRenderer(renderer);
@@ -103,8 +116,10 @@ async function create(container, { renderer = 'webgpu', assets = null } = {}) {
   setActiveResolver(resolver);
   let current = null;
   // Media warmed, fonts ready, 3D layers primed — the render page's own gate (renderWarmup.js).
+  // (smallfix) with the canvas's settle: no fixed paints around the warm-ups (renderSettle.js)
+  const settle = engineSettle(() => playerRef.current);
   const warmUp = (range) => waitForMediaReady({
-    channels: current?.channels || [], clips: current?.clips || [], getPlayer: () => playerRef.current, range,
+    channels: current?.channels || [], clips: current?.clips || [], getPlayer: () => playerRef.current, range, settle,
   });
 
   const player = () => {
@@ -137,6 +152,15 @@ async function create(container, { renderer = 'webgpu', assets = null } = {}) {
       await warmUp({ start: time, end: time + 1e-3 });
       return player().captureFrameAtTime(time, opts);
     },
+    /** A 3D Scene's still with its critique: the frame at t, what the shot shows, the lights, the picture's numbers and hints.
+     *  `png`: the frame at t just drawn by renderFrame(t) (the last call), so a Final frame is not traced twice. */
+    async critique(t, { objects = null, png: drawn = null } = {}) {
+      const time = Math.max(0, Number(t) || 0);
+      player();
+      await warmUp({ start: time, end: time + 1e-3 });
+      const png = typeof drawn === 'string' && drawn.startsWith('data:image/') ? drawn : await player().captureFrameAtTime(time);
+      return { png, ...(await critiqueFrame(png, { project: current, objects, time })) };
+    },
     isExportSupported() {
       try { return Boolean(player().isWebCodecsSupported?.()); } catch { return false; }
     },
@@ -157,8 +181,9 @@ async function create(container, { renderer = 'webgpu', assets = null } = {}) {
 
 /** The viewer's page in EL (WebGPU). theme: 'dark' (default), 'light' or 'auto' (follows the system).
  *  Returns { unmount }. */
-function mountPage(el, { project, assets = null, theme = 'dark' } = {}) {
+function mountPage(el, { project, assets = null, theme = 'dark', worldBase = null } = {}) {
   if (!el) throw new Error('GreenLightMotion.mountPage needs an element');
+  if (worldBase) setWorldBase(worldBase);
   if (!project) throw new Error('GreenLightMotion.mountPage needs a project');
   activateVideoRenderer('webgpu');
   activateMaterialBackendForRenderer('webgpu');
@@ -168,6 +193,6 @@ function mountPage(el, { project, assets = null, theme = 'dark' } = {}) {
   return { unmount: () => root.unmount() };
 }
 
-window.GreenLightMotion = { create, mountPage, mountStudio, checkTemplate, checkSoundCues, sounds: SOUNDS, missingAssets, pluginStatus, normalize: toEngineProject, trace: async (project, opts) => traceProject(await toEngineProject(project), opts), matteGaps: async (project) => matteGaps(await toEngineProject(project)), textWraps: async (project) => textWraps(await toEngineProject(project)), version: VERSION };
+window.GreenLightMotion = { create, mountPage, mountStudio, farm: { joinParts, partRanges, readMp4, planFarm, estimateHere, estimate: farmEstimate, limits: FARM_LIMITS }, setRenderFarm, setWorldBase, world3d, hasWorld, filmWorldMode, withWorldMode, finalCost, checkFinalCap, setFinalCap, CHAT_FINAL_CAP, checkTemplate, checkSoundCues, sounds: SOUNDS, missingAssets, pluginStatus, normalize: toEngineProject, trace: async (project, opts) => traceProject(await toEngineProject(project), opts), matteGaps: async (project) => matteGaps(await toEngineProject(project)), textWraps: async (project) => textWraps(await toEngineProject(project)), version: VERSION };
 
-export { create, mountPage, mountStudio, checkTemplate, checkSoundCues, SOUNDS as sounds, missingAssets, pluginStatus, toEngineProject as normalize, traceProject, matteGaps, textWraps, VERSION as version };
+export { joinParts, partRanges, planFarm, estimateHere, setRenderFarm, create, mountPage, mountStudio, setWorldBase, world3d, hasWorld, filmWorldMode, withWorldMode, finalCost, checkFinalCap, setFinalCap, CHAT_FINAL_CAP, checkTemplate, checkSoundCues, SOUNDS as sounds, missingAssets, pluginStatus, toEngineProject as normalize, traceProject, matteGaps, textWraps, VERSION as version };

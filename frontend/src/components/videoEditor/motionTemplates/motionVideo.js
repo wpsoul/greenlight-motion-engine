@@ -213,16 +213,37 @@ export function videoLaneStamp(laneKey) {
   return lane && lane.hasFrame ? lane.drawnUs : null;
 }
 
+// The timestamp (µs) of the decoded frame ON a lane's canvas: the picture itself, where videoLaneStamp is the time last asked for. A copy
+// that redraws on this redraws once per video frame, not once per render (a 30 fps video under a 60 Hz preview asked twice per frame).
+export function videoLaneFrameStamp(laneKey) {
+  const lane = lanes.get(laneKey);
+  if (!lane || !lane.hasFrame) return null;
+  return Number.isFinite(lane.decoder?.drawnTimestampUs) ? lane.decoder.drawnTimestampUs : lane.drawnUs;
+}
+
 // "Something a drawn frame asked for isn't on its canvas yet." Decodes already
 // claimed by a running pump count too: a caller that checked between another
 // pump's claim and its completion would otherwise believe the frame had settled
 // and keep the stale one.
 export function motionMediaPending() {
-  return pendingLanes.size > 0 || decodingLanes.size > 0 || unreadyUrls.size > 0;
+  return pendingLanes.size > 0 || decodingLanes.size > 0 || unreadyUrls.size > 0 || pendingWork.size > 0;
+}
+
+// Other frames a draw asked for that land later: an html page a 3D surface shows in a render (liveLayers.js). The same pump and the same
+// repaint settle them, so a render waits for them exactly as it waits for a decoded frame.
+const pendingWork = new Set();
+export function trackMotionMediaWork(promise) {
+  const p = Promise.resolve(promise).catch(() => {});
+  pendingWork.add(p);
+  p.then(() => { pendingWork.delete(p); notify(); });
 }
 
 async function runPump() {
   let worked = false;
+  if (pendingWork.size) {
+    worked = true;
+    await Promise.all([...pendingWork]);
+  }
   if (unreadyUrls.size) {
     worked = true;
     await Promise.all([...unreadyUrls].map((url) => getMotionVideoSource(url).ready));

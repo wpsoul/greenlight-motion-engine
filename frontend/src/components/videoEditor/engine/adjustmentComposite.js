@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { applyAdjustmentUniforms, applyPremultipliedBlendMode } from '../clipShader';
 import { normalizeBlendMode } from '../blendModes';
-import { layerPlane, layerQuad, layerSortDepth } from '../compositeSortDepth';
+import { isPlateChannel, layerPlane, layerQuad, layerSortDepth, worldShadowSlot } from '../compositeSortDepth';
 import { getItemKeyframeValues, getItemPeakKeyframeScale } from '../gsapTransitions';
 import { isLayerMaskEnabled } from '../layerMask';
 import { depthFromViewDistance, modelDofParams } from '../modelDof';
@@ -36,9 +36,6 @@ import { ensureAdjustmentTargets as ensureAdjustmentTargetsInEngine, ensureDepth
 import { _platePos, unseatLayerMesh, resolveActiveIndex } from './compositeHelpers';
 import { isPosterizeTimeEnabled, posterizedLayerTime } from '../posterizeTime';
 
-// What a floor's shadow may fall on, or has no effect on: a Scene and its models are in the world, where the floor already gives way to them.
-const UNDER_THE_FLOOR = new Set(['image', 'video', 'rig', 'model3d', 'camera']);
-
 export function setLayerDepthMode(engine, on) {
   if (engine.layerDepthMode === on) return;
   engine.layerDepthMode = on;
@@ -54,6 +51,46 @@ export function setLayerDepthMode(engine, on) {
   for (const st of engine.sequenceStates.values()) {
     for (const cs of st.channelStates.values()) apply(cs);
   }
+}
+
+/** (lookfix) A channel's quad drawn into its own isolate, its faint pixels kept: the depth mode's cut (a fragment under 2 % coverage is
+ *  dropped, so it never writes depth into the stack) is lifted for that draw, where no depth of the stack is written. Returns the values to
+ *  put back (keepFaintPixels(cs, kept)). */
+function keepFaintPixels(cs, kept = null) {
+  const mats = [cs?.currMaterial, cs?.prevMaterial].filter((m) => m?.uniforms?.uDepthCut);
+  if (kept) { mats.forEach((m, i) => { m.uniforms.uDepthCut.value = kept[i]; }); return null; }
+  const was = mats.map((m) => m.uniforms.uDepthCut.value);
+  for (const m of mats) m.uniforms.uDepthCut.value = 0;
+  return was;
+}
+
+/** (mblur3) The project's background as one opaque colour's bytes [r, g, b] (a solid background, read off its canvas), or null. */
+function solidBackgroundBytes(engine) {
+  if (engine.background?.type !== 'solid' || !engine.backgroundCanvas) return null;
+  try {
+    const d = engine.backgroundCanvas.getContext('2d').getImageData(0, 0, 1, 1).data;
+    return d[3] === 255 ? [d[0], d[1], d[2]] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** (mblur4) The project's background picture (a gradient, a pattern, a picture, a shader: its canvas as scene.background) when it covers the
+ *  whole frame, for a frame that goes over the stack in linear light: the texture, or null (a solid colour is laid as a clear; a picture
+ *  with see-through parts is not laid, since the final pass lays the background again under the stack). Its alpha is read once a paint. */
+function opaqueBackgroundTexture(engine) {
+  const tex = engine.scene?.background, canvas = engine.backgroundCanvas;
+  if (!tex?.isTexture || tex.image !== canvas || !canvas?.width || !canvas.height) return null;
+  const memo = engine.backgroundOpaqueMemo;
+  if (memo?.tex === tex && memo.version === tex.version) return memo.opaque ? tex : null;
+  let opaque = false;
+  try {
+    const d = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    opaque = true;
+    for (let i = 3; i < d.length; i += 4) if (d[i] !== 255) { opaque = false; break; }
+  } catch { opaque = false; }
+  engine.backgroundOpaqueMemo = { tex, version: tex.version, opaque };
+  return opaque ? tex : null;
 }
 
 export function renderAdjustmentComposite(engine, env, adjustments) {
@@ -193,6 +230,9 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   const compositeOrder = orderChannelsForComposite(
     getChannelsBottomToTop(env.channels), adjById, depthOfChannel, planeOfChannel,
     quadOfChannel, sortCam.getWorldPosition(new THREE.Vector3()), boxOfChannel,
+    // (enginebugs3) under a Scene only camera-locked footage and pictures (and what is stacked under them) are the background plate;
+    // every other kind stacked above them draws over it (compositeSortDepth.js lockedLeadChannels)
+    (ch) => isPlateChannel(ch, env.clipsMap.get(engine.layerItems.get(ch.id)?.clipId), (it) => env.clipsMap.get(it.clipId)),
   );
   // A model is real geometry, so a flat layer near it has to be cut by its SURFACE,
   // not by its silhouette. Depth mode turns the layer quads into depth-testing,
@@ -213,8 +253,43 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
 
   // Start from a transparent accumulation buffer.
   renderer.setRenderTarget(read);
-  renderer.setClearColor(0x000000, 0);
+  // (mblur3) A 3D Scene's frame traced moving over a see-through sky goes over what lies below it in linear light (compositeWithDepth's
+  // linear draw), so what lies below must be in the stack: the project's solid background is laid in first (the final pass then finds
+  // the stack opaque). Premultiplied "over" is associative: every other layer lands as it did. Not for an alpha export.
+  // (mblur4) and on a frame with a shadow catcher's shadow, which goes over the stack in linear light too (layShadow): the background must be
+  // under it then, not laid under the finished stack in display values
+  const linearBelow = (engine.worldLinearCover || !!engine.worldShadowTexture) && !engine.alphaExport;
+  const linBg = linearBelow ? solidBackgroundBytes(engine) : null;
+  if (linBg) renderer.setClearColor(new THREE.Color().setRGB(linBg[0] / 255, linBg[1] / 255, linBg[2] / 255, THREE.LinearSRGBColorSpace), 1);
+  else renderer.setClearColor(0x000000, 0);
   renderer.clear(true, true, true);
+  if (linBg) renderer.setClearColor(0x000000, 0);
+  // (mblur4) and a gradient, a pattern or a picture background that covers the frame: its picture laid in first (a storage-identity copy
+  // of its canvas, which uploads top row first as a render target holds it), so a moving edge over it goes over in linear light too
+  const picBg = linearBelow && !linBg && engine.seqPlateCopyScene ? opaqueBackgroundTexture(engine) : null;
+  if (picBg) {
+    engine.seqPlateCopyMaterial.uniforms.uTexture.value = picBg;
+    renderer.render(engine.seqPlateCopyScene, orthoCamera);
+  }
+
+  // (mblur4) `tex` (premultiplied) over the stack in linear light (compositeNodes createOverBlitLinearNodeMaterial): the stack as it stands
+  // held aside first (a storage-identity copy), the draw writes the blend. False where it cannot (WebGL): the caller lays it as before.
+  const linearOver = (tex, target = read) => {
+    const scene = tex && target && engine.seqPlateCopyScene ? engine.overBlitLinear?.() : null;
+    const held = scene ? ensurePassTargetInEngine(engine, 'linearBelow', target.width, target.height, false) : null;
+    if (!held) return false;
+    engine.seqPlateCopyMaterial.uniforms.uTexture.value = target.texture;
+    renderer.setRenderTarget(held);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, true, true);
+    renderer.render(engine.seqPlateCopyScene, orthoCamera);
+    engine.overBlitLinearMaterial.uniforms.uTexture.value = tex;
+    engine.overBlitLinearMaterial.uniforms.uBelow.value = held.texture;
+    renderer.setRenderTarget(target);
+    renderer.render(scene, orthoCamera);
+    renderer.setRenderTarget(read);
+    return true;
+  };
 
   const mat = clipMesh.material;
   const t = engine.currentTime;
@@ -300,9 +375,24 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     : null;
   const deferredCards = [];
   let cardsDeferred = false;
-  const compositeWithDepth = (colorTarget, depthTexture, target, blendMode, fallback = -1, tdepth = null) => {
+  const compositeWithDepth = (colorTarget, depthTexture, target, blendMode, fallback = -1, tdepth = null, linear = false) => {
     if (!depthTexture || !depthCompositeScene || !depthCompositeMaterial || !colorTarget?.texture) return false;
-    const draws = tdepth && splitDraws ? splitDraws : [[depthCompositeMaterial, depthCompositeScene]];
+    let draws = tdepth && splitDraws ? splitDraws : [[depthCompositeMaterial, depthCompositeScene]];
+    // (mblur3) a 3D Scene's frame traced moving over a see-through sky goes over the stack in linear light: the stack as it stands is held
+    // aside first (a storage-identity copy), the linear draw reads it and writes the blend itself. Normal blending only.
+    const linScene = linear && !tdepth && normalizeBlendMode(blendMode) === 'normal' && engine.seqPlateCopyScene ? engine.depthCompositeLinear?.() : null;
+    if (linScene) {
+      const held = ensurePassTargetInEngine(engine, 'linearBelow', target.width, target.height, false);
+      if (held) {
+        engine.seqPlateCopyMaterial.uniforms.uTexture.value = target.texture;
+        renderer.setRenderTarget(held);
+        renderer.setClearColor(0x000000, 0);
+        renderer.clear(true, true, true);
+        renderer.render(engine.seqPlateCopyScene, orthoCamera);
+        engine.depthCompositeLinearMaterial.uniforms.uBelow.value = held.texture;
+        draws = [[engine.depthCompositeLinearMaterial, linScene]];
+      }
+    }
     renderer.setRenderTarget(target);
     for (const [material, scene] of draws) {
       // The cards' draw, held: a storage-identity copy of the plate (the scratch
@@ -327,7 +417,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
         1 / Math.max(1, depthTexture.image?.width || read.width),
         1 / Math.max(1, depthTexture.image?.height || read.height));
       if (draws === splitDraws) material.uniforms.uTDepth.value = tdepth;
-      applyPremultipliedBlendMode(material, blendMode);
+      if (material !== engine.depthCompositeLinearMaterial) applyPremultipliedBlendMode(material, blendMode);
       renderer.render(scene, orthoCamera);
     }
     // Where the tested draw lost (something earlier stands in front), composite the
@@ -370,7 +460,9 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
       ? depthFromViewDistance(centre, camera.near, camera.far)
       : -1;
     return compositeWithDepth(colorTarget, engine.modelDepthTex.get(channel.id), target, blendMode,
-      engine.modelSpillDepth.get(channel.id) ?? blurSpill, engine.modelTransparentDepthTex.get(channel.id) || null);
+      engine.modelSpillDepth.get(channel.id) ?? blurSpill, engine.modelTransparentDepthTex.get(channel.id) || null,
+      // (mblur3) the world's frame traced moving over a see-through sky: in linear light
+      channel.kind === 'rig' && !!engine.worldLinearCover);
   };
 
   /*
@@ -427,8 +519,8 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   };
   const cocForChannel = (channel, cs, chCam) => {
     if (!(dof.enabled && dof.aperture > 0 && dof.blurLevel > 0) || channel.cameraLocked) return 0;
-    // A traced Scene already went through a real lens.
-    if (engine.worldTracing && channel.kind === 'rig') return 0;
+    // A traced Scene already went through a real lens, (camlayer) and a world Scene's Draft through the world's own (WorldRenderer #applyLens)
+    if ((engine.worldTracing || engine.worldLensOwn) && channel.kind === 'rig') return 0;
     const perPixel = modelDofFor(channel, 1);
     if (perPixel) return perPixel.peakPx;
     const modelDist = engine.modelDepth.get(channel.id);
@@ -784,6 +876,43 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     }
     matteIsolates.set(srcChannelId, target);
   }
+  // (octane2) World mattes: the 3D Scene layer drawn as itself, through its own camera, with its picture swapped for the mask of the objects
+  // the matte names (the world's third band, world3dLayer.js worldMaskTextures), so the mask lands exactly where the Scene draws them.
+  for (const m of engine.trackMatteLayers.values()) {
+    if (!m.worldMask || !m.sourceChannelId) continue;
+    const key = `world:${m.worldMask}`;
+    if (matteIsolates.has(key)) continue;
+    let target = null;
+    const srcCs = engine.channelStates.get(m.sourceChannelId);
+    const srcChannel = channelById.get(m.sourceChannelId);
+    const tex = engine.worldMaskTextures?.get(m.worldMask) || null;
+    const uTex = srcCs?.currMaterial?.uniforms?.uTexture;
+    if (srcCs && srcChannel && srcCs.group.visible !== false && tex && uTex) {
+      target = ensurePassTargetInEngine(engine, `trackMatte:${key}`, read.width, read.height, false);
+      if (target) {
+        const srcCam = cameraForCompositePlate(srcChannel, srcCs);
+        renderer.setRenderTarget(target);
+        renderer.setClearColor(0x000000, 0);
+        renderer.clear(true, true, true);
+        const picture = uTex.value;
+        const prevShown = srcCs.prevMesh?.visible;
+        if (srcCs.prevMesh) srcCs.prevMesh.visible = false;
+        uTex.value = tex;
+        // the Scene's plate is drawn upright as it is (layerMesh.js plateAlreadyNormalized), where an ordinary source's uploaded picture
+        // is flipped on WebGPU: the matte reads isolates in the ordinary sources' layout, so the mask goes in flipped like them
+        const flipV = srcCs.currMaterial.uniforms.uInputFlipV;
+        const flipWas = flipV?.value;
+        if (flipV && selectedBackend() === 'webgpu') flipV.value = 1;
+        suspendChannelBlend(srcCs);
+        renderer.render(srcCs.rig, srcCam);
+        resumeChannelBlend(srcCs);
+        if (flipV) flipV.value = flipWas;
+        uTex.value = picture;
+        if (srcCs.prevMesh) srcCs.prevMesh.visible = prevShown;
+      }
+    }
+    matteIsolates.set(key, target);
+  }
 
   // ── Copy Color Profile reference isolates ──
   // Same place and same reasons as the matte sources: the scratch bank is free
@@ -868,6 +997,24 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
       && normalizeBlendMode(engine.layerItems.get(ch.id)?.blendMode) === 'normal'
       && !engine.shaderBlendLayers.has(ch.id) && !engine.backdropLayers.has(ch.id) && !engine.glassLayers.has(ch.id)));
   let leadPlate = null;
+  // (vfx) The footage's light round a placed object, wrapped onto its edge (compositeNodes.js createLightWrapNodeMaterial), right after
+  // the Scene's picture lands, while the footage is held aside (the locked lead): `plate` is the world's picture as the stack took it.
+  const wrapWorldLight = (channel, plate) => {
+    const amount = engine.worldLightWrap || 0;
+    const m = engine.lightWrapMaterial;
+    const depth = engine.modelDepthTex.get(channel.id);
+    if (!(amount > 0) || channel.kind !== 'rig' || !leadPlate || !m || !engine.lightWrapScene || !plate?.texture || !depth) return;
+    m.uniforms.uPlate.value = leadPlate.texture;
+    m.uniforms.uWorld.value = plate.texture;
+    m.uniforms.uDepth.value = depth;
+    m.uniforms.uAmount.value = Math.min(1, amount);
+    // the reach: half a percent of the frame's height (about 5 px at 1080p), in uv: wider, a thin thing (a camera strap) took the
+    // table's colour across its whole width
+    const reach = 0.005 * read.height;
+    m.uniforms.uRadius.value.set(reach / Math.max(1, read.width), reach / Math.max(1, read.height));
+    renderer.setRenderTarget(read);
+    renderer.render(engine.lightWrapScene, orthoCamera);
+  };
   // Cards (a transparent surface with no opaque surface of its own in its pass: a soft
   // contact shadow, a glass pane) composite AFTER every opaque surface of the frame, at
   // their own depth, tested and not written — an ordinary renderer's order, opaque
@@ -885,19 +1032,26 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   // depth it becomes a wall: the footage behind it is rejected, and only the black stays. So it goes by kind: footage and stills are what
   // the floor lies on, and the first thing that stands in front of the floor, text or a shape, comes after it.
   let shadowLaid = !engine.worldShadowTexture || !overBlitMaterial;
-  const layShadow = () => {
+  const layShadow = (target = leadPlate || read) => {
     shadowLaid = true;
+    // (mblur4) in linear light: the shadow's coverage is the share of the light the objects take from the floor (Final measures it so, as
+    // Cycles' catcher does), so that share of the light below goes, not that share of its display values (a 50 % loss left the footage
+    // 22 % of its light). The stack as it stands is held aside first (a storage-identity copy) and the linear draw writes the result. With
+    // the footage held aside under a placed object (the camera-locked lead, laid under the finished stack), it is the footage the shadow
+    // darkens: there the stack holds nothing under the floor, and the footage went under the shadow's display-value coverage
+    if (linearOver(engine.worldShadowTexture, target)) return;
     overBlitMaterial.uniforms.uTexture.value = engine.worldShadowTexture;
     renderer.setRenderTarget(read);
     renderer.render(overBlitScene, orthoCamera);
   };
+  // Where it goes: before the first layer that stands in front of the floor (compositeSortDepth.js worldShadowSlot): text or a shape,
+  // or (vfx) a camera-locked layer over the Scene, the footage again wearing the matte of who passes in front of a placed object.
+  const shadowAt = shadowLaid ? -1
+    : worldShadowSlot(compositeOrder, (ch) => env.clipsMap.get(engine.layerItems.get(ch.id)?.clipId)?.mediaType);
 
   // Depth order, not channel order — see orderChannelsForComposite.
-  for (const channel of compositeOrder) {
-    if (!shadowLaid) {
-      const type = env.clipsMap.get(engine.layerItems.get(channel.id)?.clipId)?.mediaType;
-      if (type && !UNDER_THE_FLOOR.has(type)) layShadow();
-    }
+  for (const [at, channel] of compositeOrder.entries()) {
+    if (!shadowLaid && at === shadowAt) layShadow();
     if (deferLead && !leadPlate && !lockedLead.has(channel)) {
       leadPlate = ensurePassTargetInEngine(engine, 'lockedBackdrop', read.width, read.height, false);
       if (leadPlate) {
@@ -973,6 +1127,14 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
       // Render the graded/transformed plane into a fresh (transparent) target.
       mat.uniforms.uTexture.value = read.texture;
       applyAdjustmentUniforms(mat, item, kf, sizeVec.x, sizeVec.y, { reducedMotionPreview: env.interactivePreviewEnabled });
+      // (hdr2) an HDR render's float composite: the 3D Scene's light above white goes through an adjustment that moves, zooms or blurs it
+      // and grades nothing (hdrScene.js hdrFloatReason); a graded frame stays within white, as in the SDR export
+      if (engine.hdrComposite && mat.uniforms.uRgbMax) {
+        const u = mat.uniforms, tint = u.uTintColor.value;
+        const ungraded = u.uBrightness.value === 1 && u.uContrast.value === 1 && u.uSaturation.value === 1 && Math.abs(u.uHueRotate.value) < 0.5
+          && !u.uGrayscale.value && !u.uSepia.value && !u.uInvert?.value && tint.r === 1 && tint.g === 1 && tint.b === 1;
+        if (ungraded) u.uRgbMax.value = 65504;
+      }
       applyMeshTransform(clipMesh, item, kf, W, H, resolveParentingInEngine(engine, env.parentIndex, item, t),
         null, resolveFollowInEngine(engine, env.parentIndex, item, t));
       renderer.setRenderTarget(write);
@@ -1069,12 +1231,19 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
           renderer.setClearColor(0x000000, 0);
           renderer.clear(true, true, true);
           suspendChannelBlend(cs);
+          // (lookfix) a 3D Scene's frame whose coverage goes over the stack in linear light (a lens-blurred or moving edge over a see-through
+          // sky): its faintest pixels are its light too (2 % of a bright object over a dark layer is 20 display levels), so its isolate keeps
+          // them; the tested draw below stands them at the far plane (compositeNodes.js createDepthCompositeNodeMaterial, linear)
+          const faint = channel.kind === 'rig' && engine.worldLinearCover ? keepFaintPixels(cs) : null;
           renderer.render(cs.rig, chCam);
+          if (faint) keepFaintPixels(cs, faint);
           resumeChannelBlend(cs);
           if (!compositePhysicalDepth(channel, rt.c, read, layerItem?.blendMode)) {
             renderer.setRenderTarget(read);
             renderer.render(cs.rig, chCam);
             stampModelDepth(channel, read);
+          } else {
+            wrapWorldLight(channel, rt.c);
           }
         } else if (selectedBackend() === 'webgpu' && isBakedPass(channel)) {
           // A depth-less 3D pass (a "Shadows only" backdrop, a picture that
@@ -1126,7 +1295,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
         // camera-rendered — so this is the flipTexture variant, which keeps the
         // plate's layout for the overBlit below (createTrackMatteNodeMaterial).
         if (activeMatte) {
-          const srcTarget = matteIsolates.get(activeMatte.sourceChannelId) || null;
+          const srcTarget = matteIsolates.get(activeMatte.worldMask ? `world:${activeMatte.worldMask}` : activeMatte.sourceChannelId) || null;
           const tmScene = engine.trackMatteScene;
           const tmMat = engine.trackMatteMaterial;
           if (srcTarget && tmScene && tmMat) {
@@ -1162,7 +1331,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
         }
         // Glass under a matte: the pane keeps only what the matte keeps — the
         // same camera-axis isolate and maths the plate was just matted with.
-        const glassMatteSrc = glass && activeMatte ? matteIsolates.get(activeMatte.sourceChannelId) : null;
+        const glassMatteSrc = glass && activeMatte ? matteIsolates.get(activeMatte.worldMask ? `world:${activeMatte.worldMask}` : activeMatte.sourceChannelId) : null;
         const glassMatte = glassMatteSrc ? {
           texture: glassMatteSrc.texture,
           luma: activeMatte.mode === 'luma' || activeMatte.mode === 'lumaInverted',
@@ -1235,7 +1404,8 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
   // the project background, which the per-channel loop above never draws (it
   // renders channel groups, not `scene`). Skipped for alpha exports, where the
   // transparency IS the deliverable and the PNG-frame route handles it correctly.
-  if (!shadowLaid) layShadow();
+  // (the held-aside footage is in the stack by now)
+  if (!shadowLaid) layShadow(read);
 
   const flattenScene = engine.flattenScene;
   const flattened = !engine.alphaExport && !!flattenScene && !!overBlitMaterial && !!overBlitScene;

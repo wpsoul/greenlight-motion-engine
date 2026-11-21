@@ -410,3 +410,63 @@
 .glm-app .glm-rvitem span { min-width: 0; display: grid; gap: 1px; color: var(--glm-txt); overflow-wrap: anywhere; }
 .glm-app .glm-rvitem b { color: var(--glm-sub); font-size: 12px; font-weight: 500; }
 @media (max-width: 720px) { .glm-app .glm-rvhint { display: none; } .glm-app .glm-rvnote { width: min(320px, calc(100% - 16px)); } }
+
+/* (chatfarm2) where to render: the farm pane (FarmPane.jsx) — the chat render lab's option A, on this page's tokens */
+
+.glm-app .cf-dot { display: inline-block; flex: none; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--glm-sub); }
+.glm-app .cf-dot.is-good { background: var(--glm-good); }
+.glm-app .cf-dot.is-warn { background: var(--glm-warn); }
+.glm-app .cf-dot.is-bad { background: var(--glm-bad); }
+.glm-app .cf-busy { font-style: normal; color: var(--glm-warn); }
+.glm-app .cf-amber { color: var(--glm-warn); }
+.glm-app .cf-tag { font-size: 10.5px; font-weight: 500; color: var(--glm-sub); margin-left: 4px; }
+.glm-app .cf-where button b { display: flex; align-items: baseline; }
+/* GPU rows (full screen): a flat radio list, one line each: name · stock · $/h · this video's time · cost */
+.glm-app .cf-gpus { display: flex; flex-direction: column; border: 1px solid var(--glm-line); border-radius: 9px; overflow: hidden; }
+.glm-app .cf-gpu { display: grid; grid-template-columns: minmax(0, 1fr) auto 52px; align-items: center; gap: 10px; min-height: 40px; padding: 4px 10px; border: 0; background: transparent;
+  color: var(--glm-txt); font-size: 12px; text-align: left; cursor: pointer; }
+.glm-app .cf-gpu + .cf-gpu { border-top: 1px solid var(--glm-line); }
+.glm-app .cf-gpu b { font-weight: 500; white-space: nowrap; }
+.glm-app .cf-gpu[aria-checked="true"] { background: var(--glm-soft); box-shadow: inset 2px 0 0 var(--glm-acc); }
+.glm-app .cf-gname { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.glm-app .cf-stock { color: var(--glm-sub); white-space: nowrap; font-size: 11.5px; }
+.glm-app .cf-num { font-variant-numeric: tabular-nums; color: var(--glm-sub); white-space: nowrap; text-align: right; }
+.glm-app .cf-usd { color: var(--glm-txt); }
+.glm-app .cf-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--glm-sub); min-height: 22px; }
+.glm-app .cf-two { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; }
+.glm-app .cf-two .glm-btn { height: 42px; padding: 0 14px; border-radius: 10px; font-size: 13px; }
+.glm-app .glm-go.cf-go-sm { margin-top: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.glm-app .glm-warn.cf-warn-in { margin: 0; display: flex; align-items: baseline; gap: 0; }
+.glm-app .glm-warn.cf-warn-in b, .glm-app .cf-leftover b { font-weight: 600; }
+.glm-app .glm-warn.cf-leftover { margin: 12px 16px 0; display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
+.glm-app .cf-leftover > span:first-of-type { margin-right: auto; }
+.glm-app .cf-leftover .glm-actions { margin-left: 8px; }
+.glm-app .cf-after-warn { padding-top: 10px; }
+.glm-app .glm-status .cf-dot { vertical-align: 1px; }
+.glm-app .glm-prow.cf-sub { font-size: 12px; }
+.glm-app .cf-steps { margin: 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--glm-txt); }
+.glm-app .cf-steps li::marker { color: var(--glm-sub); font-variant-numeric: tabular-nums; }
+.glm-app .cf-keyrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.glm-app .cf-keyrow .glm-in { font-variant-numeric: tabular-nums; }
+.glm-app .cf-receipt { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 12.5px; }
+.glm-app .cf-receipt dt { color: var(--glm-sub); }
+.glm-app .cf-receipt dd { margin: 0; font-variant-numeric: tabular-nums; }
+.glm-app .cf-receipt s { text-decoration: none; color: var(--glm-sub); margin-left: 6px; }
+.glm-app .cf-handoff { display: flex; flex-direction: column; gap: 4px; padding: 9px 11px; border: 1px dashed var(--glm-line); border-radius: 9px; font-size: 12px; color: var(--glm-sub); }
+.glm-app .cf-handoff q { color: var(--glm-txt); quotes: none; }
+.glm-app .cf-points { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.glm-app .cf-points li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; align-items: start; }
+.glm-app .cf-points li > svg { width: 15px; height: 15px; color: var(--glm-sub); margin-top: 1px; }
+.glm-app .cf-points li > .cf-dot { margin: 5px 0 0 4px; }
+.glm-app .cf-points b { display: block; font-weight: 600; font-size: 13px; }
+.glm-app .cf-points span { display: block; color: var(--glm-sub); font-size: 12.5px; line-height: 1.45; }
+.glm-app .glm-icon.cf-info svg { width: 15px; height: 15px; }
+.glm-app .cf-points-sm { gap: 7px; }
+.glm-app .cf-points-sm li { grid-template-columns: 16px minmax(0, 1fr); }
+.glm-app .cf-points-sm b { display: inline; font-size: 12.5px; margin-right: 6px; }
+.glm-app .cf-points-sm span { display: inline; }
+.glm-app .cf-podrow { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 10px; font-size: 12.5px; }
+.glm-app .cf-podrow b { font-weight: 600; white-space: nowrap; }
+.glm-app .cf-podrow span { color: var(--glm-sub); font-variant-numeric: tabular-nums; }
+.glm-app .cf-gpu:disabled { opacity: .45; cursor: default; }
+.glm-app .glm-go:disabled { opacity: .55; cursor: default; filter: none; }

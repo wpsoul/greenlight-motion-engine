@@ -20,6 +20,8 @@ const FIELDS = [
   'blitMaterial', 'blitScene', 'pictureCopyMaterial', 'pictureCopyScene', 'seqPlateCopyMaterial', 'seqPlateCopyScene',
   'depthStampMaterial', 'depthStampScene', 'depthCompositeMaterial', 'depthCompositeScene', 'depthCompositeSplitMaterial', 'depthCompositeSplitScene', 'depthCompositeTranslucentMaterial', 'depthCompositeTranslucentScene', 'depthCompositeUnderMaterial', 'depthCompositeUnderScene', 'backdropUnderMaterial', 'backdropUnderScene','cameraDofMaterial', 'cameraDofScene', 'cameraDofDepthMaterial', 'cameraDofDepthScene',
   'mixMaterial', 'mixScene', 'maskMaterial', 'maskScene', 'trackMatteMaterial', 'trackMatteScene',
+  // (vfx) the footage's light wrapped onto a placed object's edge, and how much this frame's Scene asks for (world3dLayer.js)
+  'lightWrapMaterial', 'lightWrapScene', 'worldLightWrap',
   'trackMattePlainMaterial', 'trackMattePlainScene', 'overBlitMaterial', 'overBlitScene', 'flattenScene',
   'adjustmentGeo', 'adjustmentClipMesh', 'adjustmentClipScene', 'effectMesh', 'effectScene',
   'motionBlurMixMaterial', 'motionBlurMixMesh', 'motionBlurMixScene', 'matteClipMaterial', 'matteClipPlainMaterial',
@@ -29,6 +31,10 @@ const FIELDS = [
   'backdropPass', 'glassPass', 'blendPass',
   // ping-pong targets (created on first use, sized to the drawing buffer)
   'adjustmentRT', 'overlayFxRT',
+  // (hdr2) an HDR render's float composite of a frame (../hdrComposite.js): its switch and its half-float stack
+  'hdrComposite', 'adjustmentRTHdr',
+  // (hdr3) the Scene's SDR plate while the float composite draws with it, and the Scene layer's grade read off that draw
+  'hdrSdrPlate', 'hdrSceneGrade',
   // the pass pool and the owners of its persistent rings (./passPool.js)
   'passPool', 'passUse', 'passFrame', 'colorRefStatic', 'echoState', 'trailState', 'timeshiftState', 'repetileHist',
   // the project background (./background.js)

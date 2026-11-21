@@ -289,7 +289,7 @@ export const GRADIENT_GLOW_EFFECT = {
   name: 'Gradient Glow',
   group: 'Gradient',
   animated: true,
-  pro: true,
+  pro: false,   // free since 16.5.95 (the owner: all effects free)
   // The halo and the edge glow light up past the silhouette; clipping would erase exactly what they add.
   layerMatte: 'expand',
   params: [

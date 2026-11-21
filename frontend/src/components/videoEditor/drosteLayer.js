@@ -64,7 +64,7 @@ export const DROSTE_LAYER_EFFECT_ID = 'droste';
 // The check lives here rather than in a list of feature ids because there is
 // nothing to keep in sync — the effect IS the flag. See the gate in VideoEditor's
 // handleRenderInBackground.
-export const DRO_IS_PRO = true;
+export const DRO_IS_PRO = false;   // free since 16.5.95 (the owner: "open all effects, let them all be free")
 
 export const DRO_DEFAULTS = {
   // shape — where the recursion lives and what shape nests

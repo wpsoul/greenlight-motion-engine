@@ -252,6 +252,15 @@ export function measurePlainText(ctx, text, letterSpacing) {
 // current font — what a whole-string draw applies between them. Cached per font + pair: a split
 // text re-lays itself out every frame it animates.
 export const kernPairCache = new Map();
+// (leftovers2) ...and measured with whatever face the font had when the pair was first asked for: a
+// pair measured while the web font was still loading (the fallback's kerning, or the family's other
+// weight standing in) stayed for good, so a fresh render page laid a 3D title out otherwise than a
+// page that had drawn it before (Inter 600 'Canvas': its n-v pair 0.95 px off, or 0.01 px with the
+// 400 face standing in). Every face that finishes loading clears it; the plate repaints on the
+// font's version (layerMesh.js paint signature) and measures again.
+if (typeof document !== 'undefined' && document.fonts?.addEventListener) {
+  document.fonts.addEventListener('loadingdone', () => kernPairCache.clear());
+}
 
 export function kernBetween(ctx, a, b) {
   if (!a || !b) return 0;

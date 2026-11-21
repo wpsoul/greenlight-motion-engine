@@ -16,6 +16,7 @@
 // SOURCE time. Outside the recording's items the camera rests (zoom 1, centred).
 import { CAMERA_DEFAULTS, autoRanges, buildCameraPlan, evalCamera, presetById, takeFromEventTrack } from './smartZoom.js';
 import { getTimelineDuration, getTimelineLayout, mapTimelineToSource } from './speedUtils.js';
+import { sanitizeCameraRef } from './cameraTargets.js';
 
 export const SMART_ZOOM_MODE = 'smartZoom';
 
@@ -52,6 +53,8 @@ export function sanitizeZoomRanges(list) {
       ...(Number.isFinite(z) && z >= 1 ? { zoom: Math.round(clamp(z, 1, ZOOM_MAX) * 1000) / 1000 } : {}),
       mode: r.mode === 'fixed' ? 'fixed' : 'follow',
       ...(p ? { point: p } : {}),
+      // (camlayer) what a zoom on a posed camera (a 3D Scene's shot) turns to and follows: a Scene object "@<id>", a layer, a point
+      ...(sanitizeCameraRef(r.target) ? { target: sanitizeCameraRef(r.target) } : {}),
       ...(r.disabled ? { disabled: true } : {}),
     });
   }
@@ -153,7 +156,7 @@ const planCache = new Map(); // key → { track, plan }
 const CACHE_MAX = 24;
 
 const rangesKey = (list) => (list
-  ? list.map((r) => `${r.id}:${r.startMs}:${r.endMs}:${r.zoom || ''}:${r.mode || ''}:${r.point ? `${r.point.x},${r.point.y}` : ''}:${r.disabled ? 1 : 0}`).join(';')
+  ? list.map((r) => `${r.id}:${r.startMs}:${r.endMs}:${r.zoom || ''}:${r.mode || ''}:${r.point ? `${r.point.x},${r.point.y}` : ''}:${r.disabled ? 1 : 0}:${r.target ? JSON.stringify(r.target) : ''}`).join(';')
   : 'auto');
 const emptyTake = (durationMs) => ({ durationMs, width: 1920, height: 1080, moves: { t: [], x: [], y: [], s: [] }, shapes: ['arrow'], clicks: [] });
 
@@ -173,7 +176,10 @@ export function smartZoomPlan(item, recordingClip, edit) {
   if (hit && hit.track === track) return hit.plan;
   const take = track ? takeFromEventTrack(track, durationMs) : emptyTake(durationMs);
   if (!take) return null;
-  const plan = buildCameraPlan({ take, settings: preset.camera, slices: edit, ranges: own });
+  // (camlayer) a range with a target zooms about the middle of the frame: the camera turns its head to the target (projectCamera.js
+  // applyZoomLens), the plan only carries the zoom's spring
+  const ranges = own ? own.map((r) => (r.target ? { ...r, mode: 'fixed', point: { x: 0.5, y: 0.5 } } : r)) : own;
+  const plan = buildCameraPlan({ take, settings: preset.camera, slices: edit, ranges });
   planCache.set(key, { track, plan });
   if (planCache.size > CACHE_MAX) planCache.delete(planCache.keys().next().value);
   return plan;
@@ -202,8 +208,41 @@ export function smartZoomEditForItem(item, channels, layoutFor) {
 /** What resolveCameraPose hands getCameraPose for a Zoom camera: the plan and the timeline time. */
 export function smartZoomFrame(item, channels, clipsMap, layoutFor, time) {
   if (!item?.smartZoom) return null;
-  const plan = smartZoomPlan(item, item.smartZoom.clipId ? clipsMap.get(item.smartZoom.clipId) : null, smartZoomEditForItem(item, channels, layoutFor));
-  return plan ? { plan, timeMs: time * 1000 } : null;
+  const edit = smartZoomEditForItem(item, channels, layoutFor);
+  const plan = smartZoomPlan(item, item.smartZoom.clipId ? clipsMap.get(item.smartZoom.clipId) : null, edit);
+  // (camlayer) the source time playing now, for which target range the camera turns to
+  return plan ? { plan, timeMs: time * 1000, sourceMs: zoomSourceAt(edit, time) } : null;
+}
+
+/**
+ * (camlayer) A Zoom camera's state at this frame for a posed camera (projectCamera.js applyZoomLens): the zoom's spring (`zoom`, ≥ 1),
+ * the point of the frame it centres (`cx`, `cy`, 0..1, of the camera's view before the zoom), and the range with a `target` nearest in
+ * time with how far the zoom has come into it (`share`, 0..1: the zoom's own progress to the range's zoom). Null without a plan.
+ */
+export function smartZoomLensState(item, frame) {
+  if (item?.cameraMoveMode !== SMART_ZOOM_MODE) return null;
+  const sz = frame?.smartZoom;
+  if (!sz?.plan) return null;
+  const c = evalCamera(sz.plan, sz.timeMs, {});
+  const out = { zoom: c.zoom, cx: c.cx, cy: c.cy, target: null, share: 0 };
+  const src = sz.sourceMs;
+  const targets = (item.smartZoom?.ranges || []).filter((r) => r.target && !r.disabled);
+  if (targets.length && Number.isFinite(src)) {
+    let best = null, gap = Infinity;
+    for (const r of targets) {
+      const g = src < r.startMs ? r.startMs - src : src > r.endMs ? src - r.endMs : 0;
+      if (g < gap) { gap = g; best = r; }
+    }
+    const zr = Math.max(1, Number(best.zoom) > 0 ? Number(best.zoom) : num(sz.plan.settings?.zoom, 1));
+    out.target = best.target;
+    out.share = zr > 1 + 1e-6 ? clamp((c.zoom - 1) / (zr - 1), 0, 1) : (c.zoom > 1 + 1e-6 ? 1 : 0);
+  }
+  return out;
+}
+
+/** (camlayer) Whether a Zoom camera has a range with a target (it is a 3D shot's zoom: a turn and a lens). */
+export function smartZoomHasTargets(item) {
+  return (item?.smartZoom?.ranges || []).some((r) => r.target && !r.disabled);
 }
 
 // ── Zoom ranges in the editor (the camera layer's blocks, the panel, the preview's gestures) ────────────────────

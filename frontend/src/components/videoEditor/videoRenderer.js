@@ -25,10 +25,11 @@
  * is readiness, and on WebGPU `render()` THROWS before it, so nothing may paint
  * until `ready` resolves.
  */
-import '../../utils/wgslSwizzleFix';
+import '../../utils/wgslSwizzleFix.js';
 import * as THREE from 'three';
 import { getPreviewTier } from './previewDeviceTier.js';
 import { notePerfRenderer } from './perfRegistry.js';
+import { textureSideLimit } from '../../world3d/gpuLimits.js';
 /*
  * `three/webgpu` IS NOT IMPORTED HERE — it is 1.9 MB of source, and a static
  * import puts it in the editor's chunk for every user, including the ones whose
@@ -307,10 +308,20 @@ export function createVideoRenderer({ canvas, backend = 'webgl', width, height }
       const compression = ['texture-compression-bc', 'texture-compression-astc', 'texture-compression-etc2']
         .find((name) => probe.adapter.features.has(name));
       if (compression) requiredFeatures.push(compression);
+      /*
+       * (gaps1) AND THE PICTURE SIZE THE ADAPTER OFFERS. Without asking, a
+       * device draws at most WebGPU's default 8192 px a side, although this
+       * GPU offers 16384: every target of a bigger render was invalid and the
+       * picture came back black. Up to what a render can need (a 16K still,
+       * world3d/gpuLimits.js); asking for no more than the adapter offers
+       * cannot fail a device request.
+       */
+      const side = textureSideLimit(probe.adapter.limits);
+      const requiredLimits = side ? { maxTextureDimension2D: side } : {};
       try {
-        device = await probe.adapter.requestDevice({ requiredFeatures });
+        device = await probe.adapter.requestDevice({ requiredFeatures, requiredLimits });
       } catch (first) {
-        device = await probe.adapter.requestDevice();
+        device = await probe.adapter.requestDevice({ requiredLimits });
         console.warn('[ve] WebGPU device created without optional features:', first?.message || first);
       }
       if (renderer.backend?.parameters) renderer.backend.parameters.device = device;
@@ -466,10 +477,29 @@ function configureRenderer(renderer, width, height) {
  */
 let activeRenderer = 'webgl';
 let activeRendererGeneration = 0;
+/*
+ * WHAT THE OPEN PROJECT ITSELF REQUIRES, above the address and the preference.
+ *
+ * A 3D Scene draws only on WebGPU, so the render page (VideoProjectRenderPage.jsx) requires it for a project that has one: its
+ * export renders on WebGPU whatever the App Settings engine is, and even when the backend's address still says
+ * `?veRenderer=webgl`. Null leaves the choice to them. The editor never sets it: there a Scene on WebGL shows a notice and offers
+ * the switch (WorldNeedsWebGpu.jsx), since the preference is the user's.
+ *
+ * Like the preference, the requirement picks the NEXT session (resolveVideoRenderer); the materials follow the session that is
+ * mounted (selectedBackend), which keeps the engine it was built for until the next one is activated.
+ */
+let requiredRenderer = null;
+let sessionRequired = false;
+
+/** 'webgpu' while the open project needs it, null to give the choice back. Set before the Player session is (re)built. */
+export function requireVideoRenderer(value) {
+  requiredRenderer = value === 'webgpu' ? 'webgpu' : null;
+}
 
 /** Activate a backend only after the previous Player session has been disposed. */
 export function activateVideoRenderer(value) {
   activeRenderer = value === 'webgpu' ? 'webgpu' : 'webgl';
+  sessionRequired = requiredRenderer === activeRenderer;
   activeRendererGeneration += 1;
   // Any adapter retained by the previous renderer session is stale by design.
   preflight = null;
@@ -499,7 +529,7 @@ function rendererFromQuery() {
 
 /** Resolve the app preference plus the explicit URL override used by probes. */
 export function resolveVideoRenderer(value) {
-  const override = rendererFromQuery();
+  const override = requiredRenderer || rendererFromQuery();
   if (override) return override;
   return value === 'webgpu' ? 'webgpu' : 'webgl';
 }
@@ -509,6 +539,8 @@ export function selectedBackend() {
   // materialFactory reads this to decide whether to import `three/webgpu` at
   // all, so a non-browser import of a leaf module must not drag it in.
   if (typeof window === 'undefined') return 'webgl';
+  // A session built for a project's requirement keeps its engine, whatever the address says.
+  if (sessionRequired) return activeRenderer;
   const override = rendererFromQuery();
   if (override) return override;
   if (activeRenderer === 'webgpu') return 'webgpu';

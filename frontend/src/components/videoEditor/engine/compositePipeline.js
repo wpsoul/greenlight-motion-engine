@@ -95,6 +95,24 @@ export function buildCompositePipeline(engine, { camera, initW, initH, fov }) {
   depthCompositeScene.add(new THREE.Mesh(fsQuadGeo, depthCompositeMaterial));
   engine.depthCompositeMaterial = depthCompositeMaterial;
   engine.depthCompositeScene = depthCompositeScene;
+  // (mblur3) the same in linear light, for a 3D Scene's frame traced moving over a see-through sky (adjustmentComposite compositeWithDepth):
+  // made on first use, so a project that never has one makes nothing
+  engine.depthCompositeLinear = () => {
+    if (engine.depthCompositeLinearScene !== undefined) return engine.depthCompositeLinearScene;
+    const m = makeMaterial.depthCompositeLinear?.() ?? null;
+    engine.depthCompositeLinearScene = m ? new THREE.Scene().add(new THREE.Mesh(fsQuadGeo, m)) : null;
+    engine.depthCompositeLinearMaterial = m;
+    return engine.depthCompositeLinearScene;
+  };
+  // (mblur4) and the plain over-blit in linear light: a shadow catcher's shadow (and a project background laid under a frame that goes over
+  // in linear light) over the stack (adjustmentComposite layShadow); made on first use
+  engine.overBlitLinear = () => {
+    if (engine.overBlitLinearScene !== undefined) return engine.overBlitLinearScene;
+    const m = makeMaterial.overBlitLinear?.() ?? null;
+    engine.overBlitLinearScene = m ? new THREE.Scene().add(new THREE.Mesh(fsQuadGeo, m)) : null;
+    engine.overBlitLinearMaterial = m;
+    return engine.overBlitLinearScene;
+  };
   // A 3D pass with transparent surfaces composites in two draws, each with its own
   // material (compositeWithDepth): its opaque pixels writing depth, then a card in
   // front at its own depth without writing it — depth writing is pipeline state on
@@ -149,6 +167,14 @@ export function buildCompositePipeline(engine, { camera, initW, initH, fov }) {
   backdropUnderScene.add(new THREE.Mesh(fsQuadGeo, backdropUnderMaterial));
   engine.backdropUnderMaterial = backdropUnderMaterial;
   engine.backdropUnderScene = backdropUnderScene;
+  // (vfx) the footage's light round a placed object, wrapped onto its edge (renderAdjustmentComposite): WebGPU only, as the world is
+  const lightWrapMaterial = makeMaterial.lightWrap?.() ?? null;
+  if (lightWrapMaterial) {
+    const lightWrapScene = new THREE.Scene();
+    lightWrapScene.add(new THREE.Mesh(fsQuadGeo, lightWrapMaterial));
+    engine.lightWrapMaterial = lightWrapMaterial;
+    engine.lightWrapScene = lightWrapScene;
+  }
   const cameraDofMaterial = makeMaterial.cameraDof() ?? createCameraDofMaterial();
   const cameraDofScene = new THREE.Scene();
   cameraDofScene.add(new THREE.Mesh(fsQuadGeo, cameraDofMaterial));
@@ -298,6 +324,9 @@ export function disposeCompositePipeline(engine) {
   engine.glowMaterials?.main?.dispose();
   engine.motionBlurMaterial?.dispose();
   engine.motionTrailMaterial?.dispose();
+  engine.lightWrapMaterial?.dispose();
+  engine.lightWrapMaterial = null;
+  engine.lightWrapScene = null;
   const trailPass = engine.trailPass;
   if (trailPass) { trailPass.warp?.dispose(); trailPass.acc?.dispose(); trailPass.erode?.dispose(); trailPass.compose?.dispose(); }
 }

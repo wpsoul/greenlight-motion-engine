@@ -615,6 +615,9 @@ export function evaluateAst(ast, ctx) {
   globals.progress = ctx.progress;
   globals.index = ctx.index;
   globals.thisProperty = ctx.value;
+  // (animtools) a 3D Scene drive's own variables (world3d/keys.js: each a clock through its remap), under names the language does not
+  // already have: a variable never shadows a function or `time`
+  if (ctx.vars) for (const k of Object.keys(ctx.vars)) if (!(k in globals)) globals[k] = ctx.vars[k];
   globals.noise = (t, octaves) => fractalNoise(num(t), seed, octaves === undefined ? 1 : num(octaves));
   // wiggle(freq, amp, octaves?) — amp is in the property's own units, like AE.
   globals.wiggle = (freq, amp, octaves) => num(ctx.value)

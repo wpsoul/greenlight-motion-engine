@@ -11,7 +11,7 @@ import { depthScanPhase, getDepthScanEffect, resolveDepthScanParams } from '../d
 import { getFresnelRimEffect, isFresnelRimEnabled, resolveFresnelRimParams } from '../fresnelRimLayer';
 import { glassShapeOf, resolveGlassParams } from '../glassEffect';
 import { applyGsapEasing } from '../gsapTransitions';
-import { resolveModelOverlayFx } from '../model3dFxCatalog';
+import { resolveModelOverlayFx, isModelFxOverlay, NOT_IN_WORLD_FX_IDS } from '../model3dFxCatalog';
 import { perfRegistry } from '../perfRegistry.js';
 import { isCameraBaked3dPlate, RIG_MEDIA_TYPE } from '../rig3d';
 import { withRadiusScaleLock } from '../borderKeyframes';
@@ -36,16 +36,8 @@ export function resumeChannelBlend(cs) {
 
 export const CAMERA_FOV = 28;
 
-export function resolveActiveIndex(layout, time) {
-  // Small epsilon so float rounding exactly at a shot boundary doesn't momentarily
-  // resolve to no clip (which would blank the channel for a frame). Inclusive bounds
-  // bias toward the incoming clip at an exact boundary, which is what we want.
-  const EPS = 1e-6;
-  for (let i = layout.length - 1; i >= 0; i -= 1) {
-    if (time >= layout[i].startTime - EPS && time <= layout[i].endTime + EPS) return i;
-  }
-  return -1;
-}
+// (filmbugs) a channel's active clip and a motion-blur sub-frame's hold of it: a pure module (../shutterHold.js), its node tests beside it
+export { resolveActiveIndex, shutterTimeIn } from '../shutterHold.js';
 
 // A layer acts as a clipping mask when its own mask flag is on. Shapes and text
 // both qualify — the mask pass only samples the channel's alpha, so any layer that
@@ -223,7 +215,7 @@ export const _plateScale = new THREE.Vector3();
  * effects module or allocates a target. Inside a window the clock is rebased,
  * exactly as Depth Scan does it.
  */
-export function resolveModelFx3d(item, kfNow, clipNow, duration) {
+export function resolveModelFx3d(item, kfNow, clipNow, duration, inWorld = false) {
   const out = [];
   // Depth Scan on a model slices EXACT depth inside the 3D pass — no depth map.
   const scan = getDepthScanEffect(item);
@@ -250,7 +242,10 @@ export function resolveModelFx3d(item, kfNow, clipNow, duration) {
   // Overlay Effects added to the model in 3D (`real3d`), after the layer
   // effects — the flat stack's order (layer stages, then the chain).
   const master = Number.isFinite(kfNow?.effectAmount) ? Math.max(0, Math.min(1, kfNow.effectAmount)) : 1;
-  out.push(...resolveModelOverlayFx(item, { kf: kfNow, time: clipNow, duration, master }));
+  // In a world Scene the ones not offered there are skipped (model3dFxCatalog.js NOT_IN_WORLD_FX_IDS); the six that take the model out
+  // of the world run here, in the pass that then draws it.
+  const only = inWorld ? (e) => isModelFxOverlay(e) && !NOT_IN_WORLD_FX_IDS.has(e.id) : isModelFxOverlay;
+  out.push(...resolveModelOverlayFx(item, { kf: kfNow, time: clipNow, duration, master }, only));
   return out.length ? out : null;
 }
 

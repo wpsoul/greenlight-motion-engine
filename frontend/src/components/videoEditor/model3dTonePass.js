@@ -46,7 +46,8 @@ const TONEMAP_VERT = /* glsl */ `
 void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
 `;
 
-/** The GLSL tone material. `ensureTonePass()` swaps in the twin on WebGPU. */
+/** The GLSL tone material. `ensureTonePass()` swaps in the twin on WebGPU, which alone also films a model a world Scene let go of
+ *  through that world's curve and Look (uLook): a 3D Scene draws only on WebGPU. */
 export function createModelTonePassMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {

@@ -12,7 +12,7 @@ import { isMotionVideoUrl, prepareMotionVideo } from '../motionTemplates';
 import { getMotionImage } from '../motionTemplates/mtl';
 import { resolveTextureBudgetBytes } from '../previewDeviceTier.js';
 import { createTextureBudget, FALLBACK_MAX_TEXTURE_DIM, MAX_CANVAS_AREA } from '../rasterDensity';
-import { applyRigKeyframes, isRigColorTrackKey, isRigTrackKey, resolveRigAt, RIG_MEDIA_TYPE } from '../rig3d';
+import { applyRigKeyframes, isRigColorTrackKey, isRigTrackKey, resolveRigAt, RIG_MEDIA_TYPE, shutterEntries } from '../rig3d';
 import { PREVIEW_TIER } from './previewMedia';
 
 export function getRasterBudget(engine) {
@@ -34,7 +34,8 @@ export function getRasterCaps(engine) {
 }
 
 export function activeRigAt(engine, time) {
-  const entry = resolveRigAt(engine.rigEntries, time);
+  // (filmbugs) a sub-frame of a render's motion blur: the Scene layer showing at the frame's own time (rig3d.js shutterEntries)
+  const entry = resolveRigAt(shutterEntries(engine.rigEntries, engine.shutterFrameTime), time);
   if (!entry?.rig) return null;
   const tracks = entry.propertyKeyframes;
   if (!tracks) return entry.rig;

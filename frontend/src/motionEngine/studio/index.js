@@ -42,6 +42,7 @@ import { install as notes } from './notes.js';
 import { install as highlight } from './highlight.js';
 import { install as chatLayout, whiten } from './chat.js';
 import { install as timelineZoom } from './timelineZoom.js';
+import { install as worldSwitch } from './worldSwitch.js';
 
 const SORT_CARET = '<svg class="ve-nav-sort-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const COLLAPSE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 19h16M9 10.5 12 8l3 2.5M9 13.5l3 2.5 3-2.5"/></svg>';
@@ -140,5 +141,7 @@ export function mountStudio(el, { project, sources, strips, parts, config, asset
   for (const install of [lab, review, color, inspector, gizmo, notes, highlight]) install(STUDIO);
   STUDIO.zoom = timelineZoom();
   if (chat) STUDIO.chat = chatLayout(STUDIO, chat);
+  // (chatswitch) a film with a 3D Scene: Draft | Final at the end of the Edit toolbar (nothing at all for a 2D film)
+  worldSwitch(STUDIO);
   return STUDIO;
 }

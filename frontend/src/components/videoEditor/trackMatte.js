@@ -59,7 +59,27 @@ export function normalizeTrackMatte(raw) {
   const sourceId = typeof raw.sourceId === 'string' ? raw.sourceId.trim() : '';
   if (!sourceId) return null;
   const mode = MATTE_MODE_SET.has(raw.mode) ? raw.mode : MATTE_MODE_ALPHA;
-  return { sourceId, mode };
+  return { sourceId, mode, ...worldMaskFields(raw) };
+}
+
+// (octane2) A world matte: the source is the 3D Scene layer, and the matte is the coverage of some of its world's objects (`objects`: scene
+// object ids, each with everything under it) and materials (`materials`: names in scene.materials), as the Scene renders them in Draft and
+// Final (render/renderPasses.js). The Scene stays in the picture: it is not hidden the way an ordinary matte source is.
+const worldNames = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? [v] : [])
+  .filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim()).slice(0, 64);
+
+function worldMaskFields(raw) {
+  const objects = worldNames(raw?.objects), materials = worldNames(raw?.materials);
+  return {
+    ...(objects.length ? { objects } : {}),
+    ...(materials.length ? { materials } : {}),
+  };
+}
+
+/** A world matte's key (the same objects and materials, the same mask), or null for an ordinary matte. */
+export function worldMaskKey(matte) {
+  if (!matte || (!matte.objects?.length && !matte.materials?.length)) return null;
+  return JSON.stringify([matte.objects || [], matte.materials || []]);
 }
 
 export function getTrackMatte(item) {
@@ -151,7 +171,7 @@ export function repairTrackMatteReferences(channels) {
       const normalized = normalizeTrackMatte(had);
       if (normalized && normalized.sourceId === keep && normalized.mode === had.mode) return item;
       chChanged = true;
-      return { ...item, trackMatte: { sourceId: keep, mode: normalized?.mode || MATTE_MODE_ALPHA } };
+      return { ...item, trackMatte: { sourceId: keep, mode: normalized?.mode || MATTE_MODE_ALPHA, ...worldMaskFields(had) } };
     });
     if (!chChanged) return ch;
     changed = true;
@@ -174,7 +194,7 @@ export function remapTrackMatteIds(item, idMap) {
     void trackMatte;
     return rest;
   }
-  return { ...item, trackMatte: { sourceId: mapped, mode: matte.mode } };
+  return { ...item, trackMatte: { sourceId: mapped, mode: matte.mode, ...worldMaskFields(matte) } };
 }
 
 /** Strip the matte from an item outright (single-layer / cross-project paste). */

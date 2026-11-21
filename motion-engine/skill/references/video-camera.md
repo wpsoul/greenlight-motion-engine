@@ -34,8 +34,10 @@ Rules:
 - The camera lives on a channel marked `"kind": "camera"`. **A timeline may have at most one camera channel, and it must be LAST in its `channels` array** (the project's, and each sequence's for its own camera — see [A sequence's own camera](#a-sequences-own-camera)); channel order is z-order, so last renders highest. The editor re-pins it on every write and on load, so a project authored with the camera elsewhere is silently reordered — emit it last to avoid surprising diffs. Put several camera clips on it to chain moves; the clip under the playhead wins, and outside every camera clip the camera is neutral.
 - Camera clips are synthetic (no `url`) and are keyframed with their own property registry (below), using the ordinary `propertyKeyframes` shape: `position` 0–100 % of the clip, `value` a string.
 - Any channel can opt out with `"cameraLocked": true` — it renders exactly as if there were no camera (watermarks, fixed captions).
-- In a 3D Scene the Camera layer films the world too, depth of field included, unless the Scene names its own `rig.scene.camera` (world3d.md (GreenLight Dash only)).
-- A camera-locked layer is a 2D layer, as in After Effects: it composites in STACK order and never depth-tests against 3D. Above a model layer in the stack it draws over the model (a flash, a title at the comp plane needs no pulling toward the camera); at the very bottom of the stack (a full-frame backdrop) it stays behind everything, the Scene Rig's cyclorama included. 3D layers on either side of a locked layer still occlude each other by depth.
+- In a 3D Scene the Camera layer films the world, in every mode, depth of field included, unless the Scene names its own `rig.scene.camera`.
+  One world metre is 1000 px; its targets can be Scene objects (`"@<id>"`); `POST /api/world3d/camera-layer` turns a camera written in
+  metres into its fields: [Filming the Scene with the Camera layer](video-world3d.md#filming-the-scene-with-the-camera-layer).
+- A camera-locked layer is a 2D layer, as in After Effects: it composites in STACK order and never depth-tests against 3D. Above a model layer in the stack it draws over the model (a flash, a title at the comp plane needs no pulling toward the camera); at the very bottom of the stack (a full-frame backdrop) it stays behind everything, the Scene Rig's cyclorama included. With a Scene Rig, only footage and pictures (`video`, `image`) at the bottom, and what is stacked under them, stay behind the Scene; any other locked layer (a title, a shape, a lower third, an HTML page) is drawn over it ([video-world3d.md](video-world3d.md)). 3D layers on either side of a locked layer still occlude each other by depth.
 
 ```jsonc
 {
@@ -68,19 +70,23 @@ Every field below can be a **base value on the camera item** (`item.camAperture 
 | `camZoom` | × | `1` | Lens zoom about the frame centre. Magnifies every layer equally — parallax unchanged. |
 | `camX` | % of frame width | `0` | Positive pans the camera **right**, so content slides left. |
 | `camY` | % of frame height | `0` | Positive pans the camera **down**, so content slides up. |
-| `camRoll` | deg | `0` | Cants the horizon clockwise (dutch angle). |
+| `camRoll` | deg | `0` | Cants the horizon clockwise (dutch angle). On a camera that aims (a look-at, a path's target or tangent, a rig) it turns the aimed view about its own line of sight. |
 | `camDolly` | px | `0` | Moves the viewpoint in (positive) or out. Unlike `camZoom` this DOES change perspective — layers at different `panZ`/`translateZ` separate. |
 | `camTiltX` / `camTiltY` | deg | `0` | Pitch / yaw, any angle. Past ±90° the camera orbits behind the comp plane and sees the layers from the back, mirrored. |
 | `camDofEnabled` | 0/1 | `0` | Depth-of-field master switch. |
 | `camFocusDistance` | px | `0` | Distance to the sharp plane. `0` = the comp plane (`(H/2)/tan(14°)`), so it survives a canvas resize. |
 | `camAperture` | px | `24` | The blur's radius in px (not its width) for something far behind the focus plane, at `camBlurLevel` 100. Larger = shallower. `0` disables the blur entirely. |
 | `camBlurLevel` | % | `100` | Scales the computed circle of confusion. `0` disables. |
+| `camFStop` | f-number | `0` | A lens's f-number. Above `0` it sets the blur (`camAperture`) on every frame from the focus distance and the zoom as a real lens's (the world's 36 mm film along the frame's longer side), so a focus pull or a zoom keeps the f-number and Draft and Final take that lens. `0`: `camAperture` sets the blur. |
 | `camHighlightGain` | % | `0` | Bloom on bright pixels, so highlights form bokeh discs. |
 | `camFocusX` / `camFocusY` | % | `50` | Focus point. Also the centre of the focus area when one is set. |
 | `camFocusWidth` | % of frame width | `0` | `0` = the point is only a depth probe. Above `0` a screen-space region around the point stays sharp and eases to the layer's full blur by its edge. |
 | `camPathT` | % | `0` | Progress along `cameraPath` or a Camera Rig's move (0–100). |
 | `camPathOffsetX/Y/Z` | px | `0` | Constant displacement from `cameraPath`, on world axes (+X right, +Y **down**, +Z toward the viewer). The aim is computed **after** it, so a camera pushed off a shared path still faces its target. No-op unless the path is live. |
 | `camFollowTarget` | 1-based index | `1` | Which `cameraRig.targets` entry a `follow` rig looks at (see [Camera Rig](#camera-rig--a-parametric-camera-move)). |
+| `cameraLookAt` | target | — | Not keyable. A free (or Zoom) camera turns to keep it in the middle of the frame: `"@<Scene object id>"`, a timeline item id, or `{ "x", "y", "z" }` px. `camX`, `camY`, `camDolly` are then its place on the world's axes (x = `camX` % of the width, y = −`camY` % of the height, z = D − `camDolly`, whatever the zoom) and the tilt rows have no say. |
+| `cameraFocusOn` | target | — | Not keyable. Holds the focus on it on every frame (the focus distance is its depth along the line of sight), in any mode. |
+| `camLensK1` | — | `0` | Base value only. A real wide lens's one radial distortion term (x_bent = x · (1 + k1 · r²), x in focal lengths; negative = barrel), as a footage solve finds it (tracking-data.md (GreenLight Dash only)). The 3D Scene's picture is bent by it so it lines up with footage shot through that lens; other layers are not. Keep the solve's value; `0` or absent bends nothing. |
 
 Animating `camDolly` and `camZoom` in opposite directions is the vertigo effect.
 
@@ -120,7 +126,7 @@ A camera item can ride a saved 3D bezier spline. It uses the same world-pixel po
 
 - **A path drives the camera only while `cameraMoveMode` is `"path"` or absent**, and the path is live: at least two points and `follow: true`, or one point on `aim: "captured"`, which holds the camera there. An explicit `"free"`, `"rig"` or `"smartZoom"` ignores the path. Applying a camera preset that animates the pose writes `"free"`, so set `"cameraMoveMode": "path"` whenever you add a path to an existing camera.
 - Provide a `camPathT` progress track (a `Linear` 0→100 is the sensible default) unless the camera is intentionally parked on one point. `camPathT` is 0–100; open paths run first→last, closed paths wrap 100 back to point one.
-- `aim: "tangent"` looks along the curve. `aim: "target"` looks at `targetId` (a timeline item id), or the composition centre when `targetId` is null/missing. `aim: "free"` leaves orientation to `camTiltX`, `camTiltY`, and `camRoll` base values/keyframes. `aim: "captured"` reads it from each point: `rx`, `ry`, `rz` are Tilt X, Tilt Y and Roll in degrees, interpolated between points, and the `camTilt`/`camRoll` tracks are ignored.
+- `aim: "tangent"` looks along the curve. `aim: "target"` looks at `targetId` (a timeline item id, or a 3D Scene object as `"@<id>"`), or the composition centre when `targetId` is null/missing. `aim: "free"` leaves orientation to `camTiltX`, `camTiltY`, and `camRoll` base values/keyframes. `aim: "captured"` reads it from each point: `rx`, `ry`, `rz` are Tilt X, Tilt Y and Roll in degrees, interpolated between points, and the `camTilt`/`camRoll` tracks are ignored.
 - **Timing a path by points** — segments are walked at a uniform rate, so point `i` of `n` is reached where `camPathT` equals `i / (n - 1) * 100` (`i / n * 100` when closed). To land on a point at a chosen moment, key that value at that clip position, with `"easing": "Linear"`.
 - Following owns the camera's position on the curve. Lens zoom and depth of field remain independent; free aim also keeps the manual orientation tracks authoritative.
 - **Offset from path** — `camPathOffsetX/Y/Z` (table above). Two cameras, or a camera and a layer, can then ride one shared curve at a fixed distance apart. Keyframable like every other camera field.
@@ -136,7 +142,9 @@ Depth of field is physical and needs `camDofEnabled: 1`. Each layer's circle of 
 - **Model layers, the Scene Rig's cyclorama and occluding shadow plates blur per pixel.** They hand the compositor their depth buffer, and every pixel blurs by the CoC of its own distance (capped at 64 px, still held sharp inside the focus area). A character in focus stays sharp in the same model as a wall metres behind it, so a whole set, backdrop included, can live in one model layer.
 - **The gather is depth-aware:** a blurred background never smears over a sharp foreground edge, a sharp foreground leaves no halo on the blurred background, and a foreground in front of the focus plane blurs out over what is behind it and past its own silhouette. Taps read the picture prefiltered, so thin bright detail under a wide blur (lettering far behind the focus) averages instead of sparkling; flat layers get the same.
 - **Both distances are view depth from the camera**, so a camera that moves carries the sharp plane with it. Under a dolly the subject at depth `z` (its `panZ`) sits at `perspectiveDistance − camDolly − z` (`perspectiveDistance = (H/2)/tan(14°)`, ≈ 2166 on a 1080-tall frame). To keep a subject sharp through a move, key `camFocusDistance` on the dolly's own keys with that value; under a rig, key it with the subject's depth along the rig's view at a few points of the move (a GreenLight Motion scene script's `dof.focus` does both).
-- **In a 3D Scene** the same numbers set Final's thin lens, so Final blurs as Draft does (see world3d.md (GreenLight Dash only)).
+- **In a 3D Scene** the same numbers set the world's thin lens: Draft blurs the Scene through it and Final traces it, so the two blur alike.
+  The focus area and `camHighlightGain` shape flat layers only. A real lens's blur grows as it focuses nearer and zooms in; key
+  `camAperture` with them for one f-number ([video-world3d.md](video-world3d.md#units-and-axes)).
 - **Matching a real lens.** For a lens of focal length `f` mm at f-number `N` on a sensor `S` mm wide, with the focus `F` in px (a composition pixel is a millimetre of a 3D Scene) and the frame `W` px wide: `camAperture = f² · W / (2 · N · (F − f) · S)`, at `camBlurLevel` 100. Past the field's 300, raise `camBlurLevel` instead (a `.blend` import keys it this way).
 - **Focus area:** `camFocusWidth` above 0 keeps a screen region around `camFocusX`/`camFocusY` sharp whatever its depth, easing to the full blur by its edge.
 - `camAperture: 0` or `camBlurLevel: 0` renders byte-identically to DOF off. There are no per-layer `dof*` fields — `dof*` fields on a layer animate nothing. The Focus presets in [Built-in camera moves](#built-in-camera-moves) are ready rack-focus moves.
@@ -200,6 +208,11 @@ automatic from a screen recording's clicks, or placed by hand. Nothing is baked 
 
   The recorder sets one before the take; a take recorded with no zoom gets no camera at all.
 - **Precedence:** it drives `camZoom`, `camX` and `camY`, so keys on those three render as nothing. `camRoll`, `camDolly`, tilt and depth of field compose as usual. A motion preset that animates zoom or pan flips the mode to `"free"`.
+- **On a posed camera (a 3D Scene's shot)** — a pose off neutral, a `cameraLookAt`, or a range with a `target` — a zoom is a lens zoom: the
+  camera stays where its pose puts it, turns its head to the range's `target` (`"@<Scene object id>"`, a layer or a point, followed as it
+  moves) or to the range's point of the view before the zoom, and its lens zooms by `zoom` times its own `camZoom`. With depth of field on,
+  the focus goes to the target and the blur grows as a lens's does at one f-number. The camera at rest zooms as above, about the comp plane.
+  Example: [video-world3d.md](video-world3d.md#a-zoom-onto-a-scene-object-and-back).
 - **Changing it:**
   - Patch `smartZoom.preset` on the live project to change the look, or `smartZoom.ranges` to place zooms.
   - Set `"cameraMoveMode": "free"` to drive the camera by hand. `smartZoom` stays on the item, so setting the mode
@@ -314,7 +327,7 @@ A camera item's `cameraMoveMode` picks one of four exclusive modes: `"free"` (po
 "cameraRig": {
   "type": "orbit",            // orbit|dolly|crane|pushIn|truck|spiral|handheld|follow
   "aim": "center",            // center|path — where the camera looks
-  "radius": 1800, "height": 400,
+  "radius": 1800, "height": 400,   // round `center` ("@<Scene object id>", a layer, or { x, y, z } px); absent: the comp centre
   "startAngle": -40, "sweep": 90,
   "rise": 0, "tilt": -8, "roll": 0,
   "distance": 1200, "turns": 1,
@@ -325,7 +338,11 @@ A camera item's `cameraMoveMode` picks one of four exclusive modes: `"free"` (po
 
 Every type reads `radius`, `height`, `startAngle`, `tilt` and `roll`. On top of those: `orbit` adds `sweep`; `crane` adds `sweep` + `rise`; `spiral` adds `sweep` + `rise` + `turns`; `dolly`, `pushIn` and `truck` add `distance` (and read **no** `sweep`); `handheld` adds `amplitude` + `frequency`; `follow` adds `sweep` plus the `targets` list. The rest are stored and ignored.
 
-**`follow` — a drone that rides an object.** The rig's orbit maths are re-based onto a followed layer's position: the camera keeps looking at it while `radius`/`height`/`startAngle`/`sweep` place and circle it, and a **moving** target drags the whole move with it. `targets` is an array of layer **item ids** (any positioned layer — not audio/voice); the keyframable camera track **`camFollowTarget`** (1-based, default `1`) names which entry the camera looks at. A key from `1` to `2` pans the look-at from one object to the next smoothly with the key's easing — **fractional values blend the two targets' positions**, so the hand-off is a camera move, not a cut. With an empty `targets` list (or dangling ids) the rig degrades to a plain orbit of the comp centre. `camFollowTarget`, like `camPathT`, is a driver track: the rig reads it and never overwrites it. A target is followed where it actually renders — through its position tracks, an object Motion Path (`motionPath` + `motionPathT`) or keyframe parenting.
+**`center` — built round something else than the comp centre.** Every type builds its move round `cameraRig.center`: a 3D Scene object
+(`"@<id>"`), a layer (its item id) or a point `{ x, y, z }` px, moving with it (`follow` uses its `targets` instead). In a Scene the numbers
+are px round it: `radius` 1800 is 1.8 m, `height` 400 is 0.4 m above it, `startAngle` 0 is in front of it (+z) and 90 to its right (+x).
+
+**`follow` — a drone that rides an object.** The rig's orbit maths are re-based onto a followed layer's position: the camera keeps looking at it while `radius`/`height`/`startAngle`/`sweep` place and circle it, and a **moving** target drags the whole move with it. `targets` is an array of layer **item ids** (any positioned layer — not audio/voice) or 3D Scene objects (`"@<id>"`); the keyframable camera track **`camFollowTarget`** (1-based, default `1`) names which entry the camera looks at. A key from `1` to `2` pans the look-at from one object to the next smoothly with the key's easing — **fractional values blend the two targets' positions**, so the hand-off is a camera move, not a cut. With an empty `targets` list (or dangling ids) the rig degrades to a plain orbit of the comp centre. `camFollowTarget`, like `camPathT`, is a driver track: the rig reads it and never overwrites it. A target is followed where it actually renders — through its position tracks, an object Motion Path (`motionPath` + `motionPathT`) or keyframe parenting.
 
 #### Rig parameters
 
@@ -334,7 +351,7 @@ Every type reads `radius`, `height`, `startAngle`, `tilt` and `roll`. On top of 
 | Key | Range | Default |
 | --- | --- | --- |
 | `radius` | `100`–`20000` px | `1800` |
-| `height` | `−8000`–`8000` px | `400` (positive films from below the subject — a low hero angle; negative from above) |
+| `height` | `−8000`–`8000` px | `400` (positive stands above the subject, looking down at it; negative below, a low hero angle) |
 | `startAngle` | `−360`–`360`° | `−40` (`0` = straight ahead) |
 | `sweep` | `−720`–`720`° | `90` |
 | `rise` | `−8000`–`8000` px | `0` |
@@ -362,7 +379,7 @@ Every type reads `radius`, `height`, `startAngle`, `tilt` and `roll`. On top of 
 
 **`aim` picks what the camera faces.** `"center"` (the default, also when the key is absent) aims at the point the rig is built around — the comp centre, or the followed layer for `follow`. `"path"` faces the direction of travel. It suits moves that travel toward or past the subject (`pushIn`, `dolly`, `crane`, `truck`); on an `orbit` or `spiral` it looks along the circle, roughly 90° away from the subject. A rig that does not move (zero `sweep`/`distance`, a `handheld` with `amplitude` 0) keeps the centre aim. `aim` is a choice about the shot's framing, not part of a preset: keep the current value when emitting a preset over an existing rig, as with `targets`.
 
-**`tilt` moves the AIM POINT, not the camera's own rotation**, so the subject stays framed as the rig travels. With `"aim": "path"` the same lift tips the gaze above or below the direction of travel. `handheld` jitter is a pure function of `seed` and progress — never wall-clock — so preview and export match frame for frame.
+**`tilt` moves the AIM POINT, not the camera's own rotation**, so the subject stays framed as the rig travels: by `height · tilt / 45` px up (with `height` 400, `tilt` −8 aims 71 px below the centre, a little down). With `"aim": "path"` the same lift tips the gaze above or below the direction of travel. `handheld` jitter is a pure function of `seed` and progress — never wall-clock — so preview and export match frame for frame.
 
 **Flat layers have a front.** Text, shapes, pictures and video are flat cards: an orbit that swings more than about 75° off the front (`startAngle` + `sweep` past ±75°, with `startAngle: 0` = straight ahead) turns them edge-on, and past 90° the camera sees their backs and they read mirrored. Keep orbits of flat layers within about ±70°: `heroOrbit` (−40° → +50°) stays inside; `slowReveal` (−120° → +30°) and `chaseCam` (from 160°) start past it, and `turntable`'s full circle is for 3D models.
 
@@ -387,4 +404,4 @@ The editor's twelve rig presets. Fields not listed take the defaults in [Rig par
 
 #### Mode precedence
 
-**A rig or a live path BEATS the pose keyframes.** The camera reads its tracks first; then a rig (mode `"rig"`) or a live path (mode `"path"` or absent) overwrites `camX`, `camY`, `camDolly` — plus `camTiltX`/`camTiltY`/`camRoll` whenever an aim is computed. So on a rigged camera, `camX`/`camY`/`camDolly`/tilt/roll keyframes are stored, drawn in the timeline, and **render as nothing**. `camZoom`, the whole depth-of-field family, `camPathT` and `camFollowTarget` are untouched by both and compose freely. To emit a pose move, emit `"cameraMoveMode": "free"` explicitly with it (omitting the field leaves a live `cameraPath` in control). The editor enforces the same rule by flipping the mode to `"free"` when a camera preset that animates those props is applied, keeping `cameraRig` and `cameraPath` on the item so switching back restores the move.
+**A rig or a live path BEATS the pose keyframes.** The camera reads its tracks first; then a rig (mode `"rig"`) or a live path (mode `"path"` or absent) overwrites `camX`, `camY`, `camDolly` — plus `camTiltX`/`camTiltY` whenever an aim is computed, and `camRoll` then cants the aimed view about its line of sight. So on a rigged camera, `camX`/`camY`/`camDolly`/tilt keyframes are stored, drawn in the timeline, and **render as nothing**. `camZoom`, the whole depth-of-field family, `camPathT` and `camFollowTarget` are untouched by both and compose freely. To emit a pose move, emit `"cameraMoveMode": "free"` explicitly with it (omitting the field leaves a live `cameraPath` in control). The editor enforces the same rule by flipping the mode to `"free"` when a camera preset that animates those props is applied, keeping `cameraRig` and `cameraPath` on the item so switching back restores the move.

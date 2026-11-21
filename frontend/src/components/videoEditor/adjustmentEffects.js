@@ -1005,7 +1005,7 @@ vec4 fx(vec2 uv) {
     name: 'Gradient Sweep',
     group: 'Gradient',
     animated: true,
-    pro: true,
+    pro: false,   // free since 16.5.95 (the owner: all effects free)
     // The bloom and the lead-focus blur deliberately spill past the layer's
     // alpha; clipping would shave them to the silhouette.
     layerMatte: 'expand',

@@ -14,6 +14,7 @@
 - [Transition fields](#transition-fields)
   - [Writing a transition on an item](#writing-a-transition-on-an-item)
   - [No transitions on 3D model layers](#no-transitions-on-3d-model-layers)
+  - [Cross transitions at a 3D Scene layer's edge](#cross-transitions-at-a-3d-scene-layers-edge)
   - [Which clip moves to make the overlap (`transitionOrder`)](#which-clip-moves-to-make-the-overlap-transitionorder)
   - [Ripple transition](#ripple-transition-is-a-modal-action-not-a-stored-field)
   - [Layer in/out transitions](#layer-inout-transitions)
@@ -25,6 +26,7 @@
   - [Gradient Glow Stack](#gradient-glow-stack)
   - [Gradient Map](#gradient-map)
   - [The `Custom` transition](#the-custom-transition--build-the-move-yourself)
+- [Joins in the editor: the fields of the motion grammar](#joins-in-the-editor-the-fields-of-the-motion-grammar)
 
 ## Preferred cross transitions
 
@@ -53,6 +55,10 @@ Durations are clamped on load, so stay inside them: `transitionDuration` 0.05–
 ### No transitions on 3D model layers
 
 A `model3d` item is drawn by a 3D pass, which neither the cross blend nor the in/out animation runs, so during a transition the model simply disappears. The editor does not offer them: write no `transition`, `transitionInType` or `transitionOutType` on a `model3d` item, and no cross `transition` on the item right after one. To bring a model in or out, animate it with keyframes (scale, position, rotation) instead; opacity works only outside a 3D Scene (no Scene layer, or a Rig with `renderer: "classic"`), since a model the 3D Scene draws takes no opacity.
+
+### Cross transitions at a 3D Scene layer's edge
+
+A Scene layer (a `rig` item) takes the in/out transitions and the cross transitions like a picture: a cross `transition` between a clip and a Scene layer on the Scene's channel (into it on the Scene's item, out of it on the next one) blends the clip with the Scene's own frame, which plays on its own clock from the Scene clip's start (the overlap included), in Draft and Final, in the preview and in renders. Between two Scene layers the world draws one Scene a frame: for the overlap the first one plays its side of the transition and the second shows from the overlap's end, so between two Scene layers cut, or end the first with an out transition (`Fade`, `Dip to Black`, ...) and start the second with an in transition.
 
 ### Which clip moves to make the overlap (`transitionOrder`)
 
@@ -112,3 +118,121 @@ A cross type and a layer in/out type, decoded from an After Effects gradient-map
 - **The effects.** `fxZoom` (−300…300 %), `fxBlur` (0–60 px) with `fxBlurType` (`gaussian` | `directional` | `radial`), `fxRgbSplit` (0–300) with `fxRgbAlong` (`motion` | `horizontal` | `radial`), `fxOptics` and `fxFisheye` (−200…200) with `fxFisheyeModel` (`spherical` | `barrel`) / `fxFisheyeCentre` (`point` | `frame`) / `fxFisheyeFit`, `fxFlash` (0–200) with `fxFlashColor` (`#rrggbb`), `fxOpacityDip` (0–100), and `fxWiggle` (0–100) with `fxWiggleFreq` (1–40), `fxWiggleRotate` (0–8) and `fxWiggleSeed` (1–99). **Amount `0` is off for every group**, so leave out any group you don't use. `fxPointX` / `fxPointY` (0–100 %, default 50) is the pivot the zoom and the radial modes aim through — separate from `originX`/`originY`.
 - **`fxProfile` shapes every fx across the transition**: `"ramp"` (default — rises with it), `"peak"` (rises and falls, strongest mid-way, which is what a blur or a flash on a cut wants) or `"constant"` (flat).
 - Values outside these ranges are clamped on load and unknown keys are dropped on save, so write only the keys above and round-trip only what you mean to change.
+
+## Joins in the editor: the fields of the motion grammar
+
+How the motion grammar's rules for joins ([video-design.md](video-design.md#joins-one-move-across-the-cut): match velocity, the
+twelve join types, the scene pass) are built with this editor's fields, and the traps that cost a render on real films.
+At a join its curves win over [Easing by intent](video-design.md#prefer): accelerate into the cut, start the next shot
+already moving. The recipes of the twelve types in these fields, and the tools that solve and measure a join, need a
+computer with Python: [seam-craft/seam-recipes.md](seam-craft/seam-recipes.md).
+
+### The terms in this editor
+
+| Term | In the Video Editor |
+|---|---|
+| shot | an item on the timeline (video, image, html, sequence…); a shot change is an item boundary or a cross transition (this page) |
+| layer | an item on its own channel: one live item per channel; channel order is stacking order, the last on top ([video-projects.md](video-projects.md#channel-order-is-stacking-order)) |
+| group / nested composition | a sequence item (`mediaType: "sequence"`) with its own channels and its own optional camera ([video-projects.md](video-projects.md#sequence-clips-mediatype-sequence)) |
+| time | seconds on the timeline (`freeStart`, `trimStart` / `trimEnd`, speed). Film frame f = f / fps s |
+| key | `propertyKeyframes.<track>[]` = `{position, value, easing}`: position is 0–100 % of the item's played length, value a string ([video-keyframes.md](video-keyframes.md#keyframe-animations-per-property-tracks)). Film frame of a key = item start frame + position / 100 × played frames |
+| segment easing | the `easing` on a key shapes the segment after it; a `Custom` key carries `bezier: [x1, y1, x2, y2]`; the curves' common names: [video-keyframes.md](video-keyframes.md#common-names-of-the-curves) |
+| hold (step) key | `easing: "Hold"` |
+| parent / null | `keyframeParenting` to a null item ([video-keyframes.md](video-keyframes.md#layer-parenting-and-null-layers-keyframeparenting)) |
+| transform origin | `keyframeTransformOrigin` (`"center"`, `"top"`, `"x% y%"` …): the point the keyed `scale` and every rotation turn about |
+| motion path, its progress track | `motionPath` on the item (anchors with handles, `follow: true`) and the `motionPathT` track, 0–100 ([video-paths.md](video-paths.md)); the camera's are `cameraPath` and `camPathT` ([video-camera.md](video-camera.md#camera-motion-paths-camerapath--campatht)) |
+| position | `translateX` / `translateY` px, `xPercent` / `yPercent` % of the canvas, static `panX` / `panY` % of the frame |
+| scale | `scale` (multiplies the static `zoom`), `scaleX` / `scaleY` |
+| rotation, 3D turn, depth | `rotate` °, `rotateX` / `rotateY` °, `translateZ` / `panZ` px |
+| opacity, blur | `opacity` 0–1, `blur` px |
+| camera | a camera item on the camera channel, which must be the last channel ([video-camera.md](video-camera.md)) |
+| camera zoom, pan, dolly, roll, tilt | `camZoom` × about the frame centre; `camX` % of frame width (positive pans right, content slides left); `camY` % of frame height (positive down, content slides up); `camDolly` px; `camRoll` °; `camTiltX` / `camTiltY` ° |
+| mask | a `layerMask` entry in `layerEffects`, keyed on `msk:<mid>:<chan>` tracks ([masks.md](video-effects.md#greenlight-dash--layer-masks)) |
+| matte | `trackMatte: {sourceId, mode}` with mode `alpha` / `alphaInverted` / `luma` / `lumaInverted` ([video-shapes.md](video-shapes.md#track-matte-trackmatte)) |
+| motion blur | the per-layer `motionBlur` layer effect, or the project's `motionBlurEnabled` ([Motion blur at a join](#motion-blur-at-a-join)) |
+| corner pin | the `cornerPin` layer effect ([effects-warps.md](video-effects.md#corner-pin-entry)) |
+| per-letter / per-word text animation | `textAnimators` and the presets in [video-text-presets.md](video-text-presets.md) and [video-text-kinetic.md](video-text-kinetic.md) |
+| render a frame range | a background render job kept off the board (with Python: `seam-craft/tools/lib/vp.py render F0 F1 out.mp4`) |
+| project notes, seam ledger | the board memory, section "Scene seams used" (board-memory.md (GreenLight Dash only)) |
+
+### The camera at a join
+
+- **A camera in another mode ignores its pose keys.** A camera item's `cameraMoveMode` is `"free"` (keys, the
+  default), `"smartZoom"` (every new screen recording gets one), `"rig"` or `"path"`. Smart Zoom drives `camZoom`,
+  `camX`, `camY`: keys on those render as nothing. A Camera Rig or a live camera path overwrites `camX`, `camY`,
+  `camDolly` (and tilt / roll when it aims). Set `"cameraMoveMode": "free"` before keying a join on the camera, or put
+  the move on the items ([video-camera.md](video-camera.md)).
+- **One camera move across a cut** needs both shots under one camera: the camera channel covers every channel at the
+  same level; a sequence's own camera covers only its inside. Channels with `cameraLocked: true` ignore the camera.
+- **Zoom-outs:** key the items' `scale`, not `camZoom` (a camera zoom-out shows the layers' edges), or overscan both
+  shots ×1.2–1.3.
+- **Off-centre push-ins:** `camZoom` always pivots on the frame centre; to push into another point, key the item's
+  `scale` with `keyframeTransformOrigin` at that point.
+- **Pinhole:** the camera's perspective distance is `P = (H/2) / tan 14°` (2166 on a 1080-tall frame); `s = P / (P − Z)`.
+
+### Motion blur at a join
+
+- **Per layer:** a `motionBlur` entry in `layerEffects` with `mblurShutter` (180 = a camera-like shutter)
+  ([effects-layer.md](video-effects.md#motion-blur-entry)). It reads the layer's own keys, motion paths and
+  parenting, **not the camera**.
+- **Whole project:** `data.motionBlurEnabled: true` (with `motionBlurShutter` 90/180/270/360) bakes shutter blur into
+  every moving frame of a full render, camera moves included; render-only, never in the preview
+  ([video-projects.md](video-projects.md#motion-blur-render-only)).
+- So: a join whose move is on item keys → `motionBlur` on each moving layer; a move on the camera →
+  `motionBlurEnabled`. A crisp smash-pan (SR-09) → `motionBlurEnabled: false` and per-layer blur only where wanted.
+- Per-layer Motion Blur runs on a layer inside a sequence as at the top level, but not in a grid cell
+  ([Groups](#groups-and-the-effects-inside-them)).
+
+### Masks and mattes at a join
+
+- **Mask:** `layerEffects: [{id: "layerMask", masks: [...]}]`; box `x`, `y`, `w`, `h` in % of the layer box,
+  `feather` / `expand` in composition px; key them on `msk:<mid>:<chan>` tracks ([masks.md](video-effects.md#greenlight-dash--layer-masks)). A mask cannot
+  cut a sequence or grid *container* (a mask on a layer inside it works).
+- **Matte:** `trackMatte: {sourceId: <shape item id>, mode: "alpha"}` on the consumer. The source must be another
+  visual item at the **same editing level**, over the same frames; with no source under the playhead the matte is
+  empty: `alpha` hides the consumer, `alphaInverted` shows it whole. The source is hidden from output. Works inside
+  sequences too ([video-shapes.md](video-shapes.md#track-matte-trackmatte)).
+- **Rounded corners that animate:** `borderRadius` is keyframable on every layer, video and image items included (px
+  there; `borderRadiusTL`…`BL` while unlinked), so a full-frame video rounds into a card on its own keys. While the
+  layer also scales, `borderRadiusScaleLock: true` keeps the corner's on-screen size
+  ([video-shapes.md](video-shapes.md#card-framing-on-every-visual-layer)).
+
+### Groups and the effects inside them
+
+- Inside a sequence every layer effect runs as at the top level: Motion Blur, Corner Pin, Grow Fill, Rig, Repetile,
+  Chroma Key, Region Distort, Droste, Pryzm, Bend, Mesh / Bezier Warp and Mockup Frame, as well as masks, track mattes,
+  Glass, Motion Trail and the Overlay Effects. The sequence's own camera clip defocuses all of them. In a grid cell,
+  Motion Blur and Motion Trail are skipped: the cell layout replaces the layer's own motion
+  ([video-effects.md](video-effects.md#preferred-and-avoided-effects)).
+- The tools address items inside sequences as `SEQ_ITEM/ITEM`, and a sequence's own camera as `SEQ_ITEM/camera`.
+- **Transparent sequences:** glow and title sequences are often transparent, so a dissolve or window "into" them shows
+  whatever is below. Put a plate under them.
+
+### Editor traps at a join
+
+Each cost a render on a real film.
+
+- **New channels:** a new channel must be `unsnapped: true`, or `freeStart` is ignored and its items sit at 0 s. Keep
+  unsnapped items sorted by `freeStart` ([video-projects.md](video-projects.md#keep-unsnapped-items-sorted-by-freestart)).
+- **Synthetic clips:** a shape clip shorter than its item's `trimEnd` is not drawn: make the clip longer than the item.
+- **End items half a frame early:** an item whose end equals the cut time is still drawn on the cut frame (a fake
+  reversed move). A video item freezes ~4 frames before its end: run it past the cut and hide it with a `Hold` key on
+  `opacity`.
+- **A held frame is an image,** not a video at a tiny speed: 0.11× rendered 26 frames where the span said 8.
+- **Blur from 0:** a `blur` track easing up from 0 renders one fully black frame on a sequence item. Hold 0, then step
+  to ≥ 1.5 and ease up from there.
+- **Preview vs export timing:** the preview redraws at `data.previewFps` (60 by default) and shows instants between
+  export frames, which no render contains. A key, `Hold` step or item end placed between frames can pop in one and not
+  the other. Set `"previewFps": "project"` or check stills; put cuts on frame boundaries
+  ([video-keyframes.md](video-keyframes.md#preview-timing-keys-between-frames)).
+- **Depth order of turned layers:** a layer turned in 3D is ordered against every flat layer it does not cross by
+  which side of that layer's plane it stands on, so a card standing on a page always draws over it
+  ([video-3d.md](video-3d.md#turning-flat-layers-in-3d--pivot-and-stacking)). In a 3D world, depth decides what is in front, not
+  the channel: a dissolve "B over A" is decided by Z. Keep a moving layer ≥ 20 px in front of a turned card's
+  *surface* (card Z + x·sin(rotY)), not its centre.
+- **Small images draw at their pixel size × zoom;** full-size frames are fitted to the frame. For a crop, set zoom =
+  world width / its pixel width, and put crops on a 16:9 transparent canvas
+  ([video-projects.md](video-projects.md#videos-and-photos-draw-at-their-real-size)).
+- **Writes:** a project PUT replaces `data` wholesale. Change it on fresh data, send `expected_version`, and on a 409
+  fetch again and reapply ([video-projects.md](video-projects.md#update-video-project)). Make a NEW project for a new version of
+  someone's film unless told to edit it in place.

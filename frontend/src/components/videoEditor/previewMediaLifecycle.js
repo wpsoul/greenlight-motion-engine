@@ -2,6 +2,7 @@
 // <audio> per channel plus two alternating <video> elements for visual clips.
 // Reconcile them as a CHANNEL, never as a project-wide pool, so independent
 // audio/voice channels can mix while media left behind by a layer handoff stops.
+import { FRAME_AT_EPS_S } from './engine/seekFrame.js';
 
 function pauseIfPlaying(media) {
   if (!media || media.paused) return false;
@@ -85,7 +86,19 @@ export function isInactiveTextureNeededAsFallback({
  * A frame-critical ACTIVE buffer gets that precision only while paused: seeking
  * a freely playing video to chase the rAF clock interrupts frame presentation
  * whether or not the element happens to be audible.
+ *
+ * ON THE FRAME (`onFrame`). A paused buffer that owns the playhead, the playhead
+ * at rest (a step, a click, the end of a scrub), shows exactly the playhead's
+ * frame: a person stepping frame by frame places a cut, a keyframe or a mask
+ * against that picture. It seeks whenever it is not at that frame's seek time
+ * (engine/seekFrame.js: just past the time, so a frame boundary shows its own
+ * frame) — the 40 ms paused threshold kept the previous frame on most one-frame
+ * steps. `scrubbing` (moves closer together than the scrub settle, see
+ * frameRender's scrub detector) keeps the old thresholds, so a drag or a held
+ * arrow key seeks exactly as before; the settle repaint lands the last frame.
  */
+export const PAUSED_FRAME_EPS_S = FRAME_AT_EPS_S;
+
 export function getPreviewVideoSeekPolicy({
   allowPlayback = true,
   frameAccurate = false,
@@ -94,10 +107,15 @@ export function getPreviewVideoSeekPolicy({
   forceMuteAudio = false,
   fps = 30,
   slowSeeks = false,
+  scrubbing = false,
 } = {}) {
   const safeFps = Math.max(1, Number(fps) || 30);
   const wantsFrameAccurate = !allowPlayback || (frameAccurate && !isPlaying);
   const halfFrame = 0.45 / safeFps;
+  const onFrame = allowPlayback && !isPlaying && !scrubbing;
+  if (onFrame) {
+    return { wantsFrameAccurate: true, onFrame, seekThreshold: PAUSED_FRAME_EPS_S, pendingTolerance: frameAccurate ? 1.5 / safeFps : 0.15 };
+  }
   // `slowSeeks` (WebKit): a seek on a PLAYING buffer silences and freezes it for
   // ~0.4 s, so chasing the clock at 0.5 s — or the 0.08 s tight hold before a
   // cut — re-creates the drift it corrects and loops. A playing buffer there is
@@ -106,6 +124,7 @@ export function getPreviewVideoSeekPolicy({
   const playingLoose = slowSeeks && isPlaying && allowPlayback && !wantsFrameAccurate && !forceMuteAudio;
   return {
     wantsFrameAccurate,
+    onFrame: false,
     seekThreshold: wantsFrameAccurate
       ? halfFrame
       : playingLoose ? 1.0

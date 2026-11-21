@@ -203,7 +203,7 @@ export function engineInitialValues() {
     rcDrewCache: false,
     motionBlurModule: null,
     motionBlurPipeline: null,
-    scrubPlate: { t: -1, at: 0, active: false, timer: null },
+    scrubPlate: { t: -1, at: 0, active: false, burst: false, timer: null },
     rigEntries: [],
     frameToken: 0,
     selectedLight: null,

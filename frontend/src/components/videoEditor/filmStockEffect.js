@@ -440,7 +440,7 @@ export const FILM_STOCK_EFFECT = {
   group: 'Color',
   // Damage and weave ride the clip clock; the grain itself is static.
   animated: true,
-  pro: true,
+  pro: false,   // free since 16.5.95 (the owner: all effects free)
   // Halation and bloom bleed past the layer's alpha on purpose.
   layerMatte: 'expand',
   params: [

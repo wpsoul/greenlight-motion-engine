@@ -17,7 +17,7 @@
   - [Particle Activation — a sweep instead of a pop](#particle-activation-activation--a-sweep-instead-of-a-pop)
   - [Particle objects — stamp layers instead of sprites](#particle-objects-objects--stamp-layers-instead-of-sprites)
   - [Lines — trails and ready-made lines](#lines-rendermode-lines--trails-and-ready-made-lines)
-  - [Particles as 3D objects in a world Scene](#particles-as-3d-objects-in-a-world-scene-particlelook-3d)
+  - [Particles in a world Scene](#particles-in-a-world-scene)
   - [What re-bakes and what is free](#what-re-bakes-and-what-is-free)
 
 ### Particle layers (`mediaType: "particles"`) — a simulated Solver Box filmed by the project camera
@@ -178,9 +178,9 @@ Distribution is part of the simulation, so changing it re-bakes (a `mode` of `ra
 
 #### The fluid field (v3) — fluid and smoke physics, Particular-style
 
-`forces.fluid` turns on a **simulated** force field: an incompressible velocity grid the size of the Solver Box that emission stirs and particles ride. Unlike turbulence (a formula in position and time) it has **memory** — a plume meets the eddies it left behind, smoke curls back on itself, ink mushrooms. It is stepped at 1/60 s with the particles and thrown away after the bake; only particle snapshots are cached. The fluid supplies **movement** — particles carried, swirled and lifted by a medium. It is not rendered itself: there is no volumetric or dye render mode, and particles are always drawn as particles (for volumetric smoke and fire inside a 3D world, see world3d.md (GreenLight Dash only)). **Cost:** the grid steps 360× for a 6 s clip — `low` ≈ 4 ms/step, `medium` ≈ 10, `high` ≈ 30, `ultra`/`flat-hd` ≈ 80, `volume-hd` ≈ 250 — so a `flat-hd` preset bakes for ~30 s (in a worker, while the live GPU preview already shows the edit — see **Live preview** below).
+`forces.fluid` turns on a **simulated** force field: an incompressible velocity grid the size of the Solver Box that emission stirs and particles ride. Unlike turbulence (a formula in position and time) it has **memory** — a plume meets the eddies it left behind, smoke curls back on itself, ink mushrooms. It is stepped at 1/60 s with the particles and thrown away after the bake; only particle snapshots are cached. The fluid supplies **movement** — particles carried, swirled and lifted by a medium. It is not rendered itself: there is no volumetric or dye render mode, and particles are always drawn as particles (for volumetric smoke and fire inside a 3D world, see [video-world3d.md](video-world3d.md#smoke-and-fire)). **Cost:** the grid steps 360× for a 6 s clip — `low` ≈ 4 ms/step, `medium` ≈ 10, `high` ≈ 30, `ultra`/`flat-hd` ≈ 80, `volume-hd` ≈ 250 — so a `flat-hd` preset bakes for ~30 s (in a worker, while the live GPU preview already shows the edit — see **Live preview** below).
 
-**Live preview vs. the bake.** In the desktop editor the whole solver — field and particles — also runs **live on WebGPU**, so a change to any of these controls shows within a frame while the user edits; the bake above re-runs in the background after the edit and, once complete, is what the editor scrubs (any time is one read) and what **exports render**. Live is also the fallback-free path when the bake is not there yet; the bake is the fallback when live is not possible (Grow Points and the other baked-only features above) or when the live step cannot hold 60 fps on that machine. The bake itself is cancellable, debounced and streams in chunks, so even the fallback appears progressively. None of this changes the JSON: the bake is a pure function of the system and the live engine is only a preview of the same inputs. Route "smoke", "fluid", "ink in water", "cigarette smoke", "steam", "particles flowing like liquid" here when it is a layer of particles; volumetric smoke, fire or an explosion inside a 3D world is world3d.md (GreenLight Dash only). Ready-made presets: `smoke` (Rising Smoke), `cigarette`, `ink`, `ember`, `shockwave` (a ring blast every 1.5 s that punches the fluid). A `text-cage` preset id is only a label; the system it carries bakes as written.
+**Live preview vs. the bake.** In the desktop editor the whole solver — field and particles — also runs **live on WebGPU**, so a change to any of these controls shows within a frame while the user edits; the bake above re-runs in the background after the edit and, once complete, is what the editor scrubs (any time is one read) and what **exports render**. Live is also the fallback-free path when the bake is not there yet; the bake is the fallback when live is not possible (Grow Points and the other baked-only features above) or when the live step cannot hold 60 fps on that machine. The bake itself is cancellable, debounced and streams in chunks, so even the fallback appears progressively. None of this changes the JSON: the bake is a pure function of the system and the live engine is only a preview of the same inputs. Route "smoke", "fluid", "ink in water", "cigarette smoke", "steam", "particles flowing like liquid" here when it is a layer of particles; volumetric smoke, fire or an explosion inside a 3D world is [video-world3d.md](video-world3d.md#smoke-and-fire). Ready-made presets: `smoke` (Rising Smoke), `cigarette`, `ink`, `ember`, `shockwave` (a ring blast every 1.5 s that punches the fluid). A `text-cage` preset id is only a label; the system it carries bakes as written.
 
 | Field | Range | Meaning |
 | --- | --- | --- |
@@ -358,15 +358,9 @@ With `render.mode: "layers"`, each particle stamps one of up to 12 members. Obje
 
 Move the plume with the smoke source's `position` / `motion` (`sweep` ripples the rows); `return.strength` sets how far a row is pulled before it settles (0 = carried off with the smoke).
 
-#### Particles as 3D objects in a world Scene (`particleLook: "3d"`)
+#### Particles in a world Scene
 
-When the project's Scene layer is drawn by the world renderer (world3d.md (GreenLight Dash only)), a particle item with `"particleLook": "3d"` (next to `particleSystem` on the item) leaves the 2D particle pass and joins the world as real objects: every particle is a small lit, shadowed mesh, traced in Final 3D. The world reads the system, its timing on the timeline, `render.size.start` for the particle size and the most opaque colour of `colorOverLife` as the one colour. Omit the field for the default **Glow** look (soft light on top of the picture). Without a world Scene the field does nothing.
-
-```jsonc
-{ "id": "prtitem1", "clipId": "prt1", "trimStart": 0, "trimEnd": 6, "freeStart": 0,
-  "particleLook": "3d",
-  "particleSystem": { /* as in the example above */ } }
-```
+A particle layer is drawn flat over the picture. For particles that live in a world Scene as real objects (lit, shadowed, colliding with shapes, traced in Final 3D), write a simulation in the Scene instead: sim.md (GreenLight Dash only).
 
 #### What re-bakes and what is free
 

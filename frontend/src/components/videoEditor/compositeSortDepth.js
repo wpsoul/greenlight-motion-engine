@@ -285,7 +285,9 @@ export function orderByBoxes(entries) {
 // on the right side of every plane it does not cross (orderByPlanes).
 // boxOf (optional): a channel → its 3D model's world box and eye (null for anything else) — a model on the
 // camera's side of another model's box draws after it (orderByBoxes).
-export function orderChannelsForComposite(channels, adjById, depthOf, planeOf, quadOf = null, eye = null, boxOf = null) {
+// isPlate (optional): a channel → true when it holds footage or a picture (isPlateChannel): in a stack with a Scene only those,
+// and what is stacked under them, are the frame's background plate (lockedLeadChannels).
+export function orderChannelsForComposite(channels, adjById, depthOf, planeOf, quadOf = null, eye = null, boxOf = null, isPlate = null) {
   const out = [];
   let run = [];
   const flush = () => {
@@ -310,13 +312,8 @@ export function orderChannelsForComposite(channels, adjById, depthOf, planeOf, q
   // depth (adjustmentComposite.js isLockedFlat), so a backdrop drawn after the rig
   // would paint over its cyclorama; under the rig it stays behind everything, as its
   // place in the stack says.
-  const leading = new Set();
-  for (const channel of channels) {
-    if (channel.kind === RIG_CHANNEL_KIND || channel.visible === false) continue;
-    if (!channel.cameraLocked || adjById.has(channel.id)) break;
-    leading.add(channel);
-    out.push(channel);
-  }
+  const leading = new Set(lockedLeadChannels(channels, adjById, isPlate));
+  for (const channel of leading) out.push(channel);
   for (const channel of channels) {
     if (channel.kind === RIG_CHANNEL_KIND) out.push(channel);
   }
@@ -343,4 +340,68 @@ export function orderChannelsForComposite(channels, adjById, depthOf, planeOf, q
   }
   flush();
   return out;
+}
+
+/**
+ * The camera-locked channels at the very bottom of the stack that are the frame's background plate, composited UNDER the Scene (hidden
+ * channels are skipped, an adjustment layer ends the run). The editor pins the Scene's own channel at the top, under the camera, on every
+ * edit and every load (editorState.js pinSingletonChannels), so its row never says where the Scene is drawn among the camera-locked
+ * layers, and it does not count here. (enginebugs3) One rule from the stack instead: the Scene is drawn right above the frame's footage.
+ * The plate is that bottom run up to its topmost channel of footage or a picture (`isPlate(channel)`, isPlateChannel), together with
+ * whatever is stacked under it; everything stacked above that draws over the Scene in stacking order, whatever its kind (a title, a
+ * shape, a lower third, an HTML page, a template, a particle layer...). Before, the whole run was the plate (enginebugs spared only text
+ * at its top), so a camera-locked shape with no ordinary channel under it went under the Scene and an opaque Scene hid it entirely.
+ * Without `isPlate`, or in a stack with no Scene, the whole run (a backdrop under the 2D stack, as its place says).
+ */
+export function lockedLeadChannels(channels, adjById, isPlate = null) {
+  const run = [];
+  for (const channel of channels) {
+    if (channel.kind === RIG_CHANNEL_KIND || channel.visible === false) continue;
+    if (!channel.cameraLocked || adjById.has(channel.id)) break;
+    run.push(channel);
+  }
+  let end = run.length;
+  if (isPlate && channels.some((c) => c.kind === RIG_CHANNEL_KIND)) while (end > 0 && !isPlate(run[end - 1])) end -= 1;
+  return run.slice(0, end);
+}
+
+/** (enginebugs3) What a camera-locked channel holds as the frame's background plate under a Scene: footage and pictures. */
+export const PLATE_MEDIA = new Set(['video', 'image']);
+
+/**
+ * (enginebugs3) Whether a clip is footage or a picture: a video or an image of its own. The player hands an HTML page (`htmlSource`, a
+ * live page or its bake), a layer drawn ahead of time (`prerenderOf`: a template, an After Effects clip, a layer saved as rendered) and an
+ * After Effects placeholder (`aePlaceholder`) over as video or image clips too: those are graphics, not footage.
+ */
+export function isPlateClip(clip) {
+  return !!clip && PLATE_MEDIA.has(clip.mediaType) && !clip.htmlSource && !clip.htmlLiveOnly && !clip.prerenderOf && !clip.aePlaceholder;
+}
+
+/**
+ * (enginebugs3) Whether `channel` is footage or a picture for lockedLeadChannels: `shownClip` the clip it shows this frame (null: nothing);
+ * between its clips, whether it holds footage or a picture at all (`clipOf(item)` an item's clip), so a gap in the footage does not send
+ * what is stacked under it over the Scene for that moment.
+ */
+export function isPlateChannel(channel, shownClip, clipOf) {
+  if (shownClip) return isPlateClip(shownClip);
+  return !!clipOf && (channel?.items || []).some((it) => isPlateClip(clipOf(it)));
+}
+
+// What a Scene's floor shadow lies under. A catcher's shadow (and anything else in the world's picture with coverage and no depth:
+// a see-through surface that writes none, a plant's alpha-cut leaves) goes onto the stack as a plain overlay, laid before the first
+// layer that stands in front of the floor (adjustmentComposite.js). Footage and stills are what the floor lies on, and the world's own
+// layers are in the world. A camera-locked layer composited after the Scene stands in front of the whole world: the footage again over
+// a placed object, wearing the matte of who passes in front (vfxProject.js), covers the object's shadow and its light on the floor
+// as well as the object. Laid after it, both drew over the person walking past.
+export const UNDER_THE_FLOOR = new Set(['image', 'video', 'rig', 'model3d', 'camera']);
+// `order`: the composite order (orderChannelsForComposite); `mediaTypeOf(channel)`: the media type of what the channel shows this
+// frame (undefined: nothing). Returns the index of the channel the shadow is laid before, or order.length for after all of them.
+export function worldShadowSlot(order, mediaTypeOf) {
+  const sceneAt = order.findIndex((ch) => ch?.kind === RIG_CHANNEL_KIND);
+  for (let at = 0; at < order.length; at += 1) {
+    const type = mediaTypeOf(order[at]);
+    if (type && !UNDER_THE_FLOOR.has(type)) return at;
+    if (sceneAt >= 0 && at > sceneAt && order[at]?.cameraLocked) return at;
+  }
+  return order.length;
 }

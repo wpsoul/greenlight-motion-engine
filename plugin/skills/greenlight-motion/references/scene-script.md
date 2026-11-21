@@ -105,6 +105,99 @@ matte, masks, particles, 3D) goes on from `project.json`: SKILL.md, "Beyond the 
 - **music** (script level): `"music": { "src": file, "volume": 80, "fadeIn": 0.3, "fadeOut": 1.2, "startAt": 0 }` — one track under the video.
   The file must exist when you run `script` (it reads its length): write a sound you make in code before the first run.
 
+## A 3D Scene: `world`
+
+3D in a video is GreenLight Dash's own 3D Scene: give the script a `world` (the same `rig.scene` JSON its editor
+stores), drawn in Draft as it plays and path traced in Final — for any shot that is 3D (a product, a device, a room, a logo
+or title in depth, abstract forms, a camera moving through space), not only a product on a table. You model what the shot
+needs yourself; keep it SIMPLE: objects built from ops (box, cylinder, lathe, extrude, bevel…), materials (glass, liquids,
+metals, wood and other procedural patterns), up to a few lights, a bundled HDR environment, `scene.camera` or a ready move.
+A device the brief names that is among the bundled presets (`iphone_pro_max`, `iphone_air`, `double_iphone`, `ipad`,
+`ipad_mini`, `macbook_pro`, `macbook_air`, `imac`) may be taken ready-made: after `script`, add a `model3d` layer with
+`"url": "model-preset:<id>"` to project.json (references/video-world3d.md, a device from the preset table: its own channel
+and `model3dConfig`, with an example; its screen picture in `screen`, `{ "url": "asset:<file>", "fitMode": "cover" }`); it
+stands in the Scene's world, lit by it, path traced in Final, its screen artwork kept. Model a device yourself, or use
+another model, only when the brief asks. A `model3d` layer or a camera layer on a flat comp with no `world` is not how 3D is done. No files of your own in the
+Scene's `world` here (big scenes with meshes and textures belong in GreenLight Dash).
+`scenes` become optional: 2D titles over the world, see-through unless a scene sets its own `background`.
+
+```json
+{ "format": "16:9", "title": "Éclat", "world": {
+    "duration": 4,
+    "camera": { "move": "orbit", "amount": 30 },
+    "render": { "mode": "draft" },
+    "look": { "contrast": 1.15, "bloom": 0.06, "vignette": 0.2 },
+    "scene": {
+      "camera": { "at": [0, 0.2, 0.75], "target": [0, 0.1, 0], "fov": 30 },
+      "env": { "intensity": 0.3, "opaque": true },
+      "lights": [{ "id": "key", "type": "area", "at": [-0.5, 0.6, 0.5], "target": [0, 0.1, 0], "width": 0.5, "height": 0.5, "intensity": 6 },
+                 { "id": "rim", "type": "spot", "at": [0.3, 0.5, -0.4], "target": [0, 0.1, 0], "angle": 25, "penumbra": 0.4, "intensity": 4 }],
+      "materials": {
+        "wood": { "procedural": { "pattern": "wood", "planks": 3 }, "uvScale": [2, 2] },
+        "glass": { "roughness": 0.02, "transmission": 1, "ior": 1.5, "priority": 1 },
+        "perfume": { "transmission": 1, "ior": 1.36, "attenuationColor": "#e8a440", "attenuationDistance": 0.3, "priority": 2 },
+        "gold": { "metal": "gold", "roughness": 0.2 } },
+      "objects": [
+        { "id": "table", "material": "wood", "at": [0, -0.02, 0], "graph": [{ "op": "box", "size": [1.2, 0.04, 0.7], "bevel": 0.004 }, { "op": "uvBox" }] },
+        { "id": "bottle", "material": "glass", "at": [0, 0.001, 0], "graph": [{ "op": "cylinder", "radiusTop": 0.045, "radiusBottom": 0.045, "height": 0.16, "bevel": 0.006 }, { "op": "transform", "at": [0, 0.08, 0] }] },
+        { "id": "liquid", "material": "perfume", "at": [0, 0.001, 0], "graph": [{ "op": "cylinder", "radiusTop": 0.0395, "radiusBottom": 0.0395, "height": 0.11 }, { "op": "transform", "at": [0, 0.06, 0] }] },
+        { "id": "cap", "material": "gold", "at": [0, 0.177, 0], "graph": [{ "op": "cylinder", "radiusTop": 0.02, "radiusBottom": 0.02, "height": 0.03, "bevel": 0.003 }] } ] } },
+  "scenes": [{ "duration": 4, "elements": [{ "type": "text", "text": "ÉCLAT", "role": "headline", "at": "top" }] }] }
+```
+
+- `world` takes `scene`, `render`, `look`, `exposure`, `camera`, `duration`. `scene`, `render` and `look` are GreenLight Dash's
+  `rig.scene`, `rig.render` and `rig.look`: every field, op and material is in references/video-world3d.md and references/world3d-schema.json. Units are metres (model things at their
+  real size: the perfume bottle above is 16 cm tall), Y is up.
+- **What `world` sets for you:** no Rig lights and no Rig backdrop (it writes `renderer: "world"`, `lights: []`,
+  `cyclorama: none`): the light is `scene.lights` plus `scene.env` (a bundled HDRI, `studio_small_03_1k` unless
+  `env.hdri` names another `/hdr/<name>.hdr` of the ten presets), and a floor, table or studio sweep is an object you model
+  (a box; a sweep is an `extrude` of an L-shaped profile with a rounded corner).
+- **Checked strictly.** A field the 3D engine would ignore (a typo, a three.js name such as `emissive`, `position`, `color` on a
+  liquid) fails the build with its path and the right name (`world.scene.materials.glass.transmision: … did you mean
+  `transmission`?`), as does an unknown op or parameter, a material or parent that is not there, a broken lathe profile.
+  An op that fails only when the geometry is built (a boolean that cannot be made) shows in look_at_video's critique:
+  "the scene did not build: …".
+- **The camera:** `scene.camera` (`at`, `target`, `fov`, `keys` for your own moves) or a ready move in `world.camera`: one
+  smooth in-out move over the whole clip, always looking at `target`. `push-in` starts at `scene.camera.at` and ends
+  `amount` of the way to the target (0–0.9 [0.25]); `pull-out` is the same backwards. `orbit` turns around the target by
+  `amount` degrees in all [40]; `rise` goes up by `amount` of the distance [0.25]; `slide-left` / `slide-right` move
+  sideways by `amount` of the distance [0.25], the target with them. These three are centred on `scene.camera.at`: half
+  the amount before it, half after, so frame the middle of the clip there. A scene's own 2D `camera` defaults to `none`
+  over a world (titles hold still).
+- **Camera moves, worked.** Frame the subject with room to spare: the critique samples the whole move (every key and evenly
+  between them) and names an object the move takes out of the frame, and when.
+  - *Orbit* around a product: `"camera": { "move": "orbit", "amount": 40 }` with `"scene": { "camera": { "at": [0, 0.22, 0.8],
+    "target": [0, 0.09, 0], "fov": 30 } }`. The middle of the clip is shot from `at`; the turn goes 20° to each side, so a
+    framing that is tight from the front clips a wide object at the ends: step back (a longer `at`) or turn less.
+  - *Push-in* to a detail: `"camera": { "move": "push-in", "amount": 0.35 }` starts at `scene.camera.at` and ends 35 % of the
+    way to `target`, so the last frame is the tightest: aim `target` at the detail (the label, the cap). Your own keys do the
+    same with a lens change: `"keys": { "at": [{ "t": 0, "v": [0, 0.2, 1], "ease": "inOut" }, { "t": 4, "v": [0, 0.14, 0.5] }],
+    "fov": [{ "t": 0, "v": 30, "ease": "inOut" }, { "t": 4, "v": 24 }] }`.
+  - *Rack focus* (depth of field): `"camera": { "at": [0.25, 0.12, 0.55], "target": [0, 0.08, 0], "fov": 28, "fStop": 2,
+    "keys": { "focus": [{ "t": 0.8, "v": 0.42, "ease": "inOut" }, { "t": 2.2, "v": 0.78 }] } }`: sharp on what stands 0.42 m from
+    the camera, then on what stands 0.78 m away. `focus` is a distance in metres along the view (for an object at p:
+    (p − at)·(target − at) / |target − at|); `"@id"` holds the focus on an object, but keys from one `"@id"` to another jump
+    instead of racking, so key distances. A low `fStop` (1.4–2.8) makes the blur strong; leave `fStop` out for all sharp.
+    Draft blurs roughly; judge it in Final. Focus keys go with a ready move too: a push-in with `"focus": "@bottle"` stays sharp on the bottle.
+- **Titles over it:** `scenes` are 2D layers over the world, see-through unless a scene sets its own `background`
+  (`style.background` does not cover the world). Keep a title clear of the objects: a 2D layer stands in the world's depth
+  (about 2.2 m from the camera at 1080 px high), so an object nearer the camera that overlaps it hides its letters. Put it where
+  the frame is calm and has the contrast its colour needs: a light title on a light set vanishes. The critique below gives each
+  object's span in % of the frame and checks every 2D layer: how much of it the objects hide, its contrast against what is
+  under it, whether it leaves the frame or the title-safe area (5 % in from each edge), and texts that overlap. The video is as long as the scenes and the world
+  lasts all of it (`world.duration` counts only for a world with no scenes).
+- **Draft and Final.** `render.mode` `"draft"` (default) plays live; `"final"` path traces every frame (`spp` 16–64 here):
+  seconds per frame, so render Final only for the finished version, and short. Judge glass and liquids in Final: Draft shows no
+  liquid inside glass and no refraction, and only a rough depth of field.
+- **No length limit here** (the chat caps a Final MP4 at 10 s at 64 samples; locally the only limit is your GPU's time).
+- **The 3D plugin.** The 3D engine is a separate package, `greenlight-motion-3d`: `script`, `build`, `check`, `stills`
+  and `render` get it by themselves the first time a folder has a `world` (into the user's cache, once per version);
+  `npx greenlight-motion add-3d` gets it now, `doctor` says which version is there. Offline, point
+  `GREENLIGHT_MOTION_3D` at an unpacked copy or its .tgz.
+- **Its critique.** look_at_video on a build with a world adds a critique of the middle frame: what the shot shows object by
+  object (its share of the frame, where it stands, what hides it, what is out of the camera), where each light stands against
+  the subject, the picture's numbers, and hints naming the field to change. Fix what it names, then build again.
+
 ## What makes it look made, not generated
 
 references/video-design.md — the same design rules GreenLight Dash's agents and the chat connector use. Read it before

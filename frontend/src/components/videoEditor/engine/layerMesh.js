@@ -28,8 +28,9 @@ import { drawMotionFrame } from '../motionTemplates';
 import { evaluateObjectMotionPath, liveObjectMotionPath, motionPathTrackReach, motionPathSignature, MOTION_PATH_KF_KEY } from '../objectMotionPath';
 import { isPosterizeTimeEnabled } from '../posterizeTime';
 import { normalizeTextPathCorners, sharpCornerPose } from '../textPathCorners';
-import { isText3dLayer, resolveText3d } from '../text3d';
+import { isText3dLayer, resolveText3d, resolveTextInWorld } from '../text3d';
 import { GLYPH_RASTER_PX } from '../text3dGlyphConstants';
+import { maskedCard } from '../world3dText';
 import { strokeCopyDelays, strokeEngineMoves } from '../pathStroke';
 import { densityBytes, RASTER_DENSITY_BUCKETS, resolveDensity, VECTOR_DENSITY_BUCKETS } from '../rasterDensity';
 import { PHONE_PLATE_BUCKETS, phonePreview } from './phoneMode';
@@ -314,6 +315,11 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // 3D Text (text3d.js): the letters are laid out and animated here as always,
     // then handed to the 3D pass as a run instead of being painted — per LETTER.
     const text3dOn = !isMask && isText3dLayer(item, clip);
+    // Flat text in the Scene's world (text3d.js isTextInWorldLayer), on a frame the world takes it (world3dLayer.js prepareWorldFrame): laid
+    // out and animated here as always, then handed over as one flat card per unit instead of being painted (buildTextWorldRun). Top level
+    // only: the overlap of two clips and every nested level keep the plate, and so does a layer being typed into (its plate goes blank).
+    const textWorldOn = !isMask && !text3dOn && !!cs && engine.worldTakesText === true && engine.worldTextItems?.get(item.id) === item
+      && (engine.exporting || getInlineTextEditId() !== item.id);
     const textPathDir = ['forward', 'backward'].includes(item.textPathDirection) ? item.textPathDirection : 'center';
     const textPathTravel = item.textPathTravel === 'through' ? 'through' : 'fit';
     const textPathEven = item.textPathSpacingMode === 'even';
@@ -433,13 +439,15 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     // Text Animators select by their finest "Based on" kind.
     const txaGrainNeeded = txaActive ? GRAIN[txaGrainOf(txaList)] : GRAIN[splitMode];
     const text3dGrainNeeded = text3dOn ? GRAIN.symbols : GRAIN[splitMode];
-    const neededGrain = Math.max(GRAIN[splitMode], rndGrainNeeded, pathGrainNeeded, txaGrainNeeded, text3dGrainNeeded);
+    // Cards in the world: the animators' units, or letters when no animator says.
+    const textWorldGrainNeeded = textWorldOn && !txaActive ? GRAIN.symbols : GRAIN[splitMode];
+    const neededGrain = Math.max(GRAIN[splitMode], rndGrainNeeded, pathGrainNeeded, txaGrainNeeded, text3dGrainNeeded, textWorldGrainNeeded);
     const subdivide = neededGrain > GRAIN[splitMode];
     const subMode = neededGrain === 2 ? 'symbols' : 'words';
     const partsAreChars = subdivide ? subMode === 'symbols' : splitMode === 'symbols';
     const drawUnits = [];
     let txaCounts = null;
-    if (rndActive || textPathOn || txaActive || text3dOn) {
+    if (rndActive || textPathOn || txaActive || text3dOn || textWorldOn) {
       let wordCounter = 0;
       let symCounter = 0;
       // Every character, spaces included (Text Animators' "Characters").
@@ -765,8 +773,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       // distance, so a letter's Z reads exactly like a layer's translateZ. 'project': the
       // eye of the camera that films this channel (the Camera layer's pose), brought into
       // plate px through the plate's real pose, so a dolly or tilt films the letters in
-      // depth. 3D Text skips it: its letters are real 3D in the scene already.
-      if (txaActive && !text3dOn && drawUnits.length) {
+      // depth. 3D Text skips it: its letters are real 3D in the scene already, and so are flat letters in the world.
+      if (txaActive && !text3dOn && !textWorldOn && drawUnits.length) {
         const camLay = txaLayerSettings(item);
         if (camLay.camera !== 'unit') {
           txaCam = { x: texW / 2, y: canvasH / 2, d: camLay.perspective > 0 ? camLay.perspective : txaCompD };
@@ -783,6 +791,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         textPathOn && textPathKeyed ? motionPathSignature(textPathObj.points) : '',
         textDensity, texW, canvasW, canvasH, canvas.width, canvas.height,
         isMask ? 1 : 0,
+        textWorldOn ? 'world' : '',
         (!engine.exporting && getInlineTextEditId() === item.id) ? 1 : 0,
         engine.fontLoadVersion,
         // Placeholders at this instant: the expanded VAR / MARKER text (project data,
@@ -1087,14 +1096,15 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
               const ox = gx + g.x; const oy = gy + g.y;
               const px = ox + g.w * 0.5; const py = gy + tokFontSize * 0.5;
               const local = [k * s, 0, 0, px + s * (ox - px), 0, -k * s, 0, py + s * (oy - py), 0, 0, -k * s, 0, 0, 0, 0, 1];
-              glyphs.push({ font, ch: g.ch, color, alpha: alpha * g.alpha, index: Math.max(0, du.sIdx) + gi, fv: engine.fontLoadVersion, m: txaM4Mul(base, local) });
+              // (text3dgaps) `size`: the letter's font size at rest, px: the world builds its glyph in metres from it (world3dText.js)
+              glyphs.push({ font, ch: g.ch, color, alpha: alpha * g.alpha, index: Math.max(0, du.sIdx) + gi, fv: engine.fontLoadVersion, size: tokFontSize, m: txaM4Mul(base, local) });
             });
             gx += measureTextWithLetterSpacing(ctx, ch, letterSpacing) + letterSpacing;
             continue;
           }
           if (ch.trim()) {
             const local = [k, 0, 0, gx, 0, -k, 0, gy, 0, 0, -k, 0, 0, 0, 0, 1];
-            glyphs.push({ font, ch, color, alpha, index: Math.max(0, du.sIdx), fv: engine.fontLoadVersion, m: txaM4Mul(base, local) });
+            glyphs.push({ font, ch, color, alpha, index: Math.max(0, du.sIdx), fv: engine.fontLoadVersion, size: tokFontSize, m: txaM4Mul(base, local) });
           }
           gx += adv + letterSpacing;
         }
@@ -1237,6 +1247,132 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         ctx.restore();
       }
     };
+    // Flat text in the world (world3dText.js worldFlatLetters): every unit as a card. Its picture is drawToken's own, painted into the
+    // layer's atlas at rest and whole — the world moves and fades the card — and its place is the 3D Text run's for a letter: the
+    // animators' real 3D transform around the unit, or its pose on the path. A cell is painted again only when what it shows changes,
+    // so a title that flies in on Position Z paints its letters once; a cell is kept for a unit not shown yet, and a little larger than
+    // its picture, so a letter that appears or scrambles takes its place without laying the others out again. A mask (Range ▸ Mask) cuts
+    // the card where the plate would cut it.
+    const buildTextWorldRun = () => {
+      const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+      const T = (x, y) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, 0, 0, 0, 0, 1];
+      const d = textDensity;
+      const GAP = 4;   // device px between cells, so a mip level or two never reads a neighbour
+      const atlas = textPaintPlate.worldAtlas ||= { canvas: document.createElement('canvas'), cells: [], version: 0, density: 0 };
+      atlas.ctx ||= atlas.canvas.getContext('2d');
+      const shadowOn = tsBlur > 0.01 || Math.abs(tsX) > 0.01 || Math.abs(tsY) > 0.01 || tsSpread > 0.01;
+      // Everything a cell shares with the others; a change here paints every cell again.
+      const layerKey = [baseFont, letterSpacing, lineHeightPx, glyphDrop, textFillMode, glyphLineWidth, textOutlineColor, textDecoration,
+        shadowOn ? [tsX, tsY, tsBlur, tsSpread, tsColor].join() : '', d, engine.fontLoadVersion, activeTextRun ? activeTextRun.sig : ''].join('|');
+      const units = [];
+      drawUnits.forEach((du, i) => {
+        const txa = du._txa || null;
+        const alpha = txa ? txa.alpha : 1;
+        const drawStr = txa ? txaGlyphFor(txa, du.token) : du.token;
+        if (!drawStr || !drawStr.trim()) return;
+        const tokFontSize = du.rndSize || fontSize;
+        if (du.rndFont) ctx.font = du.rndFont;
+        const drawW = drawStr === du.token ? du.w : measureTextWithLetterSpacing(ctx, drawStr, letterSpacing);
+        if (du.rndFont) ctx.font = baseFont;
+        // drawToken's content box (txaContentBox) and the reach of its light (txaReachDev), in layout px; and a quarter em for a slant.
+        const blur = txa ? txa.blur : 0;
+        let reach = 3 * blur + 1.5 * tsBlur + Math.max(Math.abs(tsX), Math.abs(tsY));
+        if (txa?.shadow) reach += (Math.abs(txa.shadow.x) + Math.abs(txa.shadow.y) + 1.5 * txa.shadow.blur) * d;
+        const pad = lineHeightPx * 0.15 + tsSpread + glyphLineWidth + (txa?.stroke ? txa.stroke.w : 0) + 2 + reach / d;
+        const ex = Math.max(du.w, drawW) * 0.5 + tokFontSize * 0.25 + pad;
+        const ey = Math.max(lineHeightPx, glyphContentH) * 0.5 + Math.max(0, tokFontSize - fontSize) * 1.6 + pad;
+        const w = Math.ceil(2 * ex * d), h = Math.ceil(2 * ey * d);
+        const cx = du.x + du.w * 0.5, cy = du.y + lineHeightPx * 0.5;
+        const color = du._txaPaint || du.rndColor || textColor;
+        const overlays = (du._txaOverlays || []).map((o) => `${o.css}@${Number(o.alpha).toFixed(3)}${o.unit ? 'u' : ''}`).join(';');
+        const look = [drawStr, du.rndFont || '', tokFontSize, color, du._txaUnitSpan ? 1 : 0, overlays, blur,
+          txa?.stroke ? `${txa.stroke.w},${txaRgbCss(txa.stroke.c)}` : '', txa?.outlineK || 0,
+          txa?.shadow ? [txa.shadow.x, txa.shadow.y, txa.shadow.blur, txa.shadow.alpha, txaRgbCss(txa.shadow.c)].join() : ''].join('|');
+        // A gradient across the text paints each unit by where it sits in the block.
+        const across = /gradient/i.test(`${color}${overlays}${textOutlineColor}`) ? [blockBox.x - cx, blockBox.y - cy, blockBox.w, blockBox.h].map((v) => v.toFixed(2)).join() : '';
+        let base;
+        if (du._path) {
+          const ca = Math.cos(du._path.ang || 0); const sa = Math.sin(du._path.ang || 0);
+          base = txaM4Mul(txaM4Mul([ca, -sa, 0, du._path.cx, sa, ca, 0, du._path.cy, 0, 0, 1, 0, 0, 0, 0, 1], T(0, du._path.off || 0)), du._txaLocalM4 || I);
+        } else {
+          base = txaM4Mul(du._txaM4 || I, T(cx, cy));
+        }
+        const m = txaM4Mul(base, [w / d, 0, 0, 0, 0, h / d, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+        const b = du._txaMaskBox;
+        const poly = b ? maskedCard(m, { x0: b.x0 - 2, y0: b.y0, x1: b.x1 + 2, y1: b.y1 }) : null;
+        const shown = alpha >= 0.002 && !(poly && !poly.length);
+        units.push({ i, du, txa, w, h, cx, cy, key: `${layerKey}|${look}|${across}|${du.token.trim() ? 1 : 0}`, m, poly, alpha, shown });
+      });
+      // Cells keep their place while what they show fits; otherwise every cell is laid out again, on shelves.
+      const fits = atlas.density === d && units.every((u) => { const c = atlas.cells[u.i]; return c && c.aw >= u.w && c.ah >= u.h; });
+      const paint = [];
+      if (!fits) {
+        const room = (v) => Math.ceil((v * 1.15) / 8) * 8;
+        const width = Math.min(4096, Math.max(256, ...units.map((u) => room(u.w) + GAP)));
+        const area = units.reduce((sum, u) => sum + (room(u.w) + GAP) * (room(u.h) + GAP), 0);
+        const rowW = Math.min(4096, Math.max(width, 2 ** Math.ceil(Math.log2(Math.sqrt(area * 1.3) || 1))));
+        let x = GAP, y = GAP, shelf = 0;
+        atlas.cells = [];
+        for (const u of units) {
+          const aw = room(u.w), ah = room(u.h);
+          if (x + aw + GAP > rowW) { x = GAP; y += shelf + GAP; shelf = 0; }
+          atlas.cells[u.i] = { x, y, aw, ah, w: 0, h: 0, key: null };
+          x += aw + GAP;
+          shelf = Math.max(shelf, ah);
+        }
+        const needW = rowW, needH = Math.min(4096, y + shelf + GAP);
+        // Grown, never shrunk: a canvas of another size is another texture to the world.
+        if (atlas.canvas.width < needW || atlas.canvas.height < needH) {
+          atlas.canvas.width = Math.max(atlas.canvas.width, needW);
+          atlas.canvas.height = Math.max(atlas.canvas.height, needH);
+        }
+        atlas.ctx.setTransform(1, 0, 0, 1, 0, 0);
+        atlas.ctx.clearRect(0, 0, atlas.canvas.width, atlas.canvas.height);
+        atlas.density = d;
+      }
+      for (const u of units) if (u.shown && atlas.cells[u.i].key !== `${u.key}|${u.w}x${u.h}`) paint.push(u);
+      if (paint.length) {
+        const plateCtx = ctx;
+        const actx = atlas.ctx;
+        ctx = actx;
+        for (const u of paint) {
+          const cell = atlas.cells[u.i];
+          actx.setTransform(1, 0, 0, 1, 0, 0);
+          actx.clearRect(cell.x - GAP / 2, cell.y - GAP / 2, cell.aw + GAP, cell.ah + GAP);
+          cell.w = u.w;
+          cell.h = u.h;
+          actx.save();
+          actx.beginPath();
+          actx.rect(cell.x, cell.y, cell.w, cell.h);
+          actx.clip();
+          // The unit's centre onto the cell's, at the plate's density; the plate's text shadow, as every glyph there gets it.
+          actx.setTransform(d, 0, 0, d, cell.x + cell.w / 2 - u.cx * d, cell.y + cell.h / 2 - u.cy * d);
+          actx.font = baseFont;
+          actx.textBaseline = plateCtx.textBaseline;
+          actx.textAlign = plateCtx.textAlign;
+          actx.globalAlpha = 1;
+          actx.filter = 'none';
+          actx.shadowColor = plateCtx.shadowColor;
+          actx.shadowOffsetX = plateCtx.shadowOffsetX;
+          actx.shadowOffsetY = plateCtx.shadowOffsetY;
+          actx.shadowBlur = plateCtx.shadowBlur;
+          drawToken({
+            ...u.du, _txa: u.txa ? { ...u.txa, alpha: 1 } : null, _txaHidden: false,
+            _txaM: null, _txaH: null, _txaLocal: null, _txaLocalH: null, _txaMaskBox: null, _path: null,
+          });
+          actx.restore();
+          cell.key = `${u.key}|${u.w}x${u.h}`;
+        }
+        ctx = plateCtx;
+        atlas.version += 1;
+      } else if (!fits) atlas.version += 1;
+      return {
+        plateW: textLogicalW, plateH: canvasH,
+        atlas: { canvas: atlas.canvas, version: atlas.version, width: atlas.canvas.width, height: atlas.canvas.height },
+        cards: units.filter((u) => u.shown).map((u) => { const c = atlas.cells[u.i]; return { m: u.m, cell: [c.x, c.y, u.w, u.h], poly: u.poly, alpha: u.alpha }; }),
+        options: resolveTextInWorld(item),
+      };
+    };
     // Text Animators: hand every draw unit its evaluated state, its transform (around
     // each animator's unit — letter, word, line or the whole text — over the units'
     // final layout, at the layer's Pivot X / Y) and its paint. A unit on a path turns
@@ -1327,7 +1463,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
             const tf = txaUnitTransform(st.xf, () => own, pivot, txaZPersp);
             if (tf.projective) du._txaLocalH = tf.H;
             else du._txaLocal = txaHToCanvas(tf.H);
-            if (text3dOn) du._txaLocalM4 = txaUnitTransform3d(st.xf, () => own, pivot);
+            if (text3dOn || textWorldOn) du._txaLocalM4 = txaUnitTransform3d(st.xf, () => own, pivot);
           } else {
             // Under a mask a rise travels at least the mask box, so it starts hidden.
             const mb = du._txaMaskBox;
@@ -1347,7 +1483,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
               if (tf.projective) du._txaH = tf.H;
               else du._txaM = txaHToCanvas(tf.H);
             }
-            if (text3dOn) du._txaM4 = txaUnitTransform3d(st.xf, (lv) => boxOf(i, lv), pivot);
+            if (text3dOn || textWorldOn) du._txaM4 = txaUnitTransform3d(st.xf, (lv) => boxOf(i, lv), pivot);
           }
         }
         if (st.touched) {
@@ -1516,6 +1652,9 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       // 3D Text: no glyph is painted — the run carries every letter to the 3D
       // pass (model3dLayer.js renderText3dLayer), which films it.
       textPaintPlate.text3dRun = buildText3dRun();
+    } else if (textWorldOn) {
+      // In the world: the cards carry every unit there (world3dText.js worldFlatLetters), and the plate stays as it was.
+      textPaintPlate.textWorldRun = buildTextWorldRun();
     } else if (!rndActive && !textPathOn && !txaActive) {
       setGlyphPaint(textColor, blockBox, '#ffffff');
       for (const metric of rowMetrics) {
@@ -1603,7 +1742,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       textPaintPlate.glowSizes = [];
     }
-    textTexture.needsUpdate = true;
+    // A plate nobody shows goes up to nobody: the world takes the cards (and a plate shown again has another signature).
+    if (!textWorldOn) textTexture.needsUpdate = true;
     textPaintPlate.paintSig = textPaintSig;
     engine.perfStats.textPaints += 1;
     engine.perfStats.textPaintMs += performance.now() - textPaintT0;
@@ -1624,6 +1764,9 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
     }
     // The run of the last paint (a skipped paint keeps the one it would have made).
     mesh.userData.text3dRun = text3dOn ? (textPaintPlate.text3dRun || null) : null;
+    // (enginebugs2) the keyframe values the quad is posed with: a world places the letters by them (channelRender.js promoteText3dMesh)
+    mesh.userData.text3dKf = text3dOn ? keyframeProps : null;
+    mesh.userData.textWorldRun = textWorldOn ? (textPaintPlate.textWorldRun || null) : null;
   } else if (clip.mediaType === 'shape') {
     // Keyframed Width / Height / Radius (shapePath.js withShapeSizeKeyframes) and
     // Border width / colour (borderKeyframes.js) size the plate and the draw; the
@@ -2195,6 +2338,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
 
   resetMaterialUniforms(material);
   material.uniforms.uCanvasSize.value.set(layerWidth, layerHeight);
+  // (hdr2) the 3D Scene's own light above white, while an HDR render composites in float: only its HDR plate lifts the top (hdrComposite.js)
+  if (overrideTexture?.userData?.hdrPlate === true && material.uniforms.uRgbMax) material.uniforms.uRgbMax.value = 65504;
   // EVERY override texture is one of this compositor's own render targets, so its
   // RGB is already multiplied by its coverage — a 3D pass writes `mapped * a`, a
   // sequence/grid accumulates premultiplied `over`, and the particle pass emits
@@ -2431,6 +2576,19 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       if (Number.isFinite(cellFx.hue)) u.uHueRotate.value += cellFx.hue;
       if (Number.isFinite(cellFx.grayscale)) u.uGrayscale.value = clamp(u.uGrayscale.value + cellFx.grayscale / 100, 0, 1);
       if (Number.isFinite(cellFx.sepia)) u.uSepia.value = clamp(u.uSepia.value + cellFx.sepia / 100, 0, 1);
+    }
+  }
+  // (hdr3) The 3D Scene's own grade (brightness, contrast, saturation, hue, grayscale, sepia, invert, tint) in an HDR render's float
+  // composite (../hdrComposite.js): the frame drawn with its SDR plate hands it to the HDR plate's pass, which grades the light above white
+  // at the grade's own slope (compositeNodes.js gradeHybrid); the frame drawn with the HDR plate then shows that plate as it is.
+  if (engine.hdrComposite && overrideTexture) {
+    const u = material.uniforms;
+    if (overrideTexture === engine.hdrSdrPlate) {
+      engine.hdrSceneGrade = { brightness: u.uBrightness.value, contrast: u.uContrast.value, saturation: u.uSaturation.value, hue: u.uHueRotate.value,
+        grayscale: u.uGrayscale.value, sepia: u.uSepia.value, invert: u.uInvert?.value || 0, tint: u.uTintColor.value.clone() };
+    } else if (overrideTexture.userData?.hdrPlate === true) {
+      u.uBrightness.value = 1; u.uContrast.value = 1; u.uSaturation.value = 1; u.uHueRotate.value = 0;
+      u.uGrayscale.value = 0; u.uSepia.value = 0; if (u.uInvert) u.uInvert.value = 0; u.uTintColor.value.setRGB(1, 1, 1);
     }
   }
   // Grow the quad by the shadow reach so drop shadows aren't clipped at the

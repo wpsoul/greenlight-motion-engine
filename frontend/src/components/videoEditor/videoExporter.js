@@ -1,6 +1,7 @@
 import { Muxer as Mp4Muxer, ArrayBufferTarget as Mp4Target, StreamTarget as Mp4StreamTarget } from 'mp4-muxer';
 import { Muxer as WebmMuxer, ArrayBufferTarget as WebmTarget, StreamTarget as WebmStreamTarget } from 'webm-muxer';
 import { audioFadeGainWindow } from './audioFade';
+import { filmFrames } from './frameGrid';
 import { autoQuantizerFor, estimateDetailBitrate } from './renderBitrate';
 import { measureEncoderDelay, insertAudioEditList, createPrimingStreamPatcher } from './mp4AudioPriming';
 
@@ -420,7 +421,7 @@ async function canvasToPngBytes(cv) {
  * @param {number} opts.fps - frames per second (default 30)
  * @param {number} opts.width - output width
  * @param {number} opts.height - output height
- * @param {'mp4'|'webm'|'webm-alpha'} opts.format - output format
+ * @param {'mp4'|'webm'|'webm-alpha'|'mov-prores4444'} opts.format - output format (the alpha ones only in frames mode)
  * @param {Array} [opts.audioClips] - audio clips to mix: [{ url, startTime, trimStart, trimEnd, volume }]
  * @param {number} [opts.bitrate] - target video bitrate in bits per second
  * @param {Function} [opts.captureFrame] - async () => ImageBitmapSource for custom compositing
@@ -431,8 +432,34 @@ async function canvasToPngBytes(cv) {
  *   When provided, transparency is preserved by emitting RGBA PNG frames instead of
  *   encoding video here — WebCodecs has no alpha encoder (see the frames-mode note below).
  * @param {Function} [opts.onAudioData] - webm-alpha frames mode: async (wavBytes) => void
+ * @param {Function} [opts.onFrameTime] - frames mode: (index, ms) => void, the time one frame took (draw, settle, capture, PNG)
  * @returns {Promise<Blob>}
  */
+/**
+ * (chatfarm2) The film's sound alone, as an MP4 with one AAC track (+ its priming edit list): what a render shared by several
+ * machines puts under the joined frames (every part is rendered without sound: each part's own AAC would carry its own encoder
+ * priming at the seam). The same mix and encoder as a whole render's sound, so the joined file sounds exactly like one render.
+ * Returns a Blob (audio/mp4), or null when the film has no sound.
+ */
+export async function exportAudioOnly({ audioClips = [], duration, audioBitrate = 0, signal = null, onProgress = null, codec = null } = {}) {
+  if (!audioClips.length || typeof AudioEncoder === 'undefined' || !(duration > 0)) return null;
+  // AAC where this browser has an AAC encoder (Chrome on macOS / Windows); Opus in MP4 where it has none (Chrome on Linux: measured on
+  // a RunPod pod, AudioEncoder mp4a.40.2 unsupported, Opus supported) — plays in Chrome, Firefox, Edge, VLC, Safari 17+, not everywhere
+  const aacOk = codec !== 'opus' && (await AudioEncoder.isConfigSupported({ codec: 'mp4a.40.2', sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS, bitrate: AUDIO_BITRATE }).catch(() => ({}))).supported;
+  const mixed = await mixAudioClips(audioClips, duration, []);
+  if (signal?.aborted) throw new DOMException('Render stopped', 'AbortError');
+  if (!mixed) return null;
+  const target = new Mp4Target();
+  const muxer = new Mp4Muxer({ target, fastStart: 'in-memory', firstTimestampBehavior: 'offset',
+    audio: { codec: aacOk ? 'aac' : 'opus', sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS } });
+  let priming = 0;
+  await encodeAudioToMuxer(muxer, mixed, !aacOk, audioBitrate, (p) => { priming = p; });
+  muxer.finalize();
+  onProgress?.(1);
+  const bytes = aacOk && priming > 0 ? insertAudioEditList(target.buffer, priming) : new Uint8Array(target.buffer);
+  return new Blob([bytes], { type: 'audio/mp4' });
+}
+
 export async function exportVideo(opts) {
   const {
     renderFrameAtTime,
@@ -451,6 +478,7 @@ export async function exportVideo(opts) {
     onOutputChunk, // when set, stream output chunks (avoids a >2GB in-memory buffer)
     onFrameImage, // when set (webm-alpha), emit PNG frames instead of encoding video
     onAudioData,
+    onFrameTime = null,
     // Server render on a browser without an H.264 encoder (open-source Chromium on
     // Linux): emit PNG frames for ANY format and let ffmpeg encode (plan §10.4).
     forceFrames = false,
@@ -460,6 +488,12 @@ export async function exportVideo(opts) {
     // messages back into absolute timeline time (the export clock starts at the
     // range start, so "0.07s" would otherwise mislead).
     firstFrameTimeoutMs = 0,
+    // A frame made of several renders (motion blur's sub-frames, each a Final trace in a Scene) gets that many frames' budget. A number for
+    // every frame, or (time) => ms for the frame at that export time: a Final 3D Scene's frame waits for its whole trace (exporter.js).
+    frameTimeoutMs = 0,
+    // Frames in a row that may stall before the render stops: a number, or (time) => count. For a Final 3D Scene's frame one stall is
+    // already a stuck frame, never a slow one to encode half traced and skip.
+    stallLimit = 3,
     displayTimeOffset = 0,
     // () => string|null — what the renderer was actually doing when a frame
     // stalled. The old message said "a clip likely can't be decoded" for every
@@ -494,16 +528,24 @@ export async function exportVideo(opts) {
     keyFrameAt = null,
     audioDuration = null,
     encoderConfig = null,
+    // (hdrscene) an HDR render of a Scene alone (hdrScene.js createSceneLight): each frame as the world's own light, sent instead of the PNG
+    sceneLight = null,
+    // (badframes) the frame guard (frameGuard.js, exporter.js): async (i, time, attempt, { error, since, resets }) => { ok } | { retry },
+    // asked after a frame is read and before it is encoded or sent; it throws to stop the render. A retried frame is drawn again from the
+    // start and nothing of the failed attempt leaves.
+    checkFrame = null,
   } = opts;
   // `undefined` (nobody set it) means the default; 0 is a deliberate "off".
   const queuedOutputBudget = Number.isFinite(maxQueuedOutputBytes)
     ? maxQueuedOutputBytes
     : DEFAULT_MAX_QUEUED_OUTPUT_BYTES;
 
-  const totalFrames = Number.isInteger(frameCount) && frameCount > 0 ? frameCount : Math.max(1, Math.ceil(duration * fps));
+  // (polish3) counted on the frame grid (frameGrid.js): a duration a few ulps past a whole number of frames is that number
+  const totalFrames = Number.isInteger(frameCount) && frameCount > 0 ? frameCount : filmFrames(duration, fps);
   console.warn(`[export-phase] exportVideo: ${totalFrames} frames, ${audioClips.length} audio clips, format=${format}, ${width}x${height}`);
   const frameDuration = 1_000_000 / fps; // microseconds per frame
-  const useAlpha = format === 'webm-alpha';
+  // ProRes 4444 keeps its alpha too, through the same frames route (render_pro.py encodes it)
+  const useAlpha = format === 'webm-alpha' || format === 'mov-prores4444';
   const isWebm = format === 'webm' || format === 'webm-alpha';
 
   // Frames mode. Chromium's WebCodecs VideoEncoder rejects EVERY alpha:'keep'
@@ -806,7 +848,9 @@ export async function exportVideo(opts) {
   // each frame's render; on timeout, warn (captured in the backend log via the page
   // console) and continue with the current canvas. Bail out if several frames in a
   // row stall — the timeline can't be decoded, so failing fast beats a 15-min hang.
-  const FRAME_RENDER_TIMEOUT_MS = 15000;
+  const FRAME_RENDER_TIMEOUT_MS = Math.max(15000, Number(typeof frameTimeoutMs === 'function' ? 0 : frameTimeoutMs) || 0);
+  const frameTimeoutAt = (t) => (typeof frameTimeoutMs === 'function' ? Math.max(15000, Number(frameTimeoutMs(t)) || 0) : FRAME_RENDER_TIMEOUT_MS);
+  const stallLimitAt = (t) => (typeof stallLimit === 'function' ? stallLimit(t) : stallLimit);
   // The encoder queue normally drains in well under a second, so 30s of zero
   // drain means the hardware encoder is wedged (seen at high resolutions / very
   // long timelines under memory pressure — e.g. a huge 4K source clip), not just
@@ -877,6 +921,7 @@ export async function exportVideo(opts) {
   }
 
   // Render frame by frame
+  let guardAttempt = 0;     // (badframes) the attempt at frame i (0: its first draw)
   for (let i = 0; i < totalFrames; i++) {
     if (signal?.aborted) {
       encoder?.close();
@@ -884,6 +929,7 @@ export async function exportVideo(opts) {
     }
 
     const time = i / fps;
+    const frameStartedAt = (onFrameTime || sceneLight) ? performance.now() : 0;
     // Absolute timeline time for logs/errors (equals `time` for a full render).
     const tlTime = (time + displayTimeOffset).toFixed(2);
     // Granular phase markers for frame 0 (read by the backend phase-poller) so a
@@ -901,22 +947,41 @@ export async function exportVideo(opts) {
     if (i === 0) console.warn('[export-phase] rendering frame 0 (seeking videos)');
 
     // Await the render — this seeks all videos and waits for decoded frames.
-    const frameBudgetMs = (i === 0 && firstFrameTimeoutMs > FRAME_RENDER_TIMEOUT_MS)
+    const frameTimeout = frameTimeoutAt(time);
+    const frameBudgetMs = (i === 0 && firstFrameTimeoutMs > frameTimeout)
       ? firstFrameTimeoutMs
-      : FRAME_RENDER_TIMEOUT_MS;
+      : frameTimeout;
     let frameTimedOut = false;
+    // (badframes) what the guard weighs: the frame's own error, and the GPU state it started from
+    let frameError = null;
+    const frameSince = performance.now();
+    const resetsBefore = gpuResetCount?.() ?? 0;
     await Promise.race([
       Promise.resolve()
         .then(() => renderFrameAtTime(time))
-        .catch((e) => { console.warn(`[export] renderFrameAtTime(${i}) @ ${tlTime}s errored: ${e?.message || e}`); }),
+        .catch((e) => { frameError = e; console.warn(`[export] renderFrameAtTime(${i}) @ ${tlTime}s errored: ${e?.message || e}`); }),
       new Promise((resolve) => setTimeout(() => { frameTimedOut = true; resolve(); }, frameBudgetMs)),
     ]);
+    // A frame that stops the render (a Final trace that cannot end, a frame the guard gave up on) stops it here, before anything of it
+    // is encoded: the next frame's checkFatal said it one frame late, after encoding this one.
+    if (frameError?.finalStall && checkFrame) {
+      encoder?.close();
+      throw new Error(`Render stopped at ${tlTime}s — ${frameError.message}`);
+    }
+    // (badframes) the guard's verdict on what was just read, before it leaves; a retry draws the frame again
+    const guardSays = async () => {
+      if (!checkFrame || frameTimedOut) return false;
+      const verdict = await checkFrame(i, time, guardAttempt, { error: frameError, since: frameSince, resets: resetsBefore });
+      if (verdict?.retry) { guardAttempt += 1; return true; }
+      guardAttempt = 0;
+      return false;
+    };
     mark0(frameTimedOut ? 'frame0: seek TIMED OUT' : 'frame0: seek ok');
     checkGpuReset(i, time, tlTime);
     if (frameTimedOut) {
       stalledFrames += 1;
       console.warn(`[export] frame ${i} @ ${tlTime}s stalled >${frameBudgetMs}ms (${stalledFrames} in a row)`);
-      if (stalledFrames >= 3) {
+      if (stalledFrames >= stallLimitAt(time)) {
         encoder?.close();
         if (gpuReset) throw gpuResetError();
         let detail = null;
@@ -961,18 +1026,41 @@ export async function exportVideo(opts) {
       console.warn('[export-phase] capture mode: ' + window.__exportCaptureMode
         + (directEncode ? ' (VideoFrame from the canvas)' : ' (CPU pixel readback)'));
     }
-    if (!directEncode) {
+    // (hdrscene) a frame that goes out as the world's own light needs no 8-bit copy of the canvas (its read back is most of a frames-mode
+    // frame's time): only the first frame (checked against it) and a frame that falls back take one, here, in the task that drew it
+    const copy = () => {
       captureCtx.clearRect(0, 0, width, height);
       captureCtx.drawImage(frameSource, 0, 0, width, height);
       if (frameSource !== canvas && typeof frameSource.close === 'function') frameSource.close();
-    }
+    };
+    const lightOnly = framesMode && !!sceneLight?.lightOnly?.();
+    if (!directEncode && !lightOnly) copy();
 
     // Frames mode (webm-alpha): hand the RGBA frame to the caller as a PNG and
     // skip everything encoder-related. Awaiting the sink is the back-pressure —
     // it resolves once ffmpeg has taken the bytes.
     if (framesMode) {
+      // (hdrscene) the Scene's own light as half floats; null: this render's frames are today's PNGs
+      let copied = !lightOnly;
+      const lit = sceneLight ? await sceneLight.frame(() => {
+        if (!copied) { copy(); copied = true; }
+        return captureCtx.getImageData(0, 0, width, height).data;
+      }) : null;
+      if (lit) {
+        mark0('frame0: captured');
+        if (await guardSays()) { i -= 1; continue; }
+        if (onFrameTime) { try { onFrameTime(i, performance.now() - frameStartedAt); } catch { /* timing is best-effort */ } }
+        await onFrameImage(lit.data, i, lit.kind, lit.light);
+        sceneLight.frameDone?.(performance.now() - frameStartedAt);
+        mark0('frame0: sent');
+        onProgress?.(i / totalFrames, totalFrames);
+        continue;
+      }
       const png = await canvasToPngBytes(captureCanvas);
       mark0('frame0: captured');
+      if (await guardSays()) { i -= 1; continue; }
+      // the frame's own time (a test render's per-frame numbers), before the bytes travel
+      if (onFrameTime) { try { onFrameTime(i, performance.now() - frameStartedAt); } catch { /* timing is best-effort */ } }
       await onFrameImage(png, i);
       mark0('frame0: sent');
       onProgress?.(i / totalFrames, totalFrames);
@@ -1001,6 +1089,8 @@ export async function exportVideo(opts) {
       });
     }
     mark0('frame0: captured');
+    // (badframes) the frame is held, not encoded, until the guard has passed it
+    if (await guardSays()) { frame.close(); i -= 1; continue; }
 
     const keyFrame = i % keyFrameInterval === 0 || (keyFrameAt ? keyFrameAt(i) === true : false);
     encoder.encode(frame, frameQuantizer ? { keyFrame, [frameQuantizer.kind]: { quantizer: frameQuantizer.quantizer } } : { keyFrame });

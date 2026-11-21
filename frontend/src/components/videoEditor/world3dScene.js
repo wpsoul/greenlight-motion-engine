@@ -6,7 +6,7 @@
  * shadow biases, the tracer's ray offsets and every Blender scene assume them, so everything crossing over is scaled by
  * WORLD_UNITS. Radiance has no length in it; only point and spot candela scale, with the square.
  */
-import { normalizeRig, resolveEnvUrl, vectorFromSpherical, lightTarget, areaLuminance, candelaIntensity } from './rig3d.js';
+import { normalizeRig, resolveEnvUrl, vectorFromSpherical, lightTarget, areaLuminance, candelaIntensity, animatedGraphOf } from './rig3d.js';
 
 export const WORLD_UNITS = 0.001;
 
@@ -77,19 +77,101 @@ export function worldSteer(proxy, rest) {
   };
 }
 
-/** `models`: [{ id, name, url } | { id, name, splat } | { id, name, baked, material }]. `backdrop`: true when the Rig's set has a mesh. */
-export function worldSceneFromRig(rawRig, { W, H, models = [], materials = {}, particles = [], backdrop = false, duration = 10, fps = 30 }) {
+// A flat Ambient has no direction to trace, so it joins the environment it is closest to in the render.
+const isAmbient = (l) => l.type === 'ambient' || l.type === 'hemisphere';
+const ambientOf = (rig) => rig.lights.filter(isAmbient).reduce((sum, l) => sum + (l.on === false ? 0 : l.intensity), 0);
+
+/** A light's colour as linear light, three channels 0..1 (what three makes of an sRGB colour): '#rgb', '#rrggbb', '#rrggbbaa', or the
+ *  'rgba(r, g, b, a)' a colour key evaluates to between two keys (gsapTransitions.js toRgbaString). Anything else is white. */
+const linearOf = (value) => {
+  const s = String(value || '').trim();
+  let rgb = null;
+  const hex = /^#?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(s);
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].replace(/./g, (c) => c + c) : hex[1].slice(0, 6);
+    rgb = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  } else {
+    const fn = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(s);
+    if (fn) rgb = [fn[1], fn[2], fn[3]].map(Number);
+  }
+  return (rgb || [255, 255, 255]).map((v) => { const c = Math.min(Math.max(v / 255, 0), 1); return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+};
+
+/** (ownercalls) The light the Ambients and Hemispheres add to a world's environment, as they rest and as keys move them. Their strength joins
+ *  the environment's (ambientOf); their colour tints it by its share of that light, channel by channel in linear light, as three draws the
+ *  same lights on a classic Rig: the sky half of the map by (env + Σ a·colour) / (env + Σ a), the ground half the same with each
+ *  Hemisphere's ground colour (an Ambient lights both halves alike). [r, g, b], or [sky r, g, b, ground r, g, b] when the halves differ.
+ *  `envStrength`: the map's own strength (0 for the flat world an Ambient makes where there is no map).
+ *  Null when every colour is white (the map as it is: the environment and a white Ambient draw exactly as before). */
+function ambientTint(rig, envStrength = rig.env.intensity) {
+  const sky = [0, 0, 0], ground = [0, 0, 0];
+  let total = 0;
+  for (const l of rig.lights) {
+    if (!isAmbient(l)) continue;
+    const a = l.on === false ? 0 : l.intensity;
+    if (!(a > 0)) continue;
+    const up = linearOf(l.color), down = l.type === 'hemisphere' ? linearOf(l.groundColor) : up;
+    total += a;
+    for (let i = 0; i < 3; i++) { sky[i] += a * up[i]; ground[i] += a * down[i]; }
+  }
+  const env = Math.max(0, envStrength || 0), whole = env + total;
+  if (!(total > 0) || !(whole > 0)) return null;
+  const share = (v) => Math.round(((env + v) / whole) * 1e5) / 1e5;
+  const s = sky.map(share), g = ground.map(share);
+  const split = g.some((v, i) => Math.abs(v - s[i]) > 1e-5);
+  if (!split && s.every((v) => Math.abs(v - 1) < 1e-5)) return null;
+  return split ? [...s, ...g] : s;
+}
+
+/** A tint as [sky r, g, b, ground r, g, b]. */
+const tintHalves = (t) => (t ? (t.length === 6 ? t : [...t, ...t]) : [1, 1, 1, 1, 1, 1]);
+
+/** (ownercalls) A scene with its own environment strength takes the Rig's ambient light only as keys move it (the scene's strength takes
+ *  the Rig's environment and Ambients' place at rest, worldSceneFromRig): the tint now over the tint at rest, half by half. */
+function keyedTint(rig, rest) {
+  const now = tintHalves(ambientTint(rig)), was = tintHalves(ambientTint(rest));
+  const t = now.map((v, i) => Math.round((v / Math.max(was[i], 1e-5)) * 1e5) / 1e5);
+  if (t.every((v) => Math.abs(v - 1) < 1e-5)) return null;
+  return t.slice(0, 3).every((v, i) => Math.abs(v - t[i + 3]) < 1e-5) ? t.slice(0, 3) : t;
+}
+
+/** `models`: [{ id, name, url, skeleton? } | { id, name, splat } | { id, name, baked, material }]. `backdrop`: true when the Rig's set has a mesh.
+ *  `resting`: the Rig without its keys, when `rawRig` is the Rig at a keyed moment (world3dLayer). */
+export function worldSceneFromRig(rawRig, { W, H, models = [], materials = {}, backdrop = false, duration = 10, fps = 30, resting = null }) {
   const rig = normalizeRig(rawRig);
   const lights = rig.lights.map(worldLight).filter(Boolean);
-  // A flat Ambient has no direction to trace, so it joins the environment it is closest to in the render.
-  const ambient = rig.lights.filter((l) => l.type === 'ambient' || l.type === 'hemisphere')
-    .reduce((sum, l) => sum + (l.on === false ? 0 : l.intensity), 0);
+  const ambient = ambientOf(rig);
   const env = { intensity: rig.env.intensity + ambient, rotation: rig.env.rotY, background: rig.cyclorama?.shape === 'none' && rawRig?.scene ? 'env' : 'none' };
   const hdri = resolveEnvUrl(rig.env);
   if (hdri) env.hdri = hdri;
   if (rig.env.tint) env.tint = rig.env.tint;
+  // (vfx34) a map made of a shot's frames names its key light's direction (vfxScene environment keyDir)
+  if (Array.isArray(rawRig?.env?.keyDir) && rawRig.env.keyDir.length === 3) env.keyDir = rawRig.env.keyDir;
   Object.assign(env, rawRig?.scene?.env);
-  // What an agent built: world3d objects, materials and particles, in world units, living on the Scene.
+  // (Stage 0) A scene's own environment strength or turn took the Rig's place, its keys with it: a keyed Rig environment did nothing to a
+  // scene that set its own. The Rig's keys now move the scene's values by as much as they move the Rig's own (its strength in proportion,
+  // its turn by the same degrees); at rest, and with no keys, the scene's values are exactly what they were.
+  const own = rawRig?.scene?.env;
+  if (own && resting && resting !== rawRig) {
+    const rest = normalizeRig(resting);
+    if (Number.isFinite(own.intensity)) {
+      const was = rest.env.intensity + ambientOf(rest), now = rig.env.intensity + ambient;
+      env.intensity = was > 0 ? own.intensity * (now / was) : Math.max(0, own.intensity + now - was);
+    }
+    if (Number.isFinite(own.rotation)) env.rotation = own.rotation + (rig.env.rotY - rest.env.rotY);
+  }
+  // (ownercalls) With no map at all, an Ambient's or a Hemisphere's light was dropped in a world (it joins a map that is not there): it is
+  // a flat world of its own light now (env.flat, its colour by the tint below), as bright as three lights a classic Rig with it: three
+  // adds an Ambient's intensity × colour as irradiance (a diffuse surface returns albedo × intensity / π), and a flat world of radiance L
+  // gives albedo × L, so L = intensity / π. Every such light counts, on, off or at 0, so a key on one never makes the world build again.
+  const ownStrength = Number.isFinite(own?.intensity);
+  const flat = !env.hdri && !env.flat && !ownStrength && rig.lights.some(isAmbient);
+  if (flat) { env.flat = [1, 1, 1]; env.intensity = Math.round((ambient / Math.PI) * 1e6) / 1e6; }
+  // (ownercalls) the Ambients' and Hemispheres' colours, as they rest and as keys move them; a scene with its own environment strength only
+  // from where the Rig rests (that strength takes their place at rest)
+  const tint = ownStrength ? (resting && resting !== rawRig ? keyedTint(rig, normalizeRig(resting)) : null) : ambientTint(rig, flat ? 0 : rig.env.intensity);
+  if (tint) env.ambientTint = tint;
+  // What an agent built: world3d objects, materials and sims, in world units, living on the Scene.
   const built = rawRig?.scene && typeof rawRig.scene === 'object' ? rawRig.scene : {};
   const objects = [], mats = { ...(built.materials || {}), ...materials };
   if (backdrop) {
@@ -98,23 +180,45 @@ export function worldSceneFromRig(rawRig, { W, H, models = [], materials = {}, p
     // shadowing itself is acne with no upside (model3dLayer.js, syncCyclorama).
     mats.backdrop = { base: m.color || '#d8d8d8', roughness: m.roughness ?? 0.8, metalness: m.metalness ?? 0 };
     if (m.mode === 'image' && m.imageUrl) mats.backdrop.maps = { base: m.imageUrl };
+    // (ownercalls) A Solid or picture backdrop is as opaque as its opacity, at rest and as a key moves it (it was drawn opaque at rest
+    // whatever its opacity), as on a classic Rig. "Shadows only" reads it as its shadow's strength (the catcher).
+    if (m.mode !== 'shadowCatcher') {
+      const alpha = Math.min(1, Math.max(0, Number.isFinite(m.opacity) ? m.opacity : 1));
+      if (alpha < 1) mats.backdrop.alpha = Math.round(alpha * 1e4) / 1e4;
+    }
+    // (vfx) A floor that shows only shadows and also takes the objects' light (`light`, vfxScene.js): Final traces it in its own
+    // colour, or in the footage's floor laid on it (`imageUrl`, uvs from cycloramaArrays), so their bounce takes the real floor's colour.
+    const lit = m.mode === 'shadowCatcher' && m.light > 0;
+    if (lit && m.imageUrl) mats.backdrop.maps = { base: m.imageUrl };
     const c = rig.cyclorama;
-    objects.push({ id: 'backdrop', name: 'Backdrop', baked: 'backdrop', material: 'backdrop', rev: [c.shape, c.width, c.height, c.depth, c.curve, c.scale, H].join(), ...(m.mode === 'shadowCatcher' ? { catcher: { tint: m.shadowColor || '#000000', strength: m.opacity ?? 1 } } : {}), castShadow: m.castShadow === true, receiveShadow: m.receiveShadow !== false });
+    // `rev` is what the backdrop's mesh is made of. Its scale is not: the mesh is built at scale 1 and scaled by its pose (cycloramaArrays'
+    // matrix, posed every frame), so a new scale moves it in place, as a key on it does, and does not rebuild the world.
+    objects.push({ id: 'backdrop', name: 'Backdrop', baked: 'backdrop', material: 'backdrop', rev: [c.shape, c.width, c.height, c.depth, c.curve, H, ...(lit ? ['uv'] : [])].join(), ...(m.mode === 'shadowCatcher' ? { catcher: { tint: m.shadowColor || '#000000', strength: m.opacity ?? 1, ...(lit ? { light: m.light } : {}) } } : {}), castShadow: m.castShadow === true, receiveShadow: m.receiveShadow !== false });
   }
   for (const m of models) {
     const rigid = m.rigid ? { rigid: m.rigid } : {};
     if (m.splat) objects.push({ id: m.id, name: m.name, splat: m.splat, ...rigid });
-    else objects.push(m.url ? { id: m.id, name: m.name, model: m.url, ...rigid } : { id: m.id, name: m.name, baked: m.baked, material: m.material, rev: m.rev, ...rigid });
+    else objects.push(m.url ? { id: m.id, name: m.name, model: m.url, ...rigid, ...(m.skeleton ? { skeleton: m.skeleton } : {}) } : { id: m.id, name: m.name, baked: m.baked, material: m.material, rev: m.rev, ...rigid });
   }
   if (Array.isArray(built.objects)) objects.push(...built.objects);
   return {
     version: 1, name: 'Scene', duration, fps, size: [W, H],
     camera: built.camera || { at: [0, 0, 2], target: [0, 0, 0], fov: 28 },
     env, lights: [...lights, ...(Array.isArray(built.lights) ? built.lights : [])], materials: mats, objects,
-    particles: [...particles, ...(Array.isArray(built.particles) ? built.particles : [])],
+    // simulations (sim/1 graphs or recipes, frontend/src/sim): only a scene that has them loads the sim bundle
+    ...(Array.isArray(built.sims) && built.sims.length ? { sims: built.sims } : {}),
     volumes: Array.isArray(built.volumes) ? built.volumes : [],
-    matter: Array.isArray(built.matter) ? built.matter : [],
+    // flat pictures and words standing in the world (WorldRenderer #buildLayers2d); before the Scene schema they were dropped here unseen
+    ...(Array.isArray(built.layers2d) && built.layers2d.length ? { layers2d: built.layers2d } : {}),
+    // (animtools) the clocks the objects', the camera's and the cards' `drive` read (world3d/keys.js clockAt)
+    ...(built.clocks && typeof built.clocks === 'object' && !Array.isArray(built.clocks) ? { clocks: built.clocks } : {}),
     ...(built.anim ? { anim: built.anim } : {}),
+    // light-traced caustics in Final: on by itself under smooth glass and a light; an agent's true or false decides it
+    ...(typeof built.caustics === 'boolean' ? { caustics: built.caustics } : {}),
+    // the memory the texture graphs' automatic bake sizes may take, MB (WorldRenderer #graphSizes; 256 when not set)
+    ...(Number.isFinite(built.textureBudget) ? { textureBudget: built.textureBudget } : {}),
+    // (fogtrace) fog in the air of the set (WorldRenderer #buildFog): traced in Final, marched in Draft; none unless the scene has one
+    ...(built.fog && typeof built.fog === 'object' ? { fog: built.fog } : {}),
     // The set's floor stands 0.42 of a composition below the middle (model3dLayer.js). Gravity is under Earth's: a composition is about
     // a metre tall, and a drop at full strength is over before the eye finds it.
     ...(built.physics || objects.some((o) => o.rigid) ? { physics: built.physics || { floor: (-H * 0.42 + (rig.cyclorama?.y || 0)) * WORLD_UNITS, gravity: [0, -5, 0] } } : {}),
@@ -123,16 +227,24 @@ export function worldSceneFromRig(rawRig, { W, H, models = [], materials = {}, p
 }
 
 /** What a Rig's keys change in a built scene, and the world takes in place on every frame (WorldRenderer.relight): the lights, the
- *  environment's strength and turn, and the backdrop's paint. Its place is a pose like any object's, and everything else is what a
- *  rebuild is for. */
+ *  environment's strength and turn, the backdrop's paint and (matpack) the numbers of a material's animated graph. Its place is a pose
+ *  like any object's, and everything else is what a rebuild is for. */
 export function worldLiveValues(scene) {
   const backdrop = scene.objects.find((o) => o.id === 'backdrop');
   const paint = backdrop && scene.materials[backdrop.material];
+  const graphs = {};
+  for (const id of Object.keys(scene.materials)) {
+    const found = animatedGraphOf({ scene }, id);
+    if (found) graphs[id] = found.graph;
+  }
   return {
     lights: scene.lights,
-    env: { intensity: scene.env.intensity, rotation: scene.env.rotation },
-    materials: paint ? { [backdrop.material]: { base: paint.base } } : {},
+    // (ownercalls) the Ambients' and Hemispheres' colours: the environment's tint (world3dScene ambientTint), none when every one is white
+    env: { intensity: scene.env.intensity, rotation: scene.env.rotation, ...(scene.env.ambientTint ? { ambientTint: scene.env.ambientTint } : {}) },
+    // (ownercalls) and the backdrop's opacity: its alpha, at rest and keyed
+    materials: paint ? { [backdrop.material]: { base: paint.base, ...(paint.alpha < 1 ? { alpha: paint.alpha } : {}) } } : {},
     catchers: backdrop?.catcher ? { [backdrop.id]: backdrop.catcher } : {},
+    graphs,
   };
 }
 
@@ -148,13 +260,15 @@ export function worldMatrix(m) {
  * far); a thin lens's circle has a DIAMETER of A·f/(F − f) × W/film for the same expression, so the two agree when
  * A = 2 × cocScale × (F − f) / f × film / W. Taking the radius for the diameter made Final half as blurred as Draft.
  * One pixel is one millimetre here.
+ * (enginefix4) `film` is the world's film gauge, laid along the frame's LONGER side: across the width that is film × min(aspect, 1).
+ * Read as across the width on a portrait frame, Final's circle came out height / width larger than Draft's (1.78x at 9:16).
  */
 export function worldLens(dof, W, fov, aspect, film = 36) {
   if (!dof?.enabled || !(dof.aperture > 0) || !(dof.blurLevel > 0)) return { fStop: 0, focus: dof?.focusDistance ? dof.focusDistance * WORLD_UNITS : undefined };
-  const filmHeight = film / Math.max(aspect, 1);
+  const filmHeight = film / Math.max(aspect, 1), filmWidth = film * Math.min(aspect, 1);
   const f = filmHeight / (2 * Math.tan((fov * Math.PI) / 360));
   const cocScale = dof.aperture * (dof.blurLevel / 100);
-  const A = ((2 * cocScale * Math.max(1, dof.focusDistance - f)) / f) * (film / W);
+  const A = ((2 * cocScale * Math.max(1, dof.focusDistance - f)) / f) * (filmWidth / W);
   return { fStop: f / A, focus: dof.focusDistance * WORLD_UNITS };
 }
 

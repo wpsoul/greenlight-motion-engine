@@ -174,7 +174,13 @@ const envColorL = Fn(([r, light, rough]) => {
   inputs: [{ name: 'r', type: 'vec3' }, { name: 'light', type: 'vec3' }, { name: 'rough', type: 'float' }],
 });
 
-export function createGlassNodeMaterial() {
+/**
+ * (hdr3) `hdr`: the twin an HDR render's float composite uses (hdrComposite.js): the stack under the pane holds the 3D Scene's light above
+ * white, so the pane's colour is kept off the clamp's top (refracted, frosted, tinted and lit as the SDR pane, in float); below white it is
+ * the SDR pane's picture. The SDR material is built as before.
+ */
+export function createGlassNodeMaterial({ hdr = false } = {}) {
+  const top = (v, a) => (hdr ? max(v, vec3(0.0)) : clamp(v, vec3(0.0), vec3(a)));
   const u = {
     uStack: makeTslSampler({ rgba: [0, 0, 0, 0] }),
     uBlur: makeTslSampler({ rgba: [0, 0, 0, 0] }),
@@ -460,7 +466,7 @@ export function createGlassNodeMaterial() {
           });
 
           const l = dot(col.rgb, LUMA);
-          col.assign(vec4(clamp(mix(vec3(l), col.rgb, u.uSat).add(u.uBright.mul(col.a)), vec3(0.0), vec3(col.a)), col.a));
+          col.assign(vec4(top(mix(vec3(l), col.rgb, u.uSat).add(u.uBright.mul(col.a)), col.a), col.a));
           const ray = refract(I, N, float(1.0).div(max(u.uIor, 1.0)));
           const depth = max(w.z.sub(zb), 0.0).div(max(u.uThick.add(u.uBody), 1.0));
           const path = depth.div(max(abs(ray.z), 0.25));
@@ -502,7 +508,7 @@ export function createGlassNodeMaterial() {
             col.addAssign(vec4(vec3(rl), rl));
           });
           const a = clamp(col.a, 0.0, 1.0);
-          const glass = vec4(clamp(col.rgb, vec3(0.0), vec3(a)), a);
+          const glass = vec4(top(col.rgb, a), a);
           result.assign(mix(outside, mix(stackPx, glass, keep), cov.mul(lmPane)));
         });
       });

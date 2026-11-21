@@ -204,12 +204,13 @@ export function isRunningGlowEnabled(item) {
 // here rather than in a list of feature ids because there is nothing to keep in
 // sync — the effect IS the flag. See containsProMotionTemplate in
 // motionTemplates/index.js and the gate in VideoEditor's handleRenderInBackground.
-export const GLOW_IS_PRO = true;
+export const GLOW_IS_PRO = false;   // free since 16.5.95 (the owner: "open all effects, let them all be free")
 
 // `isRunningGlowEnabled` short-circuits a static amount of 0, but a KEYFRAMED
 // amount can ramp up from a zero static field, so an animated track counts as in
 // use too — otherwise a fade-in glow would render for free.
 function glowGatesRender(item) {
+  if (!GLOW_IS_PRO) return false;
   const effect = getRunningGlowEffect(item);
   if (!effect || effect.enabled === false) return false;
   const track = item.propertyKeyframes?.glowAmount;

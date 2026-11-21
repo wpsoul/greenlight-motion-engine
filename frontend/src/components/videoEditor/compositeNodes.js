@@ -27,7 +27,7 @@ import * as THREE from 'three/webgpu';
 import {
   uniform, texture, uv, vec2, vec3, vec4, float, dot, mix, clamp, select, Fn, If, Discard,
   Loop, Break, int, abs, fract, sin, cos, sqrt, step, smoothstep, distance, max as tslMax, min as tslMin,
-  screenCoordinate, screenSize, exp, log2,
+  screenCoordinate, screenSize, screenUV, exp, log2, pow, textureLoad, ivec2, floor,
 } from 'three/tsl';
 import { makeTslSampler } from './tslSampler.js';
 import { stableHash12 } from './tslStableHash.js';
@@ -45,6 +45,44 @@ function finish(material, uniforms) {
   material.forceSinglePass = true;
   material.uniforms = uniforms;
   return material;
+}
+
+// ── (hdr3) An HDR render's float composite: display values up to white, light above it ──
+// The stack of an HDR render's float composite (hdrComposite.js) holds each pixel's SDR display value up to white (1.0) and its light
+// above white (1000 cd/m² = 4.93). These are its two halves of the sRGB curve: to light, and back, channel by channel (step(), not
+// select(): a TSL select() on a vector tests all() of it, so a saturated colour's dark channel took the curve's upper branch and its
+// display value went below zero, -14 levels for a channel at 0: the round-2 plate's encode did that, and its check failed on a red box).
+const sdrToLin = (c) => mix(tslMax(c, vec3(0)).div(12.92), pow(tslMax(c, vec3(0)).add(0.055).div(1.055), vec3(2.4)), step(vec3(0.04045), c));
+const sdrToDisplay = (c) => mix(tslMax(c, vec3(0)).mul(12.92), pow(tslMax(c, vec3(0)), vec3(1 / 2.4)).mul(1.055).sub(0.055), step(vec3(0.0031308), c));
+const pastWhite = (c) => step(vec3(1), c);
+const hybridToLin = (c) => mix(sdrToLin(clamp(c, 0.0, 1.0)), c, pastWhite(c));
+const linToHybrid = (c) => mix(sdrToDisplay(clamp(c, 0.0, 1.0)), c, pastWhite(c));
+// the sRGB curve's slope at white, display per unit of light: a light step x above white is a display step x·SRGB_SLOPE_AT_WHITE
+const SRGB_SLOPE_AT_WHITE = 1.055 / 2.4;
+// the sRGB curve to light, per channel, carried on above 1 (for a grade's slope)
+const srgbToLinExt = (c) => mix(tslMax(c, vec3(0)).div(12.92), pow(tslMax(c, vec3(0)).add(0.055).div(1.055), vec3(2.4)), step(vec3(0.04045), c));
+
+/**
+ * (hdr3) A grade (or blend) `g` (display values in and out, as the SDR export applies it) carried onto a colour of the float composite:
+ * the SDR result at the colour's display part, plus the light above white carried at the grade's own slope there, so the result is
+ * continuous in value and slope at white: light = L(g(d)) + J·x, J·x the grade's change in light per unit of light at d along x (a
+ * backward difference from the SDR side). `c` straight; returns the float composite's number (SDR display value where nothing is above
+ * white). `clampTop`: the SDR grade's own top (1: the SDR export clamps its result to white).
+ */
+export function gradeHybrid(c, g, { clampTop = true } = {}) {
+  const d = tslMin(c, vec3(1)).toVar();
+  const x = tslMax(c.sub(vec3(1)), vec3(0)).toVar();
+  const g0 = g(d).toVar();
+  const sdr = clampTop ? clamp(g0, 0.0, 1.0) : tslMax(g0, vec3(0));
+  const out = vec3(sdr).toVar();
+  If(tslMax(x.r, tslMax(x.g, x.b)).greaterThan(0.0), () => {
+    const dc = x.mul(SRGB_SLOPE_AT_WHITE);
+    const eps = float(1e-3).div(tslMax(tslMax(dc.r, tslMax(dc.g, dc.b)), 1e-6));
+    const g1 = g(d.sub(dc.mul(eps)));
+    const slope = srgbToLinExt(g0).sub(srgbToLinExt(g1)).div(eps);
+    out.assign(linToHybrid(tslMax(srgbToLinExt(sdr).add(slope), vec3(0))));
+  });
+  return out;
 }
 
 // ── 1/2. The two blits ──────────────────────────────────────────────────────
@@ -134,6 +172,45 @@ export function createOverBlitNodeMaterial() {
   return finish(material, u);
 }
 
+/*
+ * (mblur4) The over-blit in linear light, for what stands for a share of the light below rather than a layer of paint: a shadow catcher's
+ * shadow (its coverage is the share of the light the objects take from the floor, its colour the shadow's tint) and a Scene's frame whose
+ * coverage is a shutter's share. lin = a·L(c / a) + (1 − a)·Lp(below), premultiplied in and out, sRGB to linear and back: a 50 % light loss
+ * leaves the footage half its light, where the display-value blend left 22 %. `uBelow` is the stack as it stood before this draw (a
+ * storage-identity copy, read flipped as createDepthCompositeNodeMaterial's linear draw reads it); the draw writes the whole result. A pixel
+ * with no coverage, or full coverage, is what the plain blend gives.
+ */
+export function createOverBlitLinearNodeMaterial({ hdr = false } = {}) {
+  const u = { uTexture: makeSampler(), uBelow: makeSampler(true) };
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.fragmentNode = Fn(() => {
+    const src = u.uTexture.sample(uv());
+    const below = u.uBelow.sample(uv());
+    // (hdr3) `hdr`: an HDR render's float composite — the stack below holds the 3D Scene's light above white (display values up to white,
+    // light above): its light is read as it is and the result written back the same way, so a catcher's shadow takes its share of that
+    // light too instead of clamping it at white. Below white it is the SDR draw.
+    const toLin = hdr ? hybridToLin : (c) => select(c.lessThanEqual(vec3(0.04045)), c.div(12.92), pow(c.add(0.055).div(1.055), vec3(2.4)));
+    const toDisplay = hdr ? linToHybrid : (c) => select(c.lessThanEqual(vec3(0.0031308)), c.mul(12.92), pow(c, vec3(1 / 2.4)).mul(1.055).sub(0.055));
+    const top = (c) => (hdr ? tslMax(c, vec3(0)) : c.clamp(0, 1));
+    const a = src.a.clamp(0, 1), b = below.a.clamp(0, 1);
+    const own = src.rgb.div(tslMax(a, 1e-4)).clamp(0, 1);
+    const lin = toLin(own).mul(a)
+      .add(toLin(top(below.rgb.div(tslMax(b, 1e-4)))).mul(b).mul(float(1).sub(a)));
+    const outA = a.add(b.mul(float(1).sub(a)));
+    // light the source adds past its coverage (a lit catcher's bounce: premultiplied colour beyond its alpha) goes on as it always did
+    const extra = src.rgb.sub(own.mul(a)).max(0);
+    return vec4(toDisplay(lin.div(tslMax(outA, 1e-4))).mul(outA).add(extra), outA);
+  })();
+  material.transparent = true;
+  material.blending = THREE.CustomBlending;
+  material.blendEquation = THREE.AddEquation;
+  material.blendSrc = THREE.OneFactor;
+  material.blendDst = THREE.ZeroFactor;
+  material.blendSrcAlpha = THREE.OneFactor;
+  material.blendDstAlpha = THREE.ZeroFactor;
+  return finish(material, u);
+}
+
 // ── 3. Adjustment layer ─────────────────────────────────────────────────────
 
 /*
@@ -202,7 +279,7 @@ const LUMA_709 = vec3(0.2126, 0.7152, 0.0722);
  * covered area fully replaces what is under it (no ghosting) and anything the
  * transformed plane misses falls through to the untouched below.
  */
-export function createAdjustmentNodeMaterial() {
+export function createAdjustmentNodeMaterial({ hdr = false } = {}) {
   const u = {
     uTexture: makeSampler(),
     uResolution: uniform(new THREE.Vector2(1280, 720)),
@@ -216,6 +293,8 @@ export function createAdjustmentNodeMaterial() {
     uInvert: uniform(0.0),
     uBlur: uniform(0.0),
     uTintColor: uniform(new THREE.Color(0xffffff)),
+    // (hdr2) the top of the graded colour: display white, lifted only while an HDR render composites in float (hdrComposite.js)
+    uRgbMax: uniform(1.0),
   };
   /*
    * The whole fragment is built inside Fn(). `If()` and `.toVar()` append to the
@@ -223,11 +302,9 @@ export function createAdjustmentNodeMaterial() {
    * outside an Fn they have nowhere to land. Same for `Discard()` in the two
    * depth passes below.
    */
-  const fragment = Fn(() => {
-    const raw = sampleBlurred(u, uv());
-    // Premultiplied stack in, alpha-blended write out: grade the straight colour
-    // (see the GLSL twin) so semi-transparent pixels are not darkened twice.
-    let c = raw.rgb.div(tslMax(raw.a, 0.0001)).mul(u.uBrightness);
+  // The grade, display values in and out (its last clamp is the caller's, as the SDR export does it).
+  const grade = (cIn) => {
+    let c = cIn.mul(u.uBrightness);
     c = c.sub(0.5).mul(u.uContrast).add(0.5);
     c = mix(vec3(dot(c, LUMA_709)), c, u.uSaturation);
     // The GLSL guards each of these with an `if`; as pure arithmetic on values
@@ -241,7 +318,19 @@ export function createAdjustmentNodeMaterial() {
     );
     c = mix(c, sepia, clamp(u.uSepia, 0.0, 1.0));
     c = mix(c, vec3(1.0).sub(c), clamp(u.uInvert, 0.0, 1.0));
-    c = clamp(c.mul(u.uTintColor), 0.0, 1.0);
+    return c.mul(u.uTintColor);
+  };
+  const fragment = Fn(() => {
+    const raw = sampleBlurred(u, uv());
+    // Premultiplied stack in, alpha-blended write out: grade the straight colour
+    // (see the GLSL twin) so semi-transparent pixels are not darkened twice.
+    if (hdr) {
+      // (hdr3) an HDR render's float composite: the SDR grade up to white, the light above white carried at the grade's slope there
+      // (gradeHybrid), so a grade is the SDR export's on everything within white and continues smoothly into the 3D Scene's highlights.
+      const c = gradeHybrid(raw.rgb.div(tslMax(raw.a, 0.0001)), grade);
+      return vec4(c, raw.a.mul(u.uOpacity));
+    }
+    const c = clamp(grade(raw.rgb.div(tslMax(raw.a, 0.0001))), 0.0, u.uRgbMax);
     return vec4(c, raw.a.mul(u.uOpacity));
   });
 
@@ -360,28 +449,111 @@ const FAR_PLANE = 0.999999;
  */
 /**
  * The world's canvas split in one draw: the picture over its depth (src/world3d/WorldRenderer.js, #handoffNode) into a
- * colour plate and a real depth texture, in the compositor's own near/far. GLSL twin: createWorldPlateMaterial.
+ * colour plate and a real depth texture, in the compositor's own near/far. WebGPU only: a 3D Scene does not draw on the WebGL
+ * engine, so this has no GLSL twin.
  */
 export function createWorldPlateNodeMaterial({ worldNear, worldFar, worldUnits }) {
-  const u = { uHandoff: makeSampler(), uNear: uniform(1), uFar: uniform(100000), uShadow: uniform(0) };
+  // (vfx) uK1, uLens: the footage's lens. The world draws through a pinhole; a solved wide lens bends its plate by one radial term
+  // (x_bent = x · (1 + k1·r²), x in focal lengths), so the world's picture is read where each bent pixel's ray came from. uLens is
+  // the frame in focal lengths (W / f, H / f). k1 = 0 reads the picture exactly as before.
+  // (vfx34) uSoften, uBlack, uTexel: the footage's own softness and black level (look.soften px, look.black of 1), so an object sits
+  // in the plate: the world's picture, coverage with it, through a small blur, and its darks lifted to the plate's. 0, 0 skip both.
+  // (vfx) uGrain, uGrainSeed: the footage's grain (look.grain, the world's own grain units: uniform noise of 0.14 · grain), laid on
+  // here AFTER the softness, where the world's picture joins the footage. In the world's own pass the blur above took a softened
+  // footage's grain down to a third (soften 0.7 px and up): the object came out cleaner than the shot. 0 skips it.
+  // (polish1) uWorldNear, uWorldRatio: the world camera's clip planes (near, far / near), which follow its set (WorldRenderer #fitClip); the
+  // canvas's depth band holds distance as a log across them
+  const u = { uHandoff: makeSampler(), uNear: uniform(1), uFar: uniform(100000), uWorldNear: uniform(worldNear), uWorldRatio: uniform(worldFar / worldNear), uShadow: uniform(0), uK1: uniform(0), uLens: uniform(new THREE.Vector2(1, 1)),
+    uSoften: uniform(0), uBlack: uniform(0), uTexel: uniform(new THREE.Vector2(1 / 1920, 1 / 2160)), uGrain: uniform(0), uGrainSeed: uniform(0), uSharpen: uniform(0),
+    uBlackTint: uniform(new THREE.Vector3(1, 1, 1)),
+    // (octane2) where each band sits in the canvas (v scale, offset): the picture over its depth, and with the editor's world mattes a third
+    // band of masks below them (world3dLayer.js); uMask k > 0 draws mask k (1..3) as premultiplied white instead of the picture
+    uPicY: uniform(new THREE.Vector2(0.5, 0.5)), uBandY: uniform(new THREE.Vector2(0.5, 0)), uMaskY: uniform(new THREE.Vector2(0.5, 0)), uMask: uniform(0) };
   const material = new THREE.MeshBasicNodeMaterial();
-  // As in the GLSL twin: a canvas uploads top row first, so the picture is the half at high v, and depth the half below it.
+  const c = uv().sub(0.5);
+  const d = c.mul(u.uLens);
+  // r_straight = r_bent · s with s = 1 / (1 + k1·r_straight²): four fixed-point steps (|k1·r²| is a few hundredths on a 105° lens)
+  let s = float(1);
+  for (let i = 0; i < 4; i += 1) s = float(1).div(float(1).add(u.uK1.mul(dot(d, d).mul(s.mul(s)))));
+  const lensOn = u.uK1.notEqual(0);
+  const at = lensOn.select(c.mul(s).add(0.5), uv());
+  // a bent pixel whose ray the pinhole frame never drew (the corners of a barrel lens) shows nothing of the world
+  const inside = at.x.greaterThanEqual(0).and(at.x.lessThanEqual(1)).and(at.y.greaterThanEqual(0)).and(at.y.lessThanEqual(1));
+  // A canvas uploads top row first, so the picture is the half at high v, and depth the half below it.
   // The shadows go straight onto the stack, which a layer's plate does not: that hop has the other parity on WebGPU.
-  const v = u.uShadow.greaterThan(0.5).select(uv().y.oneMinus(), uv().y);
-  const top = vec2(uv().x, v.mul(0.5).add(0.5));
-  const below = vec2(uv().x, v.mul(0.5));
+  const v = u.uShadow.greaterThan(0.5).select(at.y.oneMinus(), at.y);
+  const top = vec2(at.x, v.mul(u.uPicY.x).add(u.uPicY.y));
+  const below = vec2(at.x, v.mul(u.uBandY.x).add(u.uBandY.y));
   // A canvas drops alpha, so coverage comes in the depth band.
   const band = u.uHandoff.sample(below);
-  const picture = vec4(u.uHandoff.sample(top).rgb, band.b);
+  const sharp = lensOn.and(inside.not()).select(vec4(0, 0, 0, 0), vec4(u.uHandoff.sample(top).rgb, band.b));
   // The shadows alone: what has coverage and no surface.
   const empty = band.r.greaterThanEqual(0.999).and(band.g.greaterThanEqual(0.999));
-  material.colorNode = u.uShadow.greaterThan(0.5).and(empty.not()).select(vec4(0, 0, 0, 0), picture);
+  // (vfxlook) a tap off the picture's own half: the canvas holds the picture over its depth band, so a blur tap from the picture's bottom
+  // row (or the band's top row) crossed into the other half and laid the depth band's yellow (r, g = far) along the frame's bottom edge
+  // (curved by a wide lens's bend) — the blind judge's "thin gold line across the bottom". Each tap stays in its half (nearest texels).
+  const pictureAt = (o) => u.uHandoff.sample(vec2(top.x.add(o.x), top.y.add(o.y).clamp(u.uPicY.y.add(u.uTexel.y.mul(0.5)), u.uPicY.y.add(u.uPicY.x).sub(u.uTexel.y.mul(0.5)))));
+  const bandAt = (o) => u.uHandoff.sample(vec2(below.x.add(o.x), below.y.add(o.y).clamp(u.uBandY.y.add(u.uTexel.y.mul(0.5)), u.uBandY.y.add(u.uBandY.x).sub(u.uTexel.y.mul(0.5)))));
+  const picture = Fn(() => {
+    const col = vec4(sharp).toVar();
+    If(u.uSoften.greaterThan(0), () => {
+      // a 3 × 3 binomial kernel whose step is the softness over 0.707 (its own sigma at one texel): premultiplied colour and coverage
+      // blur together, so an edge softens into the footage, not into black
+      const acc = vec4(0, 0, 0, 0).toVar();
+      const step = u.uTexel.mul(u.uSoften.div(0.7071));
+      for (const [dx, dy, w] of [[0, 0, 4], [1, 0, 2], [-1, 0, 2], [0, 1, 2], [0, -1, 2], [1, 1, 1], [-1, 1, 1], [1, -1, 1], [-1, -1, 1]]) {
+        const o = vec2(dx, dy).mul(step);
+        acc.addAssign(vec4(pictureAt(o).rgb, bandAt(o).b).mul(w / 16));
+      }
+      col.assign(lensOn.and(inside.not()).select(vec4(0, 0, 0, 0), acc));
+    });
+    // (vfxlook) the footage's sharpening (look.sharpen, from how far its edges ring): the world's own detail, high-passed at one texel
+    // (its picture less its 3 × 3 binomial), added where it covers itself all round — inside the object, never at its outline, where the
+    // ring would have to be against footage this pass cannot see
+    If(u.uSharpen.greaterThan(0), () => {
+      const near = vec4(0, 0, 0, 0).toVar();
+      for (const [dx, dy, w] of [[0, 0, 4], [1, 0, 2], [-1, 0, 2], [0, 1, 2], [0, -1, 2], [1, 1, 1], [-1, 1, 1], [1, -1, 1], [-1, -1, 1]]) {
+        const o = vec2(dx, dy).mul(u.uTexel);
+        near.addAssign(vec4(pictureAt(o).rgb, bandAt(o).b).mul(w / 16));
+      }
+      const inside = near.a.greaterThanEqual(0.995).and(sharp.a.greaterThanEqual(0.995));
+      col.assign(vec4(col.rgb.add(inside.select(sharp.rgb.sub(near.rgb).mul(u.uSharpen), vec3(0, 0, 0))).max(0), col.a));
+    });
+    // the plate's black: the world's darkest is lifted to it where the world covers (premultiplied) — on its SURFACES only. A catcher's
+    // shadow is the footage darkened, already at the footage's own black: lifted, it turned to a neutral grey veil over the warm table
+    // (the blind judge: "a broad, neutral-grey haze ... dulls the table")
+    If(u.uBlack.greaterThan(0).and(empty.not()), () => {
+      // (vfxlook) toward the veil's own colour (look.blackTint, the shot's average colour at unit luminance): a neutral grey lift made
+      // a dark object greyer and cooler than a warm shot round it
+      col.assign(vec4(col.rgb.mul(float(1).sub(u.uBlack)).add(u.uBlackTint.mul(u.uBlack).mul(col.a)), col.a));
+    });
+    // the footage's grain over the softened picture, at the world's coverage (premultiplied), a new pattern each frame (uGrainSeed
+    // moves it by whole pixels: the hash wants pixel centres)
+    If(u.uGrain.greaterThan(0), () => {
+      const n = stableHash12(screenCoordinate.xy.add(vec2(u.uGrainSeed.mul(173), u.uGrainSeed.mul(97)))).sub(0.5);
+      col.assign(vec4(col.rgb.add(vec3(n.mul(u.uGrain).mul(0.14).mul(col.a))).max(0), col.a));
+    });
+    return col;
+  })();
+  // (octane2) a world matte's mask: its channel of the third band, as premultiplied white (nothing outside a bent lens's frame)
+  const maskBand = u.uHandoff.sample(vec2(at.x, v.mul(u.uMaskY.x).add(u.uMaskY.y)));
+  const maskValue = u.uMask.lessThan(1.5).select(maskBand.r, u.uMask.lessThan(2.5).select(maskBand.g, maskBand.b));
+  const mask = lensOn.and(inside.not()).select(float(0), maskValue);
+  // (item 20) A sky the layers below show through (`background: 'env'` without `opaque`) is the panorama, drawn with full coverage, at the
+  // far plane: the depth composite drops every far-plane pixel of a 3D pass, which is what lets the layers below through. A Scene layer with a
+  // stack of its own (the Camera layer's depth of field, a glow, an effect) goes over the stack without that test, and the panorama came with
+  // it: the whole sky, blurred, over the layers below. Here the far plane holds nothing, as a model's pass does; a catcher's shadow is the
+  // shadow pass's (uShadow), and an opaque sky, gas against the sky and flat letters all stand at a depth of their own.
+  const shadowPass = u.uShadow.greaterThan(0.5);
+  material.colorNode = u.uMask.greaterThan(0.5).select(vec4(mask, mask, mask, mask),
+    shadowPass.and(empty.not()).or(shadowPass.not().and(empty)).select(vec4(0, 0, 0, 0), picture));
   material.depthNode = Fn(() => {
     const packed = u.uHandoff.sample(below);
     const encoded = packed.r.mul(255).round().add(packed.g).div(255);
-    const distance = float(worldNear).mul(float(worldFar / worldNear).pow(encoded)).div(float(worldUnits));
+    const distance = u.uWorldNear.mul(u.uWorldRatio.pow(encoded)).div(float(worldUnits));
     const depth = u.uFar.mul(distance.sub(u.uNear)).div(u.uFar.sub(u.uNear).mul(distance));
-    return packed.r.greaterThanEqual(0.999).and(packed.g.greaterThanEqual(0.999)).select(float(1), depth.min(0.99999));
+    const far = packed.r.greaterThanEqual(0.999).and(packed.g.greaterThanEqual(0.999)).or(lensOn.and(inside.not()));
+    return far.select(float(1), depth.min(0.99999));
   })();
   material.transparent = false;
   material.blending = THREE.NoBlending;     // an opaque NormalBlending material has its alpha forced to 1
@@ -391,6 +563,53 @@ export function createWorldPlateNodeMaterial({ worldNear, worldFar, worldUnits }
   material.depthWrite = true;
   material.uniforms = u;
   return material;
+}
+
+/**
+ * (vfx) Light wrap: the footage's own light round a placed object, wrapped onto the object's edge — what a real lens does with a bright
+ * table or a window behind a dark camera body, and what keeps a rendered object from reading as cut out (the blind judge: "a hard outline,
+ * none of the glow that bright areas spread onto nearby edges"). Drawn over the stack right after the world's picture landed in it,
+ * while the footage under it is held aside (adjustmentComposite.js, the locked lead): per pixel, the footage round it where the world
+ * is NOT (two rings of taps, `uRadius` in uv), mixed into the object's colour by how open its neighbourhood is (an edge, not the
+ * middle) times `uAmount`. Alpha untouched (blending set by the caller: colour One / OneMinusSrcAlpha, alpha Zero / One).
+ *   uPlate: the footage held aside (a storage-identity copy of the stack, read flipped); uWorld: the world's picture as the stack took it.
+ */
+export function createLightWrapNodeMaterial() {
+  // uDepth: the world's depth as the stack took it (read flipped, as createDepthCompositeNodeMaterial reads it): only a SURFACE takes
+  // the wrap; a catcher's shadow (coverage with no depth) is footage, and counts as the light round the object
+  const u = { uPlate: makeSampler(true), uWorld: makeSampler(), uDepth: makeSampler(true), uRadius: uniform(new THREE.Vector2(0.005, 0.009)), uAmount: uniform(0) };
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.fragmentNode = Fn(() => {
+    const p = uv();
+    const surface = (q) => u.uDepth.sample(q).r.lessThan(FAR_PLANE).select(float(1), float(0));
+    const a = u.uWorld.sample(p).a.mul(surface(p));
+    Discard(a.lessThan(0.004));
+    const bg = vec3(0, 0, 0).toVar();
+    const open = float(0).toVar();
+    const N = 12;
+    for (const ring of [0.5, 1]) {
+      for (let k = 0; k < N; k += 1) {
+        const ang = ((k + (ring === 1 ? 0.5 : 0)) / N) * Math.PI * 2;
+        const o = vec2(Math.cos(ang) * ring, Math.sin(ang) * ring).mul(u.uRadius);
+        const w = float(1).sub(u.uWorld.sample(p.add(o)).a.mul(surface(p.add(o)))).max(0);
+        bg.addAssign(u.uPlate.sample(p.add(o)).rgb.mul(w));
+        open.addAssign(w);
+      }
+    }
+    const frac = open.div(2 * N);
+    const m = frac.mul(u.uAmount).min(1);
+    // src = (m · a · bg, m): the blend leaves dst · (1 − m) + m · a · bg, i.e. the object's colour mixed toward the light round it
+    return vec4(bg.div(open.max(1e-4)).mul(a).mul(m), m);
+  })();
+  material.transparent = true;
+  material.blending = THREE.CustomBlending;
+  material.blendEquation = THREE.AddEquation;
+  material.blendSrc = THREE.OneFactor;
+  material.blendDst = THREE.OneMinusSrcAlphaFactor;
+  material.blendEquationAlpha = THREE.AddEquation;
+  material.blendSrcAlpha = THREE.ZeroFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  return finish(material, u);
 }
 
 export function createDepthStampNodeMaterial() {
@@ -422,6 +641,35 @@ export function createDepthStampNodeMaterial() {
 }
 
 /**
+ * (gaps1) A model pass filmed by a world Scene's orthographic camera writes depth that runs straight with distance; the compositor and the
+ * world's plate keep depth as a perspective camera with the same near/far writes it. This rewrites one into the other, pixel for pixel
+ * (distance = near + d (far - near), then the perspective depth of that distance), so the model sorts against the world and every other
+ * layer as before. Nothing there (the cleared far plane) stays at the far plane. Depth only, written over whatever the target held.
+ */
+export function createOrthoDepthNodeMaterial() {
+  const u = { uDepth: makeSampler(), uNear: uniform(1), uFar: uniform(100000) };
+  const material = new THREE.MeshBasicNodeMaterial();
+  // SCREEN UV, as the model pass's tone step reads its HDR target (model3dNodes.js): the pass's depth is read and written at the same
+  // pixel of the frame, so the depth handed on keeps a filmed target's orientation (createDepthCompositeNodeMaterial flips for it)
+  material.fragmentNode = Fn(() => {
+    Discard(u.uDepth.sample(screenUV).r.greaterThanEqual(FAR_PLANE));
+    return vec4(0.0);
+  })();
+  material.depthNode = Fn(() => {
+    const d = u.uDepth.sample(screenUV).r;
+    const z = u.uNear.add(d.mul(u.uFar.sub(u.uNear)));
+    return u.uFar.mul(z.sub(u.uNear)).div(u.uFar.sub(u.uNear).mul(z)).min(0.99999);
+  })();
+  material.colorWrite = false;
+  material.transparent = false;
+  material.uniforms = u;
+  material.depthTest = false;
+  material.depthWrite = true;
+  material.forceSinglePass = true;
+  return material;
+}
+
+/**
  * Colour + real depth for a camera-baked 3D pass.
  *
  * A model or plate reaches the compositor as a full-frame colour texture whose
@@ -430,9 +678,12 @@ export function createDepthStampNodeMaterial() {
  * Writing the sampled depth at the same time as the premultiplied colour
  * resolves two crossing surfaces per pixel instead of by channel order.
  */
-export function createDepthCompositeNodeMaterial() {
+export function createDepthCompositeNodeMaterial({ linear = false, hdr = false } = {}) {
   const u = {
     uColor: makeSampler(),
+    // (mblur3) `linear`: the stack under it as it stood before this draw (a storage-identity copy, read flipped as the light wrap reads its
+    // held plate), for the blend in linear light below
+    ...(linear ? { uBelow: makeSampler(true) } : {}),
     /*
      * FLIPPED, for the same reason the model pass's tone step reads at
      * `screenUV`: a render target's DEPTH attachment carries WebGPU's
@@ -468,8 +719,10 @@ export function createDepthCompositeNodeMaterial() {
    */
   material.fragmentNode = Fn(() => {
     const color = u.uColor.sample(uvn);
-    // A transparent pixel must never become an invisible depth wall.
-    Discard(color.a.lessThan(0.02));
+    // A transparent pixel must never become an invisible depth wall. (lookfix) In linear light a faint pixel is not invisible: 2 % of a bright
+    // object over a dark layer is 20 display levels, and a lens-blurred or moving edge dropped below 2 % ended on a hard, ragged line. There it
+    // is drawn down to half a level of coverage, standing at the far plane (below), so it occludes nothing
+    Discard(color.a.lessThan(linear ? 0.5 / 255 : 0.02));
     // A card — a transparent surface where the pass has no opaque surface of its
     // own: pass 2 only (see the GLSL).
     const tdepth = u.uTDepth.sample(uvn).r;
@@ -478,7 +731,21 @@ export function createDepthCompositeNodeMaterial() {
     Discard(u.uPass.greaterThan(0.5).and(u.uPass.lessThan(1.5)).and(card));
     Discard(u.uPass.greaterThan(1.5).and(card.not()));
     Discard(u.uDepth.sample(uvn).r.greaterThanEqual(FAR_PLANE).and(u.uFallback.lessThan(0.0)).and(u.uPass.lessThan(1.5)));
-    return vec4(color.rgb.add(u.uBlendIdentity.mul(float(1.0).sub(color.a))), color.a);
+    if (!linear) return vec4(color.rgb.add(u.uBlendIdentity.mul(float(1.0).sub(color.a))), color.a);
+    // (mblur3) A 3D Scene's frame traced moving over a see-through sky: its coverage is the share of the shutter the world spends on the pixel,
+    // so it goes over the stack in linear light (what the same frame filmed as many sub-frames, each composited, then averaged as light
+    // gives), not in display values: lin = a·L(c) + (1 − a)·Lp(below), premultiplied in and out, sRGB to linear and back. A pixel the world
+    // covers whole, or not at all, is what the plain blend gives
+    const below = u.uBelow.sample(uvn);
+    // (hdr3) `hdr`: an HDR render's float composite (both the Scene's frame and the stack hold light above white): read and written as it is
+    const toLin = hdr ? hybridToLin : (c) => select(c.lessThanEqual(vec3(0.04045)), c.div(12.92), pow(c.add(0.055).div(1.055), vec3(2.4)));
+    const toDisplay = hdr ? linToHybrid : (c) => select(c.lessThanEqual(vec3(0.0031308)), c.mul(12.92), pow(c, vec3(1 / 2.4)).mul(1.055).sub(0.055));
+    const top = (c) => (hdr ? tslMax(c, vec3(0)) : c.clamp(0, 1));
+    const a = color.a.clamp(0, 1), b = below.a.clamp(0, 1);
+    const lin = toLin(top(color.rgb.div(tslMax(a, 1e-4)))).mul(a)
+      .add(toLin(top(below.rgb.div(tslMax(b, 1e-4)))).mul(b).mul(float(1).sub(a)));
+    const outA = a.add(b.mul(float(1).sub(a)));
+    return vec4(toDisplay(lin.div(tslMax(outA, 1e-4))).mul(outA), outA);
   })();
   // Survivors at the far plane are exactly the ones with a usable fallback, so
   // the select needs no second guard.
@@ -506,7 +773,9 @@ export function createDepthCompositeNodeMaterial() {
     const missing = select(edge.lessThan(FAR_PLANE), edge, u.uFallback);
     const opaque = select(rawDepth.greaterThanEqual(FAR_PLANE), missing, rawDepth);
     // A card is nudged toward the camera like a decal (see the GLSL).
-    return select(u.uPass.greaterThan(1.5), tdepth.sub(float(1.0).sub(tdepth).mul(0.002)), opaque);
+    const placed = select(u.uPass.greaterThan(1.5), tdepth.sub(float(1.0).sub(tdepth).mul(0.002)), opaque);
+    // (lookfix) a linear draw's faint pixel (under the 2 % an ordinary draw drops) at the far plane: drawn, never a wall
+    return linear ? select(u.uColor.sample(uvn).a.lessThan(0.02), float(1.0), placed) : placed;
   })();
   material.transparent = true;
   // The isolated source texture is premultiplied by its coverage — the GLSL side
@@ -518,6 +787,11 @@ export function createDepthCompositeNodeMaterial() {
   material.blendDst = THREE.OneMinusSrcAlphaFactor;
   material.blendSrcAlpha = THREE.OneFactor;
   material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+  // (mblur3) the linear blend writes the whole result (it read the stack itself): the pixel is replaced
+  if (linear) {
+    material.blendSrc = THREE.OneFactor; material.blendDst = THREE.ZeroFactor;
+    material.blendSrcAlpha = THREE.OneFactor; material.blendDstAlpha = THREE.ZeroFactor;
+  }
   material.depthTest = true;
   material.depthWrite = true;
   material.forceSinglePass = true;
@@ -825,4 +1099,172 @@ export function createCameraDofDepthNodeMaterial() {
   material.transparent = false;
   material.blending = THREE.NoBlending;
   return finish(material, u);
+}
+
+// ── (hdr2) An HDR render through 2D layers (hdrComposite.js) ────────────────
+//
+// The compositor works in display values (sRGB bytes, premultiplied). An HDR render that has 2D layers with its Scene composites the frame a
+// second time into half floats, with the Scene's plate carrying the world's own light; these three passes are its own. Each reads its inputs
+// texel for texel (textureLoad at the fragment's own pixel), so the storage layout it writes is the layout it read: no V hop to count.
+
+/**
+ * The world's HDR picture as the plate the compositor takes: the world's own light past its tone pass (linear BT.709, 1 = SDR white:
+ * WorldRenderer.hdrPixels) in the compositor's terms — (hdr3) display values up to white, LIGHT above it (a channel past 1 is its light
+ * as it is: 1000 cd/m² = 4.93) — premultiplied by the coverage of the SDR plate it stands in for (world3dLayer.js ensurePlate). Every layer,
+ * blend, fade and mask then meets it as it meets the SDR plate, so below white it IS the SDR plate's picture (unquantized) and the SDR
+ * export's blends are untouched, while above white the same blends act on light: a 50 % fade of a 1000 cd/m² glint is 500 cd/m² (the
+ * sRGB curve carried on above 1, round 2, gave 200). A pixel the SDR plate leaves empty (a catcher's shadow alone) stays empty.
+ * `straight`: the world's light is straight colour (a render that keeps alpha); otherwise it is the picture over black, as the plate's.
+ * `flip`: the world's rows run the other way from the plate's. Returns { material, bind(hdr, sdr) }.
+ */
+export function createHdrPlateNodeMaterial({ hdr, sdr, straight = false, flip = false, height = 1 }) {
+  const uHeight = uniform(height);
+  // (hdr3) the Scene layer's own grade (its brightness, contrast, saturation, hue, grayscale, sepia, invert, tint: the clip shader's order),
+  // applied here to its light with the slope rule (gradeHybrid) while the layer draws this plate ungraded (engine/layerMesh.js)
+  const g = { uGrade: uniform(0), uBright: uniform(1), uContrast: uniform(1), uSat: uniform(1), uHue: uniform(0), uGray: uniform(0),
+    uSepia: uniform(0), uInvert: uniform(0), uTint: uniform(new THREE.Color(1, 1, 1)) };
+  const sceneGrade = (cIn) => {
+    let c = cIn.mul(g.uBright);
+    c = c.sub(0.5).mul(g.uContrast).add(0.5);
+    c = mix(vec3(dot(c, LUMA_709)), c, g.uSat);
+    c = select(g.uHue.abs().greaterThan(0.5), applyHueRotation(c, g.uHue), c);
+    c = mix(c, vec3(dot(c, LUMA_709)), clamp(g.uGray, 0.0, 1.0));
+    const sepia = vec3(dot(c, vec3(0.393, 0.769, 0.189)), dot(c, vec3(0.349, 0.686, 0.168)), dot(c, vec3(0.272, 0.534, 0.131)));
+    c = mix(c, sepia, clamp(g.uSepia, 0.0, 1.0));
+    c = mix(c, vec3(1.0).sub(c), clamp(g.uInvert, 0.0, 1.0));
+    return c.mul(g.uTint);
+  };
+  const p = ivec2(screenCoordinate.xy);
+  const sdrNode = textureLoad(sdr, p);
+  const row = flip ? int(uHeight).sub(1).sub(p.y) : p.y;
+  const hdrNode = textureLoad(hdr, ivec2(p.x, row));
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.fragmentNode = Fn(() => {
+    const cover = sdrNode.a;
+    // the world's light: straight when the render keeps alpha; otherwise the light of the premultiplied picture it hands the compositor
+    // (WorldRenderer's HDR tone pass), so its encode is the SDR plate's premultiplied display value below the knee
+    const lin = tslMax(hdrNode.rgb, vec3(0));
+    // (hdr3) display values up to white, channel by channel; a channel past white is its light
+    const enc = linToHybrid(lin);
+    const base = straight ? enc.mul(cover) : enc;
+    // (hdr3) the Scene layer's own grade on the straight colour, premultiplied back
+    const graded = gradeHybrid(straight ? enc : enc.div(tslMax(cover, 1e-4)), sceneGrade).mul(cover);
+    const rgb = select(g.uGrade.greaterThan(0.5), graded, base);
+    return select(cover.greaterThan(0), vec4(rgb, cover), vec4(0, 0, 0, 0));
+  })();
+  material.transparent = false;
+  material.blending = THREE.NoBlending;
+  material.toneMapped = false;
+  finish(material, { uHeight, ...g });
+  return {
+    material,
+    bind(nextHdr, nextSdr, h) {
+      if (nextHdr && hdrNode.value !== nextHdr) hdrNode.value = nextHdr;
+      if (nextSdr && sdrNode.value !== nextSdr) sdrNode.value = nextSdr;
+      if (Number.isFinite(h)) uHeight.value = h;
+    },
+    /** (hdr3) The Scene layer's grade this frame ({ brightness, contrast, saturation, hue, grayscale, sepia, invert, tint } as its clip
+     *  material holds them), or null: none. */
+    setGrade(gr) {
+      const on = !!gr && !(gr.brightness === 1 && gr.contrast === 1 && gr.saturation === 1 && Math.abs(gr.hue) < 0.5 && !gr.grayscale && !gr.sepia
+        && !gr.invert && gr.tint.r === 1 && gr.tint.g === 1 && gr.tint.b === 1);
+      g.uGrade.value = on ? 1 : 0;
+      if (!on) return;
+      g.uBright.value = gr.brightness; g.uContrast.value = gr.contrast; g.uSat.value = gr.saturation; g.uHue.value = gr.hue;
+      g.uGray.value = gr.grayscale; g.uSepia.value = gr.sepia; g.uInvert.value = gr.invert; g.uTint.value.copy(gr.tint);
+    },
+  };
+}
+
+/**
+ * One sub-frame of the export's motion blur into the float average, added at its weight (storage to storage, One + One):
+ * (A − B·uSub)·uWeight. The average is kept as its first sub-frame plus the weighted differences from it, so a pixel that does not move
+ * is its first sub-frame to the bit (summed in half floats, sixteen values near white lost about 1 % on the way). Each pass makes its own
+ * (its textures fixed at construction). Returns { material, bind(a, b) }.
+ */
+export function createHdrAccumulateNodeMaterial({ a, b }) {
+  const uWeight = uniform(1);
+  const uSub = uniform(0);
+  const p = ivec2(screenCoordinate.xy);
+  const aNode = textureLoad(a, p);
+  const bNode = textureLoad(b, p);
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.fragmentNode = aNode.sub(bNode.mul(uSub)).mul(uWeight);
+  material.transparent = true;
+  material.blending = THREE.CustomBlending;
+  material.blendEquation = THREE.AddEquation;
+  material.blendEquationAlpha = THREE.AddEquation;
+  material.blendSrc = THREE.OneFactor;
+  material.blendDst = THREE.OneFactor;
+  material.blendSrcAlpha = THREE.OneFactor;
+  material.blendDstAlpha = THREE.OneFactor;
+  material.toneMapped = false;
+  finish(material, { uWeight, uSub });
+  return {
+    material,
+    bind(nextA, nextB) {
+      if (nextA && aNode.value !== nextA) aNode.value = nextA;
+      if (nextB && bNode.value !== nextB) bNode.value = nextB;
+    },
+  };
+}
+
+/**
+ * A render at another size than the project's: one separable Lanczos-3 pass of the float picture along x (`horizontal`) or y, its support
+ * widened by the scale (ffmpeg's lanczos, as frameResampler.js does the SDR frame), in the picture's own display values premultiplied, the
+ * negative lobes clamped at 0 (the light above white is kept). Storage to storage. uScale: source texels per output texel along the axis.
+ */
+export function createHdrResampleNodeMaterial(src, { horizontal = true } = {}) {
+  const uScale = uniform(1);
+  const uSize = uniform(new THREE.Vector2(1, 1));
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.fragmentNode = Fn(() => {
+    const q = screenCoordinate.xy;
+    const at = (horizontal ? q.x : q.y).mul(uScale);
+    const across = int(horizontal ? q.y : q.x);
+    const n = int(horizontal ? uSize.x : uSize.y);
+    const stretch = tslMax(uScale, 1.0);
+    const first = int(floor(at.sub(stretch.mul(3.0))));
+    const sum = vec4(0).toVar();
+    const wsum = float(0).toVar();
+    Loop({ start: int(0), end: int(64), type: 'int' }, ({ i }) => {
+      const k = first.add(i);
+      const d = float(k).add(0.5).sub(at).div(stretch);
+      If(d.greaterThan(3.0), () => { Break(); });
+      const x = abs(d);
+      const px = x.mul(Math.PI);
+      const w = select(x.lessThan(1e-5), float(1), select(x.greaterThanEqual(3.0), float(0), sin(px).mul(sin(px.div(3.0))).mul(3.0).div(px.mul(px))));
+      const t = clampInt(k, n);
+      sum.addAssign(textureLoad(src, horizontal ? ivec2(t, across) : ivec2(across, t)).mul(w));
+      wsum.addAssign(w);
+    });
+    return tslMax(sum.div(tslMax(wsum, 1e-6)), vec4(0));
+  })();
+  material.transparent = false;
+  material.blending = THREE.NoBlending;
+  material.toneMapped = false;
+  finish(material, { uScale, uSize });
+  // the source's size along both axes and its texels per output texel along this pass's axis
+  return { material, bind({ scale, width, height }) { uScale.value = scale; uSize.value.set(width, height); } };
+}
+
+const clampInt = (k, n) => select(k.lessThan(0), int(0), select(k.greaterThanEqual(n), n.sub(1), k));
+
+/**
+ * (hdr3) The float composite's frame: the stack with the Scene's HDR plate (`b`) less what 2D layers alone pushed past white in the same
+ * stack with its SDR plate (`a`), premultiplied in and out: b − max(a − coverage, 0). Where no light of the Scene's is above white, `a`
+ * IS `b` and the frame is the SDR export's (an add of two 2D layers past white stays at white, as in the SDR export); above white it is
+ * the Scene's light as the stack carried it. Storage to storage.
+ */
+export function createHdrCombineNodeMaterial({ a, b }) {
+  const p = ivec2(screenCoordinate.xy);
+  const aNode = textureLoad(a, p);
+  const bNode = textureLoad(b, p);
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.fragmentNode = vec4(bNode.rgb.sub(tslMax(aNode.rgb.sub(vec3(bNode.a)), vec3(0))), bNode.a);
+  material.transparent = false;
+  material.blending = THREE.NoBlending;
+  material.toneMapped = false;
+  finish(material, {});
+  return { material };
 }

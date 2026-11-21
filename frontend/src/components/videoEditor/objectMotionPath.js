@@ -250,8 +250,12 @@ const DEG2RAD = Math.PI / 180;
  * degree→radian signs match localPrs so a point rotation reads like the layer's
  * Rotate fields.
  */
-export function eulerForObjectPathPose(tangent, pointRotation) {
-  const aim = quatForXAxis(tangent);
+export function eulerForObjectPathPose(tangent, pointRotation, sceneTurn = false) {
+  // (enginebugs2) `sceneTurn`: for a solid layer a world Scene turns as its objects (keyframeParenting.js sceneTurnPrs maps the whole
+  // turn afterwards): the aim is a direction in space, so it goes in pre-mapped (x and y of its quaternion reversed) and comes out as it
+  // is, while the anchor rotation reads as the layer's Rotate fields do there
+  const q = quatForXAxis(tangent);
+  const aim = sceneTurn ? { x: -q.x, y: -q.y, z: q.z, w: q.w } : q;
   if (!pointRotation) return eulerFromQuat(aim);
   const local = quatFromEulerXYZ(
     -num(pointRotation.rx) * DEG2RAD,
@@ -622,14 +626,14 @@ export function seedMotionPathTrack(points, pct = 0, easing = PATH_PROGRESS_EASI
   return [{ position: clamp(round4(num(pct)), 0, 100), value: encodeMotionPathValue(points), easing }];
 }
 
-export function resolveObjectMotionPath(item, keyframeValues = null) {
+export function resolveObjectMotionPath(item, keyframeValues = null, { sceneTurn = false } = {}) {
   const path = liveObjectMotionPath(item, keyframeValues);
   if (!objectMotionPathIsLive(path)) return null;
   const progress = liveValue(item, keyframeValues, OBJECT_MOTION_PATH_PROGRESS);
   const hit = evaluateObjectMotionPath(path, progress / 100);
   if (!hit) return null;
   const rotation = path.aim === 'tangent'
-    ? eulerForObjectPathPose(hit.tangent, hit.pointRotation)
+    ? eulerForObjectPathPose(hit.tangent, hit.pointRotation, sceneTurn)
     : path.aim === 'points'
       ? eulerForObjectPointRotation(hit.pointRotation)
       : null;

@@ -53,7 +53,9 @@ export const MODEL_PRESETS = [
     name: 'Two iPhones',
     url: doubleIphoneUrl,
     faceCamera: true,
-    screen: { material: 'material_11', mirrorX: true, aspect: 0.46 },
+    // No mirror: the display's triangles face INTO the phone, so the side seen is their back, on which its uvs already read left to right
+    // (the mirror it had put every picture on it backwards). The world wears it on that side (world3d/render/screenSide.js).
+    screen: { material: 'material_11', aspect: 0.46 },
   },
   { id: 'ipad', name: 'iPad', url: ipadUrl, screen: { node: 'Plane_1', mirrorX: true, aspect: 0.75 } },
   { id: 'ipad_mini', name: 'iPad mini', url: ipadMiniUrl, faceCamera: true, screen: { node: 'iPad_Mini_Screen_0', mirrorX: true, aspect: 0.68 } },

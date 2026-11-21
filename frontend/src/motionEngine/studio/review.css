@@ -175,6 +175,27 @@ body:not(.rv-mode-edit) .rv-edit-toolbar{display:none}
 .rv-act[data-act=del]:hover:not(:disabled){color:#ff8a8f;background:rgba(239,68,68,.1)}
 .ve-nav-layer.is-muted .ve-nav-name,.ve-nav-layer.is-muted .ve-nav-glyph{opacity:.45}
 @media(max-width:650px){.rv-edit-toolbar{left:6px;right:6px;overflow-x:auto;scrollbar-width:none}.rv-act{min-width:38px;padding:3px 3px 2px}}
+/* (chatswitch) a 3D film's Draft 3D | Final 3D at the toolbar's end (worldSwitch.js): the app's Render dialog pair and its player bar's
+   dot, green under Final; the trace's samples before it (the player bar's status). The start badge: the app's WorldLoadBadge over the picture */
+.rv-w3d{flex:none;margin-left:auto;display:inline-flex;align-items:center;gap:8px;height:38px;padding-left:6px}
+.rv-w3d-status{font:400 11px/1 system-ui,-apple-system,sans-serif;color:#8a8f8c;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rv-w3d-status[data-done="1"]{color:#35d6a0}
+.rv-w3d-status:empty{display:none}
+.rv-w3d-seg{display:inline-flex;gap:2px;padding:2px;border:1px solid #2a2e30;border-radius:8px;background:#151718}
+.glm-app .rv-w3d-seg button{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:0;border-radius:6px;background:none;color:#8f9793;font:500 11px/1 system-ui,-apple-system,sans-serif;white-space:nowrap;cursor:pointer;transition:background .15s,color .15s}
+.glm-app .rv-w3d-seg button:hover:not(:disabled){background:rgba(255,255,255,.045);color:#edf1ee}
+.glm-app .rv-w3d-seg button.on{background:#262b2f;color:#eef2f0}
+.glm-app .rv-w3d-seg button:disabled{opacity:.45;cursor:not-allowed}
+.rv-w3d-seg i{width:7px;height:7px;border-radius:50%;background:#5b5b5f;transition:background .2s cubic-bezier(.4,0,.2,1)}
+.rv-w3d-seg button.on i{background:#35d6a0}
+.rv-w3d-load{position:absolute;z-index:9;transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);padding:9px 12px;border:1px solid #2a2a2a;border-radius:8px;background:#121212f0;box-shadow:0 10px 25px #00000080;pointer-events:none;animation:rv-w3d-in .48s cubic-bezier(.645,.045,.355,1) both}
+.rv-w3d-load[hidden]{display:none}
+.rv-w3d-load-meta{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:7px;color:#d6d6d6;font:12px/1.2 system-ui,-apple-system,sans-serif}
+.rv-w3d-load-step{color:#7a7f7c;font-size:11px}
+.rv-w3d-load-bar{height:5px;overflow:hidden;border-radius:999px;background:#2a2a2a}
+.rv-w3d-load-bar i{display:block;width:35%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#22d3ee,#4ade80);animation:rv-w3d-sweep 1.3s cubic-bezier(.645,.045,.355,1) infinite}
+@keyframes rv-w3d-in{from{opacity:0}to{opacity:1}}
+@keyframes rv-w3d-sweep{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
 /* markers: purple pins on the Edit timeline's ruler (the editor's marker colour) */
 .rv-markers{position:absolute;left:0;right:0;top:0;height:20px;z-index:8;pointer-events:none}
 .rv-marker{position:absolute;top:1px;width:10px;height:14px;margin-left:-5px;padding:0;border:0;background:none;cursor:pointer;pointer-events:auto}

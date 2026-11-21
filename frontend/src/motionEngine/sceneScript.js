@@ -101,6 +101,12 @@ const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const r3 = (v) => +(+v).toFixed(3);
 const KF_TRACKS = { x: 'translateX', y: 'translateY', z: 'translateZ', scale: 'scale', rotate: 'rotate', opacity: 'opacity' };
 
+// ── A 3D Scene in the script: worldScript.js (`world` → the Scene layer's Rig, its camera moves and its strict check) ──
+import { WORLD_FIELDS, WORLD_MOVES, compileWorld } from './worldScript.js';
+// a 3D Scene's strict check (the Scene schema, frontend/src/world3d/schema): the same answers the GreenLight Dash server gives
+import { validateRig } from '../world3d/schema/validate.js';
+export { WORLD_FIELDS, WORLD_MOVES };
+
 /** Every file a script names (element src, scene background image / video, music), for the caller to resolve. */
 export function scriptSources(script) {
   const out = new Set();
@@ -138,7 +144,8 @@ export function compileScript(script, caps, files = new Map()) {
   const [W, H] = FORMATS[S.format || '16:9'] || [];
   if (!W) problems.push(`format must be one of ${Object.keys(FORMATS).join(', ')}`);
   const scenes = Array.isArray(S.scenes) ? S.scenes : [];
-  if (!scenes.length) problems.push('scenes must be a non-empty array');
+  // a 3D Scene (`world`) may be the whole video: then scenes are optional, 2D titles over it
+  if (!scenes.length && S.world == null) problems.push('scenes must be a non-empty array (or give a 3D Scene: "world")');
   if (scenes.length > 12) problems.push('at most 12 scenes');
   if (problems.length) return { problems, warnings };
 
@@ -367,9 +374,12 @@ export function compileScript(script, caps, files = new Map()) {
     // the scene's own backdrop (a full-frame rectangle, the first channel = the bottom): transitions then blend whole scenes
     const sceneBg = background(sc?.background, where);
     const bg = sceneBg && sceneBg.type !== 'media' ? sceneBg : (sceneBg ? { type: 'solid', solidColor: sceneBg.color } : projectBg);
-    const bgItem = add('shape', uid(`${sceneId}-bg`), 0, D, { shapeType: 'rectangle', shapeSizeUnit: 'px', shapeWidthPx: W, shapeHeightPx: H,
-      shapeFillColor: bg.solidColor || '#000000', ...(bg.type !== 'solid' ? { shapeBackground: bg } : {}) });
-    if (bg.type === 'solid' && !sceneBg) fields.push({ bg: true, itemId: bgItem.id, color: bg.solidColor });
+    // over a 3D Scene a scene is see-through (titles over the world) unless it asks for a background of its own
+    if (S.world == null || sceneBg) {
+      const bgItem = add('shape', uid(`${sceneId}-bg`), 0, D, { shapeType: 'rectangle', shapeSizeUnit: 'px', shapeWidthPx: W, shapeHeightPx: H,
+        shapeFillColor: bg.solidColor || '#000000', ...(bg.type !== 'solid' ? { shapeBackground: bg } : {}) });
+      if (bg.type === 'solid' && !sceneBg) fields.push({ bg: true, itemId: bgItem.id, color: bg.solidColor });
+    }
     const media = (el, ew, id, start, end, pos) => {
       const type = el.type;
       let f;
@@ -603,7 +613,7 @@ export function compileScript(script, caps, files = new Map()) {
     }
     // The camera: a quick move of the whole scene (CAMERAS: keys on the scene item), or a REAL camera — a camera layer
     // inside the scene that films its elements (a move, a rig, its own keys, zooms on spots, depth of field)
-    const cam = sc?.camera ?? 'push-in';
+    const cam = sc?.camera ?? (S.world != null ? 'none' : 'push-in');
     const real = cam && typeof cam === 'object' && !Array.isArray(cam) ? cam
       : typeof cam === 'string' && MOVES.has(cam) ? { move: cam } : typeof cam === 'string' && RIGS.has(cam) ? { rig: cam } : null;
     if (real) sceneCamera(real, `${where}, camera`, D, seq, sceneId, elIds, zOf);
@@ -620,6 +630,19 @@ export function compileScript(script, caps, files = new Map()) {
     total += D;
     summary.push(`${si + 1}. ${sc?.name || 'scene'} — ${D} s, ${els.length} element(s)${sceneItem.transition ? `, enters with ${sceneItem.transition}` : ''}`);
   });
+
+  // A 3D Scene (`world`): the Video Editor's Scene layer under everything else, the whole video long — rig.scene as GreenLight
+  // Dash stores it, checked field by field against the Scene schema (the agent gets the exact field and the right name)
+  if (S.world != null) {
+    const w = compileWorld(S.world, scenes.length ? total : null, problems, warnings, validateRig);
+    if (w) {
+      project.clips.push({ id: 'c-world', source: 'LOCAL', mediaType: 'rig', url: '', proxyUrl: null, name: '3D Scene', duration: r3(w.duration) });
+      project.channels.unshift({ id: 'ch-world', name: '3D Scene', kind: 'rig', visible: true, unsnapped: true,
+        items: [{ id: 'world', clipId: 'c-world', trimStart: 0, trimEnd: r3(w.duration), freeStart: 0, rig: w.rig }] });
+      if (!scenes.length) total = w.duration;
+      summary.unshift(`3D Scene — ${w.duration} s, ${w.objects} object(s), ${w.lights} light(s), ${w.mode === 'final' ? 'Final (path traced)' : 'Draft'}${w.move ? `, camera ${w.move}` : ''}`);
+    }
+  }
 
   // music: one track under the whole video
   const music = typeof S.music === 'string' ? { src: S.music } : S.music;

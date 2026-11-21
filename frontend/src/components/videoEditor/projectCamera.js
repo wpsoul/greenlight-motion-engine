@@ -18,10 +18,11 @@
 
 import * as THREE from 'three';
 import { TransitionEasing } from './types';
-import { evalCameraRig } from './cameraRig';
+import { evalCameraRig, rigToWorld, worldToRig } from './cameraRig';
 import { getItemKeyframeValues } from './gsapTransitions';
 import { buildParentIndex, resolveItemPrs } from './keyframeParenting';
-import { SMART_ZOOM_MODE, applySmartZoom, smartZoomFrame } from './smartZoomCamera';
+import { SMART_ZOOM_MODE, applySmartZoom, smartZoomFrame, smartZoomHasTargets, smartZoomLensState } from './smartZoomCamera';
+import { pointTarget, sceneObjectPointPx, sceneTargetId } from './cameraTargets';
 import { getTimelineLayout } from './speedUtils';
 
 // The comp plane exactly fills the frame at this distance — the same constant
@@ -55,6 +56,9 @@ export const CAMERA_KF_PROPS = [
   { label: 'camFocusDistance', displayLabel: 'Focus Distance', group: 'Depth of Field', placeholder: '0', unit: 'px', type: 'number', min: 0, max: 20000, step: 10 },
   { label: 'camAperture', displayLabel: 'Aperture', group: 'Depth of Field', placeholder: '24', unit: 'px', type: 'number', min: 0, max: 300, step: 1 },
   { label: 'camBlurLevel', displayLabel: 'Blur Level', group: 'Depth of Field', placeholder: '100', unit: '%', type: 'number', min: 0, max: 300, step: 1 },
+  // (camlayer) A lens's f-number. Above 0 it sets the blur (camAperture) on every frame from the focus distance and the zoom, as a real
+  // lens's (world3dScene.js worldLens backwards): a focus pull or a zoom keeps the f-number. 0: camAperture is the blur, as before.
+  { label: 'camFStop', displayLabel: 'f-number', group: 'Depth of Field', placeholder: '0', unit: '', type: 'number', min: 0, max: 64, step: 0.1 },
   { label: 'camHighlightGain', displayLabel: 'Highlight Gain', group: 'Depth of Field', placeholder: '0', unit: '%', type: 'number', min: 0, max: 300, step: 1 },
   { label: 'camFocusX', displayLabel: 'Focus Point X', group: 'Depth of Field', placeholder: '50', unit: '%', type: 'number', min: 0, max: 100, step: 1 },
   { label: 'camFocusY', displayLabel: 'Focus Point Y', group: 'Depth of Field', placeholder: '50', unit: '%', type: 'number', min: 0, max: 100, step: 1 },
@@ -197,6 +201,7 @@ export const CAMERA_NEUTRAL = {
   camFocusDistance: 0,
   camAperture: 24,
   camBlurLevel: 100,
+  camFStop: 0,
   camHighlightGain: 0,
   camFocusX: 50,
   camFocusY: 50,
@@ -624,6 +629,19 @@ export function cameraAimQuaternion(from, target) {
   return new THREE.Quaternion().setFromRotationMatrix(m);
 }
 
+const VIEW_AXIS = new THREE.Vector3(0, 0, 1);
+
+/**
+ * (camlayer) An aimed camera's orientation with a roll about its own line of sight: `rollDeg` cants the horizon clockwise, as camRoll does
+ * on a camera facing the comp. A rig's `roll` and the camRoll track were added to the Euler's last angle instead, which turns about the
+ * world's Z: right for a camera facing the comp, a pitch for one at the side of a Scene (an orbit at 90° tipped its view instead of
+ * canting it).
+ */
+export function rolledAim(camQuat, rollDeg) {
+  if (!camQuat || !(Math.abs(rollDeg) > 1e-6)) return camQuat;
+  return camQuat.clone().multiply(new THREE.Quaternion().setFromAxisAngle(VIEW_AXIS, rollDeg * D2R));
+}
+
 /**
  * Fold a live camera path into an evaluated pose, in place.
  *
@@ -678,22 +696,25 @@ export function applyCameraRig(item, values, frame) {
   // default orbit.
   const rig = item.cameraRig || {};
   let ctx = null;
-  if (rig.type === 'follow') {
-    const center = resolveFollowCenter(rig, values, frame);
-    if (center) {
-      ctx = { center };
-      // Stashed on the evaluated pose so the 3D view can draw the rig's curve
-      // around the point the camera is actually following this frame.
-      values.camFollowCenter = center;
-    }
+  // (camlayer) a rig built round its own centre (a Scene object "@id", a layer, a point) instead of the comp centre: every type
+  const center = rig.type === 'follow' ? resolveFollowCenter(rig, values, frame) : (rig.center ? frame.rigCenter || null : null);
+  if (center) {
+    // (camlayer) the rig's own space is +Y down (cameraRig.js rigToWorld)
+    ctx = { center: worldToRig(center) };
+    // Stashed on the evaluated pose so the 3D view can draw the rig's curve
+    // around the point the camera is actually following this frame.
+    values.camFollowCenter = center;
   }
-  const { pos, aim, roll } = evalCameraRig(rig, num(values.camPathT, 0) / 100, ctx);
+  const rigPose = evalCameraRig(rig, num(values.camPathT, 0) / 100, ctx);
+  const pos = rigToWorld(rigPose.pos), aim = rigToWorld(rigPose.aim), { roll } = rigPose;
   const position = new THREE.Vector3(pos.x, pos.y, pos.z);
   const target = new THREE.Vector3(aim.x, aim.y, aim.z);
+  // (camlayer) the rig's roll and the camRoll track cant the view about its own line of sight (rolledAim)
+  const rollDeg = (Number.isFinite(roll) ? roll : 0) + num(values.camRoll, 0);
   let camQuat = null;
-  if (position.distanceToSquared(target) > 1e-6) camQuat = cameraAimQuaternion(position, target);
+  if (position.distanceToSquared(target) > 1e-6) camQuat = rolledAim(cameraAimQuaternion(position, target), rollDeg);
   Object.assign(values, cameraPropsForWorldPoint(position, camQuat, values, frame.width, frame.height));
-  if (Number.isFinite(roll) && Math.abs(roll) > 1e-4) values.camRoll = num(values.camRoll, 0) + roll;
+  if (!camQuat && Number.isFinite(roll) && Math.abs(roll) > 1e-4) values.camRoll = num(values.camRoll, 0) + roll;
   return true;
 }
 
@@ -714,21 +735,126 @@ export function applyCameraPath(item, values, frame) {
     hit.position.z + num(values.camPathOffsetZ)
   );
   let camQuat = null;
+  // (camlayer) an aimed path keeps the camRoll track as a cant about the line of sight (rolledAim)
+  const rollDeg = num(values.camRoll, 0);
   if (path.aim === 'captured') {
     // Read by cameraPropsForWorldPoint below, the same way Aim Free reads the tilt tracks.
     Object.assign(values, capturedPathRotation(path, hit));
   } else if (path.aim === 'tangent') {
-    camQuat = cameraAimQuaternion(position, position.clone().add(
+    camQuat = rolledAim(cameraAimQuaternion(position, position.clone().add(
       new THREE.Vector3(hit.tangent.x, hit.tangent.y, hit.tangent.z)
-    ));
+    )), rollDeg);
   } else if (path.aim === 'target') {
     const target = frame.targetPoint || new THREE.Vector3(0, 0, 0);
     // Standing exactly on the target has no aim to speak of — keep the last one.
     if (position.distanceToSquared(target) > 1e-6) {
-      camQuat = cameraAimQuaternion(position, target);
+      camQuat = rolledAim(cameraAimQuaternion(position, target), rollDeg);
     }
   }
   Object.assign(values, cameraPropsForWorldPoint(position, camQuat, values, frame.width, frame.height));
+  return true;
+}
+
+/**
+ * (camlayer) A free camera that looks at something: a 3D Scene object ("@<id>"), a layer (its item id) or a point { x, y, z } (world px),
+ * `item.cameraLookAt`. Its place is its tracks read on the world's axes, whatever the zoom: x = camX % of the frame's width, y = −camY %
+ * of its height, z = perspectiveDistance − camDolly (px; 1000 a metre); it turns to keep the target in the middle of the frame, and
+ * camRoll cants it about that line of sight. The tilt tracks are not read. Returns true when it aimed.
+ */
+export function applyCameraLookAt(item, values, frame) {
+  const target = frame?.lookAtPoint;
+  if (!item?.cameraLookAt || !target || !frame?.width || !frame?.height) return false;
+  const mode = item.cameraMoveMode;
+  if (mode === 'rig' || mode === 'path' || (!mode && cameraPathIsLive(item.cameraPath))) return false;
+  const W = frame.width, H = frame.height;
+  const position = new THREE.Vector3((num(values.camX) / 100) * W, -(num(values.camY) / 100) * H, perspectiveDistance(H) - num(values.camDolly));
+  if (position.distanceToSquared(target) <= 1e-6) return false;
+  const camQuat = rolledAim(cameraAimQuaternion(position, target), num(values.camRoll, 0));
+  Object.assign(values, cameraPropsForWorldPoint(position, camQuat, values, W, H));
+  return true;
+}
+
+/**
+ * (camlayer) A lens's f-number (`camFStop` > 0): the blur radius camAperture follows the focus distance and the zoom as a real lens's,
+ * f² / (N · (focus − f)) on the world's 36 mm film along the frame's longer side, the inverse of world3dScene.js worldLens, so the world's
+ * thin lens (Draft and Final) gets exactly that f-number. Runs last, after the zoom and the focus are known.
+ */
+function applyCameraFStop(values, frame) {
+  const N = num(values.camFStop, 0);
+  if (!(N > 0) || !frame?.width || !frame?.height) return false;
+  const W = frame.width, H = frame.height, aspect = W / H;
+  const zoom = num(values.camZoom, 1) > 0 ? num(values.camZoom, 1) : 1;
+  const tanHalf = Math.tan((CAMERA_FOV * D2R) / 2) / zoom;
+  const f = (36 / Math.max(aspect, 1)) / (2 * tanHalf);
+  const F = num(values.camFocusDistance, 0) || perspectiveDistance(H);
+  const coc = (f * f * W) / (2 * N * Math.max(1, F - f) * 36 * Math.min(aspect, 1));
+  const blur = num(values.camBlurLevel, 100) > 0 ? num(values.camBlurLevel, 100) : 100;
+  values.camAperture = (coc * 100) / blur;
+  return true;
+}
+
+/** (camlayer) Focus held on something (`item.cameraFocusOn`: "@<id>", a layer, a point): the focus distance is its depth along the
+ *  camera's line of sight on every frame, whatever moves. */
+function applyCameraFocusOn(item, values, frame) {
+  const p = frame?.focusPoint;
+  if (!item?.cameraFocusOn || !p || !frame?.width || !frame?.height) return false;
+  const proxy = cameraProxyFromPose(values, frame.width, frame.height);
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(proxy.quaternion);
+  values.camFocusDistance = Math.max(1, p.clone().sub(proxy.position).dot(fwd));
+  return true;
+}
+
+const LOOK_AHEAD = new THREE.Vector3(0, 0, -1);
+
+/**
+ * (camlayer) The camera's Zoom mode on a posed camera (a 3D Scene's shot: a pose off neutral, a look-at, or a zoom range with a
+ * `target`): a real lens zoom. The camera stays where it stands; its field of view narrows by the zoom (camZoom times the zoom's spring)
+ * and it turns its head to what the zoom is about: a range's `target` (a Scene object "@<id>", a layer, a point; the turn keeps step with
+ * the zoom into that range and follows the target as it moves), else the point of the frame the zoom centres (of the view before it).
+ * With depth of field on, the focus goes to the target and the blur grows as a real lens's does at one f-number (as the square of the
+ * focal length). A camera at the neutral pose with no targets zooms as before: about the comp plane (a screen recording's zoom).
+ */
+function applyZoomLens(item, values, frame) {
+  if (item?.cameraMoveMode !== SMART_ZOOM_MODE || !frame?.width || !frame?.height) return false;
+  const st = smartZoomLensState(item, frame);
+  if (!st) return false;
+  const posed = !!frame.lookAtPoint || smartZoomHasTargets(item)
+    || CAMERA_MOVE_DRIVEN_PROPS.some((prop) => Math.abs(num(values[prop]) - CAMERA_NEUTRAL[prop]) > 1e-4);
+  if (!posed) return applySmartZoom(item, values, frame);
+  const W = frame.width, H = frame.height;
+  const base = cameraProxyFromPose(values, W, H);
+  let dir = null;
+  let share = 1;
+  let point = null;
+  if (st.target && typeof frame.zoomTarget === 'function') point = frame.zoomTarget(st.target);
+  if (point) {
+    dir = point.clone().sub(base.position).applyQuaternion(base.quaternion.clone().invert());
+    share = st.share;
+  } else {
+    const tan = Math.tan((base.fov * D2R) / 2);
+    dir = new THREE.Vector3((2 * st.cx - 1) * tan * (W / H), -(2 * st.cy - 1) * tan, -1);
+  }
+  const turn = dir.lengthSq() > 1e-12 ? new THREE.Quaternion().setFromUnitVectors(LOOK_AHEAD, dir.normalize()) : new THREE.Quaternion();
+  const camQuat = base.quaternion.clone().multiply(new THREE.Quaternion().slerp(turn, Math.max(0, Math.min(1, share))));
+  const baseZoom = num(values.camZoom, 1) > 0 ? num(values.camZoom, 1) : 1;
+  values.camZoom = baseZoom * st.zoom;
+  Object.assign(values, cameraPropsForWorldPoint(base.position, camQuat, values, W, H));
+  if (num(values.camDofEnabled, 0) >= 0.5) {
+    const D = perspectiveDistance(H);
+    const focus0 = num(values.camFocusDistance, 0) || D;
+    let focus = focus0;
+    if (point) {
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
+      focus = focus0 + (Math.max(1, point.clone().sub(base.position).dot(fwd)) - focus0) * share;
+    }
+    // the blur in pixels of a lens at one f-number: ∝ f² / (focus − f), f the focal length in mm on the world's 36 mm film (worldLens; a
+    // world pixel is a millimetre, as the focus distance is)
+    const f0 = ((36 / Math.max(W / H, 1)) / 2) * (baseZoom / Math.tan((CAMERA_FOV * D2R) / 2));
+    const f1 = f0 * st.zoom;
+    values.camFocusDistance = focus;
+    values.camAperture = num(values.camAperture, CAMERA_NEUTRAL.camAperture) * st.zoom * st.zoom
+      * (Math.max(1, focus0 - f0) / Math.max(1, focus - f1));
+  }
   return true;
 }
 
@@ -761,7 +887,18 @@ export function getCameraPose(item, progress, frame = null) {
   // read. It also counts as a move in its own right: at 0% progress every value can
   // still look neutral, and returning null there would park the camera at origin
   // for the first frame of the travel.
-  if (applyCameraRig(item, values, frame) || applyCameraPath(item, values, frame) || applySmartZoom(item, values, frame)) any = true;
+  // (camlayer) a free (or Zoom) camera aims at its look-at first: a Zoom then turns and zooms from that pose
+  if (applyCameraRig(item, values, frame) || applyCameraPath(item, values, frame)) any = true;
+  else {
+    if (applyCameraLookAt(item, values, frame)) any = true;
+    if (applyZoomLens(item, values, frame)) any = true;
+  }
+  if (applyCameraFocusOn(item, values, frame)) any = true;
+  if (applyCameraFStop(values, frame)) any = true;
+  // (vfx) The footage's lens, solved with the camera (vfxCamera.js): one radial term the world's picture is bent by
+  // (world3dLayer.js). A base value only; absent on every other camera.
+  const k1 = Number(item?.camLensK1);
+  if (Number.isFinite(k1) && k1 !== 0) { values.camLensK1 = k1; any = true; }
   return any ? values : null;
 }
 
@@ -788,32 +925,40 @@ export function resolveCameraPose(channels, clipsMap, layoutFor, time, frame = n
     const duration = entry.endTime - entry.startTime;
     const progress = duration > 0 ? (time - entry.startTime) / duration : 0;
     let poseFrame = frame;
+    // (camlayer) anything the camera names as a target: a 3D Scene object ("@<id>", where it stands at this instant on the Scene's own
+    // clock), a layer (its item id, through the machinery that places its mesh) or a point { x, y, z } (world px)
+    let targetIndex = null;
+    const resolvePoint = (ref) => {
+      const sid = sceneTargetId(ref);
+      if (sid) {
+        const p = sceneObjectPointPx(channels, clipsMap, layoutFor, time, sid);
+        return p ? new THREE.Vector3(p.x, p.y, p.z) : null;
+      }
+      const pt = pointTarget(ref);
+      if (pt) return new THREE.Vector3(pt.x, pt.y, pt.z);
+      if (typeof ref !== 'string' || !ref || !frame) return null;
+      if (!targetIndex) targetIndex = buildParentIndex(channels, layoutFor);
+      return layerWorldPoint(channels, clipsMap, layoutFor, time, ref, frame, targetIndex);
+    };
     // A "look at this layer" path needs the layer's position at this instant, so
     // resolve it here where the channel stack is in hand.
     if (frame && item?.cameraPath?.aim === 'target' && item.cameraPath.targetId) {
-      poseFrame = {
-        ...frame,
-        targetPoint: layerWorldPoint(channels, clipsMap, layoutFor, time, item.cameraPath.targetId, frame),
-      };
+      poseFrame = { ...poseFrame, targetPoint: resolvePoint(item.cameraPath.targetId) };
     }
     // A Follow Object rig gets a RESOLVER rather than one point: which layer(s)
     // it needs depends on the interpolated Follow Object value, which is only
     // known once getCameraPose has read the tracks. The parent index is built
     // once and lazily — a blend resolves two targets at the same instant.
     if (frame && item?.cameraMoveMode === 'rig' && item?.cameraRig?.type === 'follow') {
-      let targetIndex = null;
-      poseFrame = {
-        ...frame,
-        resolveTarget: (id) => {
-          if (!targetIndex) targetIndex = buildParentIndex(channels, layoutFor);
-          return layerWorldPoint(channels, clipsMap, layoutFor, time, id, frame, targetIndex);
-        },
-      };
+      poseFrame = { ...poseFrame, resolveTarget: resolvePoint };
     }
+    if (frame && item?.cameraMoveMode === 'rig' && item?.cameraRig?.center) poseFrame = { ...poseFrame, rigCenter: resolvePoint(item.cameraRig.center) };
+    if (frame && item?.cameraLookAt) poseFrame = { ...poseFrame, lookAtPoint: resolvePoint(item.cameraLookAt) };
+    if (frame && item?.cameraFocusOn) poseFrame = { ...poseFrame, focusPoint: resolvePoint(item.cameraFocusOn) };
     // Smart Zoom follows a screen recording's clicks: it needs the recording's items on the timeline (trims, splits,
     // speed) and the absolute time, both only known here.
     if (item?.cameraMoveMode === SMART_ZOOM_MODE) {
-      poseFrame = { ...(poseFrame || {}), smartZoom: smartZoomFrame(item, channels, clipsMap, layoutFor, time) };
+      poseFrame = { ...(poseFrame || {}), smartZoom: smartZoomFrame(item, channels, clipsMap, layoutFor, time), zoomTarget: resolvePoint };
     }
     return getCameraPose(item, Math.max(0, Math.min(1, progress)), poseFrame);
   }

@@ -10,8 +10,9 @@ import { getShapeSvgImage, shapeSvgImageCache } from './pathFx';
 import { PREVIEW_TIER } from './previewMedia';
 
 // After a paused seek's `seeked`, how long to wait for a frame callback before
-// treating the landed frame as presented anyway (see syncVideo).
-export const SEEKED_FRAME_GRACE_MS = 120;
+// treating the landed frame as presented anyway (see syncVideo; now in seekFrame.js
+// with the still's seek, which shares it).
+export { SEEKED_FRAME_GRACE_MS } from './seekFrame.js';
 
 // How early an IDLE channel stages its upcoming clips. A cold re-source measures
 // 300-400ms for a small local file and far more for big remote ones, so idle

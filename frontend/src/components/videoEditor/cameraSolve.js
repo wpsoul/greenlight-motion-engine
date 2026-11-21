@@ -30,7 +30,7 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 export const median = (a) => (a.length ? [...a].sort((x, y) => x - y)[a.length >> 1] : 0);
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 
-export const CAMERA_SOLVE_VERSION = 1;
+export const CAMERA_SOLVE_VERSION = 2;
 
 /* One palette for the plane swatches in the panel and the point marks on the
    canvas — a surface the user clicked in the list has to be the same colour
@@ -41,19 +41,28 @@ export const CAMERA_PLANE_COLORS = [
 export const CAMERA_UNGROUPED_COLOR = '#8d93a3';
 
 /* Mirrored by CAMERA_SOLVE_DEFAULTS' consumer in the panel. Kept deliberately
-   small: every knob here is one the lab actually needed to move. */
+   small: every knob here is one the lab actually needed to move.
+
+   The tracking half (analysisWidth … reseedEvery) drives featureTracker.js
+   (see cameraTrackerOptions). The default is the lab tracker's fast preset with
+   320 points at a 960 px frame: swept against the OpenCV tracker it replaced
+   (30 settings, four clips), it runs at about its speed (1.0–1.2×) with lower
+   drift, a better Create camera and a closer camera rotation. `speed:
+   'accurate'` is the lab's full setting (800 points, 15×15 windows, 4 levels):
+   ~3× the time, a better floor slide on clean footage. No panel control for it. */
 export const CAMERA_SOLVE_DEFAULTS = {
-  analysisWidth: 640,
+  speed: 'fast',
+  analysisWidth: 960,
   maxPoints: 320,
-  gridX: 8,
-  gridY: 5,
-  quality: 0.006,
-  minDistance: 7,
-  winSize: 21,
+  gridX: 12,
+  gridY: 7,
+  quality: 0.02,
+  minDistance: 8,
+  winSize: 11,
   levels: 3,
-  fbThreshold: 1,
+  fbThreshold: 0.6,
   ransacPx: 1.5,
-  reseedEvery: 6,
+  reseedEvery: 4,
   planeThreshold: 1.8,
   maxPlanes: 5,
   minTrackLength: 12,
@@ -68,10 +77,42 @@ export const CAMERA_SOLVE_DEFAULTS = {
   cutRotDeg: 3,
 };
 
+/* `speed: 'accurate'` in dial terms: the lab's final tracker (F1). It replaces
+   only the dials still at their defaults. */
+export const CAMERA_SOLVE_ACCURATE = Object.freeze({ maxPoints: 800, winSize: 15, levels: 4 });
+
+/**
+ * The panel's dials in featureTracker.js terms. One window size serves both the
+ * frame-to-frame step and the anchored match (the lab kept them equal in both
+ * presets). The default (fast) also stops the iterations sooner and checks back
+ * on one pyramid level; 'accurate' does neither.
+ */
+export function cameraTrackerOptions(P) {
+  const o = { ...CAMERA_SOLVE_DEFAULTS, ...(P || {}) };
+  const accurate = o.speed === 'accurate';
+  const d = CAMERA_SOLVE_DEFAULTS;
+  const dial = (k) => (accurate && Number(o[k]) === d[k] ? CAMERA_SOLVE_ACCURATE[k] : Number(o[k]));
+  const half = Math.max(2, Math.round((dial('winSize') - 1) / 2));
+  return {
+    maxPoints: dial('maxPoints'),
+    gridX: o.gridX,
+    gridY: o.gridY,
+    quality: o.quality,
+    minDistance: o.minDistance,
+    detectEvery: o.reseedEvery,
+    levels: dial('levels'),
+    win: half,
+    anchorWin: half,
+    fbPx: o.fbThreshold,
+    ...(accurate ? {} : { fbLevels: 1, iters: 12, eps: 0.03 }),
+  };
+}
+
 export function sanitizeCameraSolveOptions(raw) {
   const o = raw && typeof raw === 'object' ? raw : {};
   const d = CAMERA_SOLVE_DEFAULTS;
   return {
+    speed: o.speed === 'accurate' ? 'accurate' : 'fast',
     analysisWidth: clamp(Math.round(num(o.analysisWidth, d.analysisWidth)), 320, 1280),
     maxPoints: clamp(Math.round(num(o.maxPoints, d.maxPoints)), 60, 900),
     gridX: clamp(Math.round(num(o.gridX, d.gridX)), 2, 16),

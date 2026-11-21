@@ -92,3 +92,21 @@ export function lowestPointY(root) {
   _cands.length = 0;
   return y;
 }
+
+/**
+ * (ownercalls) The box a model's fit measures: the file's rest pose as it draws, skinned meshes through their bones. three works a
+ * skinned mesh's box out from its bones' world matrices, and on a fresh clone those were never computed (identity), so the box came out
+ * in the skin's bind space: RobotExpressive (an armature scaled 1/100) measured 310 x 149 x 182 file units for a 3.2 x 4.8 x 3.2 figure,
+ * and `fit: "height"` drew it ~30x too small (its anchor offset and contact shadow were off with it). Every matrix under `top` (the
+ * layer's own groups, at rest) is brought up to date first, and a skinned mesh's cached box and sphere are dropped so they are worked out
+ * again from it; a model without skin measures exactly as before.
+ */
+export function restBox(root, top = root) {
+  top.updateMatrixWorld(true);
+  root.traverse((o) => {
+    if (!o.isSkinnedMesh) return;
+    o.boundingBox = null;
+    o.boundingSphere = null;
+  });
+  return new THREE.Box3().setFromObject(root);
+}

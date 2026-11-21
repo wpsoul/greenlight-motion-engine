@@ -57,7 +57,8 @@ Any ordinary visual timeline item can follow a saved 3D bezier path. The path is
 ```
 
 - A path is live only when it has at least two valid points and `follow: true`.
-- `motionPathT` is 0–100. On an open path, 0 is the first anchor and 100 the last. On a closed path, 100 completes the loop back to the first anchor. Progress tracks take `Linear` (constant speed); an eased progress crawls at both ends.
+- `motionPathT` is 0–100. On an open path, 0 is the first anchor and 100 the last. On a closed path, 100 completes the loop back to the first anchor. The range is shared equally between the segments, not by distance: with 3 anchors, 50 is the middle anchor however long each half is, so evenly spaced anchors give an even speed.
+- **The whole curved move is two keys on `motionPathT`**, 0 → 100. Progress tracks take `Linear` (constant speed); an eased progress crawls at both ends. Ease the pair on purpose, for a layer that starts from rest and lands (`AE Smooth`, or `Power` to land): Linear there starts at full speed and stops dead (measured on an arc: a 37 px first step and a 28 px last one, against 0.5 px with `AE Smooth`). A layer that enters at a cut already moving takes a matched start and a soft landing ([video-design.md](video-design.md#curved-moves-ride-a-motion-path); with Python, `seam_fit.py match --in ITEM:motionPathT --soft-landing` writes them: [seam-craft/match-velocity.md](seam-craft/match-velocity.md#in-the-video-editor)). Use a path whenever a layer should travel an arc, instead of `translateX` / `translateY` keys with different curves.
 - `aim: "tangent"` aligns the layer's local +X axis with the curve; `aim: "points"` orients the layer from the anchor rotations alone (below); `aim: "free"` preserves its ordinary rotation/keyframes.
 - Anchors may carry a per-point rotation `rx`/`ry`/`rz` (degrees, same sign convention as the layer Rotate fields; omit when all zero — the sanitizer strips all-zero triples), blending linearly between anchors over each segment so the layer banks/tilts/spins into a rotated point as it travels. With `aim: "tangent"` it is applied **in the aimed local frame** on top of the tangent aim; with `aim: "points"` the blended anchor rotation drives orientation by itself on world axes — no tangent alignment — falling back to Free behaviour while no anchor is rotated.
 - While Follow Path is live, the path owns local X/Y/Z position. Turn `follow` off before editing `translateX/Y/Z` as the visible position authority. Scale remains independent; Free aim also leaves rotation independent.
@@ -66,6 +67,21 @@ Any ordinary visual timeline item can follow a saved 3D bezier path. The path is
 - `keyframesPerPoint*` is bookkeeping for the "one key per anchor" convenience: one evenly-spaced `motionPathT` key per anchor, a closed path adding the final 100 key back to anchor one. Omit it and author any valid progress track directly.
 - The normal preview, 3D view, WebCodecs export, and `/render-onserver` all evaluate the same curve.
 - **To draw the curve as a visible trail**, add a `line` shape layer on its own channel below the rider. Take the path's bounding box with the handle ends included (`w`, `h`, centre `cx`, `cy`), size the line to it (`shapeSizeUnit: "px"`, `shapeWidthPx: w`, `shapeHeightPx: h`), pan it onto the box centre, and write its points as `x = (X − cx) / w`, `y = −(Y − cy) / h` (handles: `hx = HX / w`, `hy = −HY / h`) — a closed path becomes an open line with its first anchor repeated at the end. Set `panZ` to the path's mid-depth plus the rider's `motionPathOffsetZ` **minus 2**: coplanar with the layer riding it, the two planes would intersect under any camera move. The trail is a snapshot; the two are independent afterwards.
+- The per-layer `motionBlur` effect reads the path, like keys. The camera rides a path the same way: `cameraPath` with `camPathT` and `cameraMoveMode: "path"` ([video-camera.md](video-camera.md#camera-motion-paths-camerapath--campatht)).
+
+**A curved move, whole:** three anchors draw an arc and two `Linear` progress keys time it; with 3 anchors, 50 is the middle anchor. `aim: "free"` keeps the layer upright:
+
+```json
+{
+  "motionPath": { "follow": true, "closed": false, "aim": "free", "points": [
+    { "x": -700, "y": -200, "z": 0, "hIn": { "x": -150, "y": -60, "z": 0 }, "hOut": { "x": 150, "y": 60, "z": 0 }, "manual": true },
+    { "x": -100, "y": 260, "z": 0, "hIn": { "x": -220, "y": 0, "z": 0 }, "hOut": { "x": 220, "y": 0, "z": 0 }, "manual": true },
+    { "x": 640, "y": -120, "z": 0, "hIn": { "x": -160, "y": 140, "z": 0 }, "hOut": { "x": 160, "y": -140, "z": 0 }, "manual": true } ] },
+  "propertyKeyframes": { "motionPathT": [
+    { "position": 0, "value": "0", "easing": "Linear" },
+    { "position": 100, "value": "100", "easing": "Linear" } ] }
+}
+```
 
 #### Ready-made path shapes
 

@@ -482,12 +482,58 @@ export const api = {
   // Pulse's calendar: every post with a slot in the range, any status, and every post with no slot (drafts).
   socialPostsRange: (from, to, limit = 2000) => request(`/social/posts?limit=${limit}&from=${from}&to=${to}`),
   socialTrendsAll: () => request(`/social/trends`),                  // → { frames }: every Trends frame on every board
+  // One research as GET …/social/trends/{frame} reads it (the board's Trends research card, TrendsResearchCard.jsx)
+  socialTrendsGet: (mbId, frameId) => request(`/moodboards/${encodeURIComponent(mbId)}/social/trends/${encodeURIComponent(frameId)}`),
   trendsSources: () => request(`/trends/sources`),                   // → { data: { connected }, networks: { net: "app" | "data" | "agent" } }
   socialTrendsCreate: (mbId, body = {}) =>
     request(`/moodboards/${mbId}/social/trends`, { method: "POST", body: JSON.stringify(body) }),
   socialTrendAdd: (mbId, frameId, body) =>
     request(`/moodboards/${mbId}/social/trends/${frameId}/items`, { method: "POST", body: JSON.stringify(body) }),
+  // Remove research: the Trends frame, its trend cards and its timer, as deleting the frame with its cards on the board does
+  socialTrendsRemove: (mbId, frameId) => request(`/moodboards/${mbId}/social/trends/${frameId}`, { method: "DELETE" }),
   socialLimits: () => request(`/social/limits`),                     // → { pro, autoAccounts, autoAccountsMax, sites, sitesMax }
+  // Link a chat planner (the app's boards ⇄ the planner in the user's Google Drive): every call answers as the GET does.
+  // start and home take the home board: where new posts from chat land
+  socialChatLink: () => request(`/social/chat-link`),
+  socialChatLinkStart: (boardId) => request(`/social/chat-link/start`, { method: "POST", body: JSON.stringify({ home_board_id: boardId }) }),
+  socialChatLinkHome: (boardId) => request(`/social/chat-link/home`, { method: "POST", body: JSON.stringify({ board_id: boardId }) }),
+  socialChatLinkCancel: () => request(`/social/chat-link/cancel`, { method: "POST", body: "{}" }),
+  socialChatLinkSync: () => request(`/social/chat-link/sync`, { method: "POST", body: "{}" }),
+  socialChatUnlink: () => request(`/social/chat-link`, { method: "DELETE", body: JSON.stringify({ keep_posts: true }) }),
+
+  // Ads research (PLANS/ADS_RESEARCH_API.md): an Ads frame (data.social.kind "ads") holds ad cards (data.social.kind "ad") as a
+  // Trends frame holds trend cards. Pulse's Ads section reads every one; a search reads ads without saving anything.
+  adsSources: () => request(`/ads/sources`),                         // → { providers: [data keys set, failover order], can: { meta, tiktok } }
+  adsSearch: (body) => request(`/ads/search`, { method: "POST", body: JSON.stringify(body) }),   // → { ads, tried, cost_usd }
+  adsRead: (urls) => request(`/ads/read`, { method: "POST", body: JSON.stringify({ urls }) }),   // → { ads, errors: { url: msg } }
+  socialAdsAll: () => request(`/social/ads`),                        // → { frames }: every Ads frame on every board
+  socialAdsCreate: (mbId, body = {}) =>
+    request(`/moodboards/${mbId}/social/ads`, { method: "POST", body: JSON.stringify(body) }),
+  // One Ads research as GET …/social/ads/{frame} reads it (the board's Ads research card, TrendsResearchCard.jsx kind "ads")
+  socialAdsGet: (mbId, frameId) => request(`/moodboards/${encodeURIComponent(mbId)}/social/ads/${encodeURIComponent(frameId)}`),
+  // Remove research (Pulse ▸ Ads): the Ads frame, its ad cards, its card on the board and its timer
+  socialAdsRemove: (mbId, frameId) => request(`/moodboards/${encodeURIComponent(mbId)}/social/ads/${encodeURIComponent(frameId)}`, { method: "DELETE" }),
+  // { url } reads the ad itself, { ad } takes a searched one; save_media keeps its video or picture on the board now (ad links expire)
+  socialAdAdd: (mbId, frameId, body) =>
+    request(`/moodboards/${mbId}/social/ads/${frameId}/items`, { method: "POST", body: JSON.stringify(body) }),
+  // → { copy }: a plain copy of the ad's card at x,y, titled with what made it last, with its link; the ad stays in its frame
+  socialAdsTakeOut: (mbId, frameId, cardId, x, y) =>
+    request(`/moodboards/${mbId}/social/ads/${frameId}/items/${cardId}/take-out`, { method: "POST", body: JSON.stringify({ x, y }) }),
+  // Pulse ▸ Format Radar (backend/social_radar.py): the user's saved formats, each a card on its board that keeps the post's video, and
+  // our own templates (the connector's catalog). Pulse ▸ Reports (backend/social_reports.py): report pages, each an HTML card on its board.
+  socialRadar: () => request(`/social/radar`),                       // → { formats, count, by_state }: every board's, newest first
+  // → { templates, niches, count, … }; 502 when our catalog can't be reached, which is an answer here, not a backend warming up: no retries
+  socialRadarTemplates: () => request(`/social/radar/templates`, {}, STARTUP_RETRY_LIMIT),
+  // a post's link: its card at once (fetching), the app reads the post and keeps its video and still in the board's folder
+  socialRadarAdd: (body) => request(`/social/radar/items`, { method: "POST", body: JSON.stringify(body) }),
+  socialRadarNote: (cardId, note) => request(`/social/radar/items/${encodeURIComponent(cardId)}/note`, { method: "PUT", body: JSON.stringify({ note }) }),
+  socialRadarFetch: (cardId) => request(`/social/radar/items/${encodeURIComponent(cardId)}/fetch`, { method: "POST", body: "{}" }),
+  socialRadarCheck: (cardId) => request(`/social/radar/items/${encodeURIComponent(cardId)}/check`, { method: "POST", body: "{}" }),
+  // removes the card AND its kept video and still (the media trash); the post and the report that found it stay
+  socialRadarRemove: (cardId) => request(`/social/radar/items/${encodeURIComponent(cardId)}`, { method: "DELETE" }),
+  socialReports: () => request(`/social/reports`),                   // → { reports, count }: every board's, newest first, each with its `file`
+  // removes the card AND its page (the media trash); the formats it found stay in the Radar
+  socialReportRemove: (id) => request(`/social/reports/${encodeURIComponent(id)}`, { method: "DELETE" }),
   socialPostsCreate: (mbId, body = {}) =>
     request(`/moodboards/${mbId}/social/posts`, { method: "POST", body: JSON.stringify(body) }),
   // → { card_id, post, problems }
@@ -1055,12 +1101,16 @@ export const api = {
   // with `ancestors`, the rows the panel keeps expanded) and returns every other
   // board as a header-only stub — see list_media in backend/main.py. Omit it to
   // list the whole library, which is what a panel showing every board expanded
-  // needs.
-  listMedia: (boardId = null, { ancestors = false } = {}) => {
-    if (!boardId) return request("/media/admin");
-    const params = new URLSearchParams({ board_id: boardId });
-    if (ancestors) params.set("ancestors", "1");
-    return request(`/media/admin?${params.toString()}`);
+  // needs. `folders: false` leaves every board's subfolders out — a picker that
+  // draws only a board's own files must ask for that, because the subfolders
+  // (agent runs, connected folders) are most of a large library's listing.
+  listMedia: (boardId = null, { ancestors = false, folders = true } = {}) => {
+    const params = new URLSearchParams();
+    if (boardId) params.set("board_id", boardId);
+    if (boardId && ancestors) params.set("ancestors", "1");
+    if (!folders) params.set("folders", "0");
+    const query = params.toString();
+    return request(query ? `/media/admin?${query}` : "/media/admin");
   },
   // Reference folders: mint /media/ref/<token> prefixes for linked external files
   // (only for folders a canvas Folder card already references), and derive a
@@ -1626,6 +1676,9 @@ export const api = {
   // Voice Studio bridge (the user's own local TTS app): {available, url, running, engines, voices, signature, error}
   getVoiceStudioStatus: (refresh = false) => request(`/voicestudio/status${refresh ? "?refresh=1" : ""}`),
   setVoiceStudioUrl: (url) => request("/voicestudio/settings", { method: "PUT", body: JSON.stringify({ url }) }),
+  // Which ffmpeg/ffprobe renders run (App settings ▸ Video Editor): {available, host, custom, customError, bundled, ffmpeg, ffprobe}
+  getFfmpegStatus: () => request("/ffmpeg"),
+  setFfmpegPath: (path) => request("/ffmpeg", { method: "PUT", body: JSON.stringify({ path }) }),
   // Custom AI models (App settings ▸ Custom AI models): user-supplied provider manifests.
   listCustomModels: () => request("/custom-models"),
   validateCustomManifest: (manifest) => request("/custom-models/validate", { method: "POST", body: JSON.stringify({ manifest }) }),

@@ -13,7 +13,7 @@ exposed (headline, colours, product photo …) and **Render MP4**, or an MP4 the
 | You work in | Add | You get |
 |---|---|---|
 | **Claude** (web, desktop app) or **ChatGPT** | the connector `https://mcp.greenlightdash.pro/motion` | the video in the chat: preview, options, notes, Render MP4 |
-| **Claude Code** | the [plugin](#claude-code) (or only the skill) | a project folder the agent checks, looks at and renders to MP4 |
+| **Claude Code** | the [plugin](#claude-code) (or only the skill) | a project folder the agent checks, looks at and renders to MP4; a video from your own words runs as the [free film workflow](#the-free-film-workflow) the plugin connects |
 | **Codex** (CLI, IDE, app) | the [plugin](#codex) (or only the skill) | the same |
 | **Any other agent** (Cursor, Gemini CLI …) | [`npx greenlight-motion`](#the-cli) + `SKILL.md` | the same |
 | **Your own web page** or a **Claude artifact** | [one `<script>`](#in-a-web-page-or-a-claude-artifact) | the player page, or the engine without UI |
@@ -86,7 +86,8 @@ Limits:
 
 ## Claude Code
 
-Install the plugin. It adds the `greenlight-motion` skill. In Claude Code:
+Install the plugin. It adds the `greenlight-motion` skill and connects the [free film workflow](#the-free-film-workflow).
+In Claude Code:
 
 ```text
 /plugin marketplace add wpsoul/greenlight-motion-engine
@@ -102,8 +103,10 @@ claude plugin install greenlight-motion@greenlight-motion-engine
 
 Then ask, for example: *"Make a 15-second product teaser in ./teaser with GreenLight Motion."*
 
-1. **The agent's work.** It runs the CLI: `init`, writes `project.json` (your pictures, video and sound go in
-   `teaser/assets/`), then `check`. It looks at the frames from `stills`, fixes what is weak, and runs `render`.
+1. **The agent's work.** It runs the request as the [free film workflow](#the-free-film-workflow), which drives the
+   CLI, or, without the workflows server, the CLI on its own: `init`, writes `project.json` (your pictures, video and
+   sound go in `teaser/assets/`), then `check`. It looks at the frames from `stills`, fixes what is weak, and runs
+   `render`.
 2. **Preview.** Double-click `teaser/index.html` for the preview with its options and Render MP4.
 3. **Notes.** `npx greenlight-motion review teaser --open` opens the page with Notes. What you mark lands in
    `teaser/review/`; tell the agent you left notes.
@@ -139,9 +142,34 @@ cp -R greenlight-motion-engine/motion-engine/skill ~/.agents/skills/greenlight-m
 
 For one repository only, copy it to `.agents/skills/greenlight-motion` in that repository instead.
 
+## The free film workflow
+
+The plugin also connects GreenLight's workflows server, `greenlight` (`https://mcp.greenlightdash.pro/mcp`). When you
+ask for a video in your own words, the agent runs it as the free **Motion Design ▸ Custom** workflow (Build New Video
+by Prompt). The workflow's steps come from the server and drive the CLI, and the agent stops for your OK where the
+workflow asks for it. It needs no account and no sign-in. Without the server, the agent makes the video with the skill
+alone.
+
+With only the skill, or to add the server by hand:
+
+```sh
+claude mcp add --transport http greenlight https://mcp.greenlightdash.pro/mcp   # Claude Code, then a new session
+codex mcp add greenlight --url https://mcp.greenlightdash.pro/mcp               # Codex
+```
+
+The ready templates on the same server (Feature Overview, Logo animation, Screen tutorial …) are GreenLight Dash PRO
+workflows. Only they ask you to sign in, once, with your PRO account:
+
+- **Claude Code:** `/mcp` → greenlight → Authenticate, or `claude mcp login plugin:greenlight-motion:greenlight` from a
+  shell (`claude mcp login greenlight` when you added it by hand).
+- **Codex:** `codex mcp login greenlight`.
+
+Your browser opens greenlightdash.pro: log in and press **Allow**.
+
 ## The MCP server in a coding agent
 
-This is optional. A terminal has no in-chat page, so `look_at_video` has no frames there; `npx greenlight-motion
+This is the chat connector (`/motion`), not the workflows server above, and it is optional. A terminal has no in-chat
+page, so `look_at_video` has no frames there; `npx greenlight-motion
 stills` is how a coding agent sees its video. The server is still useful:
 
 - `build_video` turns a short scene script into a full project. The agent saves
@@ -173,15 +201,15 @@ Any other client takes the same Streamable HTTP URL, with no auth.
 ## The CLI
 
 ```sh
-npx greenlight-motion@0.4.0 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
-npx greenlight-motion@0.4.0 init my-video   # a working starter: index.html, project.json, assets/
-npx greenlight-motion@0.4.0 script my-video # my-video/script.json (a scene script) → project.json, the Video Editor's presets
-npx greenlight-motion@0.4.0 check my-video  # missing files, template mistakes, blank frames, broken plugins
-npx greenlight-motion@0.4.0 stills my-video # frames and a labelled contact sheet, to look at
-npx greenlight-motion@0.4.0 render my-video --fps 60 --motion-blur
-npx greenlight-motion@0.4.0 review my-video --open   # the page with Notes; they land in my-video/review/
-npx greenlight-motion@0.4.0 pack my-video   # everything in ONE html file
-npx greenlight-motion@0.4.0 pack my-video --glvideo  # ONE .glvideo: double-clicked, it opens in GreenLight Dash
+npx greenlight-motion@0.5.8 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
+npx greenlight-motion@0.5.8 init my-video   # a working starter: index.html, project.json, assets/
+npx greenlight-motion@0.5.8 script my-video # my-video/script.json (a scene script) → project.json, the Video Editor's presets
+npx greenlight-motion@0.5.8 check my-video  # missing files, template mistakes, blank frames, broken plugins
+npx greenlight-motion@0.5.8 stills my-video # frames and a labelled contact sheet, to look at
+npx greenlight-motion@0.5.8 render my-video --fps 60 --motion-blur
+npx greenlight-motion@0.5.8 review my-video --open   # the page with Notes; they land in my-video/review/
+npx greenlight-motion@0.5.8 pack my-video   # everything in ONE html file
+npx greenlight-motion@0.5.8 pack my-video --glvideo  # ONE .glvideo: double-clicked, it opens in GreenLight Dash
 ```
 
 Other commands:
@@ -201,7 +229,7 @@ The engine is one classic script, so it runs from a double-clicked file, a CDN o
 
 ```html
 <div id="app"></div>
-<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.4.0/dist/greenlight-motion.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.5.8/dist/greenlight-motion.js"></script>
 <script>
   GreenLightMotion.mountPage(document.getElementById('app'), {
     project: { /* project.json */ },
@@ -227,7 +255,8 @@ What is where:
   transitions, 3D, particles, text and the page.
 - `motion-engine/` is the npm package: the CLI, the agent skill, the schema, examples and docs.
 - `plugin/` is the Claude Code and Codex plugin: the same skill, with `.claude-plugin/` and `.codex-plugin/`
-  manifests. Its marketplaces are `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
+  manifests and `.mcp.json` (the workflows server, its address only). Its marketplaces are
+  `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
 
 The repository is published from GreenLight Dash on each release. Pull requests map back to it file for file; see
 [CONTRIBUTING.md](CONTRIBUTING.md).

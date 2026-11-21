@@ -22,6 +22,8 @@
  */
 
 import { isText3dLayer } from './text3d.js';
+import { ANIMATED_KEYABLE, ANIMATED_PANEL, ANIMATED_NAMES, ANIMATED_LIBRARY } from '../../world3d/render/animatedMaterials.js';
+import { DENOISE_LOOKS } from '../../world3d/render/denoiseLook.js';
 
 // ── Timeline identity ───────────────────────────────────────────────────────
 // Mirrors CAMERA_MEDIA_TYPE / CAMERA_CHANNEL_KIND in projectCamera.js. Unlike the
@@ -487,6 +489,9 @@ function normalizeCyclorama(raw) {
       // Only once set: an always-present default would change rigLookHash for
       // every saved rig and mark each look "edited".
       ...(m.shadowColor != null ? { shadowColor: color(m.shadowColor, CYC_SHADOW_TINT) } : {}),
+      // (vfx) "Shadows only" that also takes the objects' bounce light and reflections onto the footage in Final (vfxScene.js);
+      // sparse, like shadowColor
+      ...(m.light != null && Number(m.light) > 0 ? { light: num(m.light, 1, 0, 4) } : {}),
     },
   };
 }
@@ -543,13 +548,43 @@ export function normalizeRigRender(r) {
     glossy: num(r?.glossy, 0.5, 0, 1),
     clamp: num(r?.clamp, 0, 0, 1000),
     denoise: r?.denoise !== false,
+    // Denoise "Clean" (the default since speedvscycles: denoiseLook.js) is the denoiser's picture alone; "Natural" mixes some of the
+    // traced picture back over the denoised one, so grain and surface detail stay; "raw" shows the samples the denoiser read, every
+    // other choice of the trace kept. Only stored once set, each of the three: a Scene set to Natural keeps it.
+    ...(DENOISE_LOOKS.includes(r?.denoiseLook) ? { denoiseLook: r.denoiseLook } : null),
+    // Final: how many times a path may bounce off each kind of surface, under `bounces`. Only stored once set.
+    ...(Number.isFinite(Number(r?.diffuseBounces)) && r?.diffuseBounces !== null && r?.diffuseBounces !== '' ? { diffuseBounces: num(r.diffuseBounces, 0, 0, 32) } : null),
+    ...(Number.isFinite(Number(r?.specularBounces)) && r?.specularBounces !== null && r?.specularBounces !== '' ? { specularBounces: num(r.specularBounces, 0, 0, 32) } : null),
+    ...(Number.isFinite(Number(r?.transmissionBounces)) && r?.transmissionBounces !== null && r?.transmissionBounces !== '' ? { transmissionBounces: num(r.transmissionBounces, 0, 0, 32) } : null),
+    // (fog2) scattering events in fog, smoke and fire
+    ...(Number.isFinite(Number(r?.volumeBounces)) && r?.volumeBounces !== null && r?.volumeBounces !== '' ? { volumeBounces: num(r.volumeBounces, 0, 0, 32) } : null),
     // Final only: what the look takes back for the light that bounces, which raster never had.
     exposure: num(r?.exposure, 1, 0.05, 4),
     // Off in the preview by default; renders and Final have their shadows either way. Only stored once set.
     ...(r?.draftShadows === true ? { draftShadows: true } : null),
     // Final's radiance cache is on unless this says false (world3dLayer settleWorldFrame). Only stored once set.
     ...(r?.radianceCache === false ? { radianceCache: false } : null),
+    // (flicker1) A Final video frame carries the soft light of the frame before it only where this says true (settleWorldFrame); every video
+    // frame is steadied against the one before after its denoiser either way. Only stored once set.
+    ...(r?.softReuse === true ? { softReuse: true } : null),
+    // Final keeps each light group's light apart, so look.lightMix changes it after the trace (world3d render/lightMix.js). Only stored once set.
+    ...(r?.lightPasses === true ? { lightPasses: true } : null),
+    // (octane2) what the Scene layer shows instead of its picture (world3d render/renderPasses.js). Only stored once set.
+    ...(normalizeRenderPasses(r?.passes) ? { passes: normalizeRenderPasses(r.passes) } : null),
   };
+}
+
+const RENDER_PASS_SHOWS = ['beauty', 'diffuse', 'specular', 'emission', 'albedo', 'normal', 'depth', 'objects', 'materials', 'mask'];
+const passNames = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim());
+
+/** (octane2) `render.passes`: { show, mask: { objects, materials } }, or null when it shows the picture. */
+export function normalizeRenderPasses(p) {
+  if (!p || typeof p !== 'object' || !RENDER_PASS_SHOWS.includes(p.show) || p.show === 'beauty') return null;
+  const objects = passNames(p.mask?.objects), materials = passNames(p.mask?.materials);
+  const mask = objects.length || materials.length ? { ...(objects.length ? { objects } : {}), ...(materials.length ? { materials } : {}) } : null;
+  const r = Array.isArray(p.depthRange) ? p.depthRange.map(Number) : null;
+  const depthRange = r?.length === 2 && r.every((v) => Number.isFinite(v) && v >= 0) && r[1] > r[0] ? r : null;
+  return { show: p.show, ...(mask ? { mask } : {}), ...(depthRange ? { depthRange } : {}) };
 }
 
 export function normalizeRig(raw) {
@@ -731,6 +766,34 @@ export function resolveRigAt(entries, time) {
   return nearest;
 }
 
+/**
+ * (filmbugs) The Scene layers a frame is drawn from: all of them, or, while a render's motion blur draws one of a frame's sub-frames
+ * (`frameTime`: the frame's own time, exporter.js engine.shutterFrameTime), only the layer showing at the frame's own time. A shutter that
+ * crosses a cut keeps the frame's own Scene for its whole length (its keys and clock held at its ends), as the world's one-pass shutter does
+ * (worldShutter.js shutterRigIn / shutterClockIn): each frame of an edit shows its own shot. The 16 sub-frames switched to the next Scene
+ * half-way: a Draft frame before a cut traced the Final Scene after it (8 full traces), and a render farm's home composite asked the farm
+ * for a frame it never traced (the frame is Draft at its own time).
+ */
+export function shutterEntries(entries, frameTime) {
+  if (!Number.isFinite(frameTime) || !Array.isArray(entries) || entries.length < 2) return entries;
+  const own = resolveRigAt(entries, frameTime);
+  return own ? [own] : entries;
+}
+
+/**
+ * The Scene's own clock at timeline `time`: seconds from the start of the Rig clip resolveRigAt picks, held at 0 before it and at its
+ * length after it (as the Rig's own keyframes are, activeRigAt). A Scene's keys (`t`), its camera, sims, clips and videos all run on this
+ * clock, so a Scene clip moved along the timeline plays the same. `time` itself when there is no Rig clip.
+ */
+export function sceneTimeAt(entries, time) {
+  const t = Number.isFinite(time) ? time : 0;
+  const e = resolveRigAt(entries, t);
+  if (!e) return t;
+  const start = num(e.startTime, 0, -Infinity, Infinity);
+  const end = num(e.endTime, start, -Infinity, Infinity);
+  return Math.max(0, Math.min(Math.max(0, end - start), t - start));
+}
+
 // ── Keyframe tracks ─────────────────────────────────────────────────────────
 //
 // `rig:` is already taken by the puppet-pin deformer (keyframeProps.js), hence
@@ -744,6 +807,49 @@ export const RIG_KF_COLOR_PREFIX = 'scc:';
 
 export const RIG_KF_SCOPE_CYC = 'cyc';
 export const RIG_KF_SCOPE_ENV = 'env';
+// (matpack) A Scene material's animated texture graph (world3d/render/animatedMaterials.js: edgeGlow, fractalNoise, motionBeam, sweep):
+// each of its numbers is a track, `sc:g~<material>:<param>`, folded into the Scene's own `materials.<id>.graph` and taken by the world in
+// place (worldLiveValues → WorldRenderer.relight), as the cyclorama's paint is.
+export const RIG_KF_SCOPE_GRAPH = 'g~';
+const GRAPH_MATERIAL_RE = /^[A-Za-z0-9_.-]{1,48}$/;
+const isGraphScope = (scope) => scope.startsWith(RIG_KF_SCOPE_GRAPH) && GRAPH_MATERIAL_RE.test(scope.slice(RIG_KF_SCOPE_GRAPH.length));
+
+/** (matpack) A Scene material's animated graph: its own `graph`, or the one its library `preset` brings. Null for anything else. */
+export function animatedGraphOf(rig, id) {
+  const mat = rig?.scene?.materials?.[id];
+  if (!mat || typeof mat !== 'object') return null;
+  // a library material's graph is its entry's (render/materialLibrary.js takes the animated ones from animatedMaterials.js)
+  const graph = mat.graph && typeof mat.graph === 'object' ? mat.graph : ANIMATED_LIBRARY[mat.preset]?.def.graph;
+  const keyable = graph && ANIMATED_KEYABLE[graph.preset];
+  return keyable ? { graph, keyable } : null;
+}
+
+const graphMaterialIds = (rig) => Object.keys(rig?.scene?.materials || {}).filter((id) => GRAPH_MATERIAL_RE.test(id) && animatedGraphOf(rig, id));
+const chanLabel = (chan) => chan.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+const chanStep = (meta) => { const span = (meta.max ?? 1) - (meta.min ?? 0); return span > 50 ? 0.1 : span > 5 ? 0.01 : 0.001; };
+
+/** (matpack) The Scene panel's rows for the animated materials: per material its headline numbers, each with its track key. Pure. */
+export function animatedMaterialRows(rig) {
+  return graphMaterialIds(rig).map((id) => {
+    const { graph, keyable } = animatedGraphOf(rig, id);
+    const scope = `${RIG_KF_SCOPE_GRAPH}${id}`;
+    const rows = (ANIMATED_PANEL[graph.preset] || []).filter((chan) => keyable[chan]).map((chan) => {
+      const meta = keyable[chan];
+      return { chan, label: chanLabel(chan), prop: rigKfKey(scope, chan), value: graph[chan] ?? meta.default ?? 0, min: meta.min, max: meta.max, step: chanStep(meta) };
+    });
+    return { id, preset: graph.preset, name: ANIMATED_NAMES[graph.preset] || graph.preset, rows };
+  });
+}
+
+/** (matpack) The rig with one number of a Scene material's animated graph set (a library material gets its graph written out). */
+export function setAnimatedGraphNumber(rig, id, chan, value) {
+  const found = animatedGraphOf(rig, id);
+  const meta = found?.keyable[chan];
+  if (!meta) return rig;
+  const mat = rig.scene.materials[id];
+  const graph = { ...(mat.graph && typeof mat.graph === 'object' ? mat.graph : found.graph), [chan]: num(value, found.graph[chan] ?? meta.default, meta.min, meta.max) };
+  return { ...rig, scene: { ...rig.scene, materials: { ...rig.scene.materials, [id]: { ...mat, graph } } } };
+}
 
 export function rigKfKey(scope, chan) {
   return `${RIG_KF_PREFIX}${scope}:${chan}`;
@@ -774,7 +880,7 @@ export function parseRigKfKey(key) {
   const scope = body.slice(0, sep);
   const chan = body.slice(sep + 1);
   if (!chan || chan.includes(':')) return null;
-  if (scope !== RIG_KF_SCOPE_CYC && scope !== RIG_KF_SCOPE_ENV && !isValidLid(scope)) return null;
+  if (scope !== RIG_KF_SCOPE_CYC && scope !== RIG_KF_SCOPE_ENV && !isValidLid(scope) && !(isGraphScope(scope) && !isColor)) return null;
   return { scope, chan, color: isColor };
 }
 
@@ -842,6 +948,7 @@ export function rigKfKeysFor(rig) {
   for (const chan of Object.keys(CYC_KF_CHANS)) keys.add(rigKfKey(RIG_KF_SCOPE_CYC, chan));
   keys.add(rigColorKfKey(RIG_KF_SCOPE_CYC));
   for (const chan of Object.keys(ENV_KF_CHANS)) keys.add(rigKfKey(RIG_KF_SCOPE_ENV, chan));
+  for (const id of graphMaterialIds(r)) for (const chan of Object.keys(animatedGraphOf(r, id).keyable)) keys.add(rigKfKey(`${RIG_KF_SCOPE_GRAPH}${id}`, chan));
   return keys;
 }
 
@@ -870,11 +977,23 @@ export function applyRigKeyframes(rig, values) {
   const env = { ...r.env };
   let cycDirty = false;
   let envDirty = false;
+  let materials = null;   // (matpack) the Scene's materials, copied lazily, each keyed graph its own copy
 
   for (const [key, value] of entries) {
     const parsed = parseRigKfKey(key);
     if (!parsed || value === undefined || value === null) continue;
     const { scope, chan, color } = parsed;
+
+    if (isGraphScope(scope)) {
+      const id = scope.slice(RIG_KF_SCOPE_GRAPH.length);
+      const found = animatedGraphOf(r, id);
+      const meta = found?.keyable[chan];
+      if (!meta) continue;
+      materials ||= { ...r.scene.materials };
+      const mat = materials[id];
+      materials[id] = { ...mat, graph: { ...(mat.graph && typeof mat.graph === 'object' ? mat.graph : found.graph), [chan]: num(value, found.graph[chan] ?? meta.default, meta.min, meta.max) } };
+      continue;
+    }
 
     if (scope === RIG_KF_SCOPE_CYC) {
       if (color) {
@@ -911,12 +1030,13 @@ export function applyRigKeyframes(rig, values) {
     lights[idx][chan] = num(value, lights[idx][chan], meta.min, meta.max);
   }
 
-  if (!lights && !cycDirty && !envDirty) return r;
+  if (!lights && !cycDirty && !envDirty && !materials) return r;
   return {
     ...r,
     ...(lights ? { lights } : {}),
     ...(cycDirty ? { cyclorama: cyc } : {}),
     ...(envDirty ? { env } : {}),
+    ...(materials ? { scene: { ...r.scene, materials } } : {}),
   };
 }
 
@@ -979,6 +1099,15 @@ export function buildRigKfPropsFor(rig) {
   for (const [chan, meta] of Object.entries(ENV_KF_CHANS)) {
     push(rigKfKey(RIG_KF_SCOPE_ENV, chan), 'Environment', `Environment · ${meta.label}`, meta);
   }
+  // (matpack) each Scene material with an animated graph: every number of its preset
+  for (const id of graphMaterialIds(r)) {
+    const { graph, keyable } = animatedGraphOf(r, id);
+    const group = `Material ${id}`;
+    for (const [chan, meta] of Object.entries(keyable)) {
+      push(rigKfKey(`${RIG_KF_SCOPE_GRAPH}${id}`, chan), group, `${id} · ${chanLabel(chan)}`,
+        { neutral: graph[chan] ?? meta.default ?? 0, unit: '', min: meta.min, max: meta.max, step: chanStep(meta) });
+    }
+  }
   return out;
 }
 
@@ -998,6 +1127,10 @@ export function rigKfBaseValue(rig, key) {
   if (!parsed) return undefined;
   const { scope, chan, color: colorTrack } = parsed;
 
+  if (isGraphScope(scope)) {
+    const found = animatedGraphOf(r, scope.slice(RIG_KF_SCOPE_GRAPH.length));
+    return found ? (found.graph[chan] ?? found.keyable[chan]?.default) : undefined;
+  }
   if (scope === RIG_KF_SCOPE_CYC) {
     if (colorTrack) return cycSurfaceColor(r.cyclorama.material);
     if (chan === 'opacity') return r.cyclorama.material.opacity;

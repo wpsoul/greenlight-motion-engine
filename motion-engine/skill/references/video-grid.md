@@ -223,7 +223,7 @@ Rules:
   grid's own transform — animate the camera or the layout for blurred motion. `mirrorH/V` flip the
   picture, not the arrangement.
 - **PRO at render.** Free to build and preview; a project containing a non-empty grid needs a PRO
-  licence to render, the same policy as PRO motion templates and Running Glow.
+  licence to render, the same policy as PRO motion templates (every effect is free).
 - **Grouping existing layers is non-destructive** when the grid is created with `"mode": "current"`
   + `"fit": "none"` — nothing moves or resizes until a layout type is chosen. Write both
   explicitly: a missing `mode` is `rect`, which rearranges the members at once. That pairing is also

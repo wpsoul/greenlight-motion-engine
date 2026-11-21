@@ -15,6 +15,8 @@ import {
   vogelDiskSample, fract, dot, log2, fwidth, positionWorld, mix, dFdx, dFdy, length,
 } from 'three/tsl';
 import { veDisplayTransform, veToSRGB } from './threeDisplayTransformNodes.js';
+import { filmCurve } from '../../world3d/render/tone.js';
+import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
 import { makeTslSampler } from './tslSampler.js';
 
 /** Null-safe binding facade; see tslSampler.js. */
@@ -115,6 +117,20 @@ export function createRigContactNodeMaterials() {
 }
 
 /**
+ * The contact shadows a world Scene's raster lays on what it draws (WorldRenderer #makeTargets: GTAO at half resolution, 10 samples, a
+ * radius of 0.12 world units), for a model that Scene let go of: on its own pass's depth, in the editor's units (one per composition px,
+ * WORLD_UNITS 0.001), filmed by its own pass camera. Its tone pass multiplies by it (createModelTonePassNodeMaterial({ occlusion })).
+ */
+export function createModelOcclusion(depthTexture, camera) {
+  const pass = gtao(texture(depthTexture), null, camera);
+  pass.resolutionScale = 0.5;
+  pass.samples.value = 10;
+  pass.radius.value = 120;
+  pass.thickness.value = 1000;
+  return pass;
+}
+
+/**
  * The universal tone pass: HDR render target → display-referred LDR.
  *
  * The GLSL derives its uv from `gl_FragCoord.xy / uResolution`. On a fullscreen
@@ -122,7 +138,7 @@ export function createRigContactNodeMaterials() {
  * the composite port measured that substitution at Δ 0 — so `uResolution` stays
  * on the uniform surface for the app's writers but does not enter the graph.
  */
-export function createModelTonePassNodeMaterial() {
+export function createModelTonePassNodeMaterial({ occlusion = null } = {}) {
   const u = {
     uTexture: makeSampler(),
     uResolution: uniform(new THREE.Vector2(1, 1)),
@@ -132,6 +148,12 @@ export function createModelTonePassNodeMaterial() {
     // which skips the scene's tone curve — see model3dTonePass.js.
     uScreenMask: makeSampler(),
     uScreenMaskOn: uniform(0),
+    // A model a world Scene let go of: the world's own curve and Look (model3dTonePass.js).
+    uLook: uniform(0),
+    uLookContrast: uniform(1.25),
+    uLookSaturation: uniform(1.3),
+    // How much of those contact shadows: the world fades them out as Final's trace comes in.
+    uAoAmount: uniform(1),
   };
 
   const material = new THREE.MeshBasicNodeMaterial();
@@ -150,7 +172,9 @@ export function createModelTonePassNodeMaterial() {
     const a = clamp(src.a, 0.0, 1.0);
     // Unpremultiply before the non-linear maths and re-premultiply after, or
     // transparent edges come back with dark fringes.
-    const lin = select(a.greaterThan(1e-4), src.rgb.div(a), vec3(0.0));
+    const lin0 = select(a.greaterThan(1e-4), src.rgb.div(a), vec3(0.0));
+    // A model a world Scene let go of darkens where it did in the world: the world's GTAO, on its own depth (createModelOcclusion).
+    const lin = occlusion ? lin0.mul(mix(float(1.0), occlusion.getTextureNode().sample(screenUV).r, u.uAoAmount)) : lin0;
     /*
      * uDisplay 0 is the flat-plate case. That pass carries the layer's OWN
      * artwork, which is display-referred end to end — the bake is raw, the plate
@@ -159,7 +183,14 @@ export function createModelTonePassNodeMaterial() {
      * moment it starts catching a shadow: ACES desaturates it, and a bare encode
      * washes it out (the second sRGB encode of #e11d48 is #f15f91 — measured).
      */
-    const scene = select(u.uDisplay.greaterThan(0.5), veDisplayTransform(lin, u.uExposure), lin);
+    // A branch, not a select: the world's curve costs nothing on a pass that does not use it.
+    const toned = vec3(0.0).toVar();
+    If(u.uLook.greaterThan(0.5), () => {
+      toned.assign(filmCurve(lin, u.uExposure, u.uLookContrast, u.uLookSaturation));
+    }).Else(() => {
+      toned.assign(veDisplayTransform(lin, u.uExposure));
+    });
+    const scene = select(u.uDisplay.greaterThan(0.5), toned, lin);
     const screen = u.uScreenMask.sample(screenUV).r.mul(u.uScreenMaskOn);
     const mapped = mix(scene, veToSRGB(lin), screen);
     return vec4(mapped.mul(a), a);

@@ -15,6 +15,7 @@ import { isWebmUrl } from '../webmFrameCache';
 import { preparedVideoTexturePrimeState, shouldPrimePreparedVideoTexture } from '../previewMediaLifecycle';
 import { phoneMode } from './phoneMode';
 import { phonePictureTexture } from './phoneMedia';
+import { createVideoTexture } from './videoCanvasTexture';
 
 export function normalizeUrl(url) {
   try {
@@ -257,11 +258,12 @@ export function getVideoTexture(engine, video, holdKey = null) {
 
   if (seekPending || awaitingFreshFrame || video.readyState < 2) return null;
 
-  const texture = new THREE.VideoTexture(video);
+  // On WebGPU the frame goes through a 2D canvas first, or Chrome lifts its levels on the way in (./videoCanvasTexture.js).
+  const texture = createVideoTexture(video, engine.renderer);
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
-  // VideoTexture's constructor arms its own self-perpetuating rVFC loop that
+  // VideoTexture's constructor (and VideoCanvasTexture's) arms its own self-perpetuating rVFC loop that
   // marks EVERY presented frame dirty — including mid-seek frames and frames of
   // a source this buffer was re-pointed to while its texture is still on screen.
   // That silently bypasses all of the hold-last-good-frame gating above and is

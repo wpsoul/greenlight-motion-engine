@@ -25,6 +25,8 @@ export const TEXT3D_DEFAULTS = Object.freeze({
   material: 'plastic', // plastic | matte | metal | glass
   light: 'studio', // studio | soft | dramatic — used when no 3D Rig lights the scene
   envIntensity: 1, // environment reflections strength (no Rig)
+  castShadow: true, // (bugsB) the letters' shadow on the set, the models and each other (a Rig's or a Scene's light)
+  receiveShadow: true, // (bugsB) the set's and the models' shadows on the letters (raster; Final traces real light either way)
 });
 
 export const TEXT3D_MATERIALS = ['plastic', 'matte', 'metal', 'glass'];
@@ -60,6 +62,12 @@ export function sanitizeText3d(raw) {
   out.palette = Array.isArray(raw.palette) ? raw.palette.map(color).filter(Boolean).slice(0, 12) : [];
   out.material = TEXT3D_MATERIALS.includes(raw.material) ? raw.material : TEXT3D_DEFAULTS.material;
   out.light = TEXT3D_LIGHTS.includes(raw.light) ? raw.light : TEXT3D_DEFAULTS.light;
+  // (bugsB) the letters' shadows, on unless switched off
+  out.castShadow = raw.castShadow !== false;
+  out.receiveShadow = raw.receiveShadow !== false;
+  // (polish2) in a world Scene the letters wear this Scene material, by its id (an animated one included); only when set
+  const scene = typeof raw.sceneMaterial === 'string' ? raw.sceneMaterial.trim().slice(0, 64) : '';
+  if (scene) out.sceneMaterial = scene;
   return out;
 }
 
@@ -72,4 +80,33 @@ export function resolveText3d(item) {
 /** A text layer drawn as real 3D letters. One property read for every other layer. */
 export function isText3dLayer(item, clip) {
   return item?.text3d?.enabled === true && clip?.mediaType === 'text';
+}
+
+// Flat text in the Scene's world (item.textInWorld): on a frame a world Scene draws, every letter of an ordinary text layer
+// becomes a flat card in the world's space, filmed by the world's camera (world3dText.js worldFlatLetters). Sparse: `enabled`,
+// and the options only when set. `lit` takes the scene's light and its shadows (`receiveShadow: false` keeps them off),
+// `castShadow` drops the letters' shadow on the world. `true` alone is read as `{ enabled: true }`.
+const TEXT_IN_WORLD_OPTIONS = ['lit', 'castShadow'];
+
+/** A clean textInWorld block, or null when there is nothing worth storing. */
+export function sanitizeTextInWorld(raw) {
+  if (raw === true) return { enabled: true };
+  if (!raw || typeof raw !== 'object') return null;
+  const out = {};
+  if (raw.enabled === true) out.enabled = true;
+  for (const k of TEXT_IN_WORLD_OPTIONS) if (raw[k] === true) out[k] = true;
+  if (raw.receiveShadow === false) out.receiveShadow = false;
+  return Object.keys(out).length ? out : null;
+}
+
+/** A text layer whose letters stand in a world Scene as flat cards. 3D Text has its own way in, and a clip mask never joins. */
+export function isTextInWorldLayer(item, clip) {
+  const v = item?.textInWorld;
+  return (v === true || v?.enabled === true) && clip?.mediaType === 'text' && !item.textClipMask && item.text3d?.enabled !== true;
+}
+
+/** How the letters stand there: `{ lit, castShadow, receiveShadow }`. */
+export function resolveTextInWorld(item) {
+  const v = sanitizeTextInWorld(item?.textInWorld) || {};
+  return { lit: v.lit === true, castShadow: v.castShadow === true, receiveShadow: v.lit === true && v.receiveShadow !== false };
 }

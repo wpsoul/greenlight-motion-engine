@@ -190,20 +190,59 @@ layer transform. **Rotate 3D in a Text Animator turns the letters for real**, sh
   "palette": ["#e8392f", "#2f6fe8", "#f5c518", "#2fb04a"], // optional: colours cycled per letter (toy look)
   "material": "plastic",// plastic | matte | metal | glass
   "light": "studio",    // studio | soft | dramatic — only without a 3D Rig in the project
-  "envIntensity": 1     // reflections strength (0–3), only without a Rig
+  "envIntensity": 1,    // reflections strength (0–3), only without a Rig
+  "castShadow": true,   // the letters' shadow on the set, the models and each other (false: none, Draft and Final)
+  "receiveShadow": true,// the set's and the models' shadows on the letters (false: none in Draft; Final traces real light)
+  "sceneMaterial": "neon" // optional, in a 3D Scene only: wear this material of the Scene (its id), an animated one included
 }
 ```
 
-- **Lighting.** With a Scene Rig (3D Rig layer) its lights and environment light the letters. With
-  `renderer: "classic"` they also cast and receive the Rig's shadows; in a 3D Scene (any other Rig) the world draws
-  the backdrop and the models, and the letters cast no shadow on them. Without a Rig, `light` picks a studio set and
-  `envIntensity` the reflections.
+- **Lighting.** Without a Rig, `light` picks a studio set and `envIntensity` the reflections. With
+  `renderer: "classic"` the Rig's lights and environment light the letters, and they cast and receive the Rig's
+  shadows. In a 3D Scene (any other Rig, on WebGPU) the letters stand in the Scene's world itself, as a model layer
+  does: they cast and take shadows between each other, the models, the scene objects and the floor, show in
+  reflections, and are path traced in Final; 2D layers and the Camera layer's depth of field meet them by their real
+  depth ([video-world3d.md](video-world3d.md#3d-text-in-the-world)). There the layer transform places the letters in the world's
+  own space (1000 px a metre from the world's origin, not on `scene.camera`), and `rotateX` / `rotateY` turn them as a
+  scene object's `rot[0]` / `rot[1]` (Rotate Z keeps its on-screen clockwise sense, `rot[2]` negated): see
+  [placing 3D Text in the world](video-world3d.md#placing-3d-text-in-the-world).
 - **Fonts.** Each letter is traced from the font the layer really draws with, so Google, uploaded and system fonts
   and any weight work. The face is the 2D glyph's exact outline; the bevel swells the sides outward.
 - **Not in 3D:** the caption bar, outline stroke, text shadow and glow, blur and decorations are 2D paint and are not
   drawn on 3D letters. A Text Animator's opacity and colour apply; its blur, glow, shadow and stroke do not.
 - **Cost:** a glyph's geometry is built once per font, character, depth and bevel and shared; each frame poses the
-  letters and renders one 3D pass. `depth`, `bevel` and `bevelSegments` are not keyframable (they rebuild geometry).
+  letters and renders one 3D pass (in a 3D Scene, no pass of their own: the world draws them, and moving or
+  recolouring a letter rebuilds nothing). `depth`, `bevel` and `bevelSegments` are not keyframable (they rebuild
+  geometry).
+
+### Flat text in the 3D Scene (`textInWorld`)
+
+A text layer can stand in a 3D Scene's world as flat letters instead of lying on top of the frame: models in front hide them, Position
+`z` is real depth, Rotate 3D a real turn, and the Scene's camera and depth of field film them ([video-world3d.md](video-world3d.md#flat-text-in-the-world)).
+Everything else stays the text layer's own, and with no world Scene on the frame the field does nothing.
+
+```json
+"textInWorld": { "enabled": true }                                     // exact 2D colours, no shadows (the default)
+"textInWorld": { "enabled": true, "lit": true, "castShadow": true }   // lit by the Scene, casting and taking shadows
+```
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `enabled` | `false` | The letters stand in the Scene. Stored only when set; omit the whole block for ordinary text. |
+| `lit` | `false` | Each letter takes the Scene's light and look (a matte surface) instead of keeping its exact colours. |
+| `castShadow` | `false` | The letters' shadow falls on the world, lit or not. |
+| `receiveShadow` | `true` with `lit` | `false` keeps the world's shadows off lit letters. Unlit letters take none. |
+
+- Under the Scene's own camera (`scene.camera`) the layer's plane (`panZ` 0) stands on the plane the camera looks at (its `target`), whatever the
+  composition's size; `panZ` moves the letters in depth by the Scene's units ([video-world3d.md](video-world3d.md#flat-text-in-the-world)).
+- A text layer's `shadowPlate` (Cast shadow, Receive shadow, Depth occlusion: the classic Rig's flat plate) does nothing over a world Scene; these
+  `textInWorld` fields are its way into the Scene's light and shadows.
+
+- One flat card per unit of the Text Animators (`basedOn`: a letter, a word or a line); letters when there are none.
+- Not drawn in the Scene: the caption bar and its border, and the animators' glow, box and caret. The layer's In and Out transitions do
+  not play there; bring the letters in and out with Text Animators.
+- A layer with effects, colour filters, blur or Grow Fill, a clip mask (`textClipMask`), one in a sequence or a camera-locked channel
+  stays flat. `text3d.enabled` wins.
 
 ### Dynamic text placeholders
 
@@ -363,7 +402,7 @@ Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid
 **Depth and one camera.**
 - `layer` puts one camera in front of the text plate's centre; it rides the layer, like CSS perspective inside a 3D-transformed element.
 - `project` films the letters with the project's Camera layer. A dolly, pan, tilt or the layer's own `rotateX`/`rotateY` gives true parallax between letters at different `z`; with no camera move it equals `layer`.
-- 3D Text (`text3d`) letters move in real depth with `z`; the camera field doesn't apply there.
+- 3D Text (`text3d`) letters, and flat letters in a 3D Scene (`textInWorld`), move in real depth with `z`; the camera field doesn't apply there.
 - Track: `txa:<aid>:<pid>.z`.
 
 ```json

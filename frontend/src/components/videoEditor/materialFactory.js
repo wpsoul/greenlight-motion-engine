@@ -315,9 +315,10 @@ export const materials = {
     const n = nodes();
     return n ? n.comp.createOverBlitNodeMaterial() : null;
   },
-  adjustment: () => {
+  // (hdr3) `opts.hdr`: the twin an HDR render's float composite grades with (hdrComposite.js)
+  adjustment: (opts) => {
     const n = nodes();
-    return n ? n.comp.createAdjustmentNodeMaterial() : null;
+    return n ? n.comp.createAdjustmentNodeMaterial(opts) : null;
   },
   mix: () => {
     const n = nodes();
@@ -338,6 +339,12 @@ export const materials = {
     const n = nodes();
     return n ? n.comp.createDepthStampNodeMaterial() : null;
   },
+  // (gaps1) a model pass filmed by a world Scene's orthographic camera: its depth as the compositor keeps it. WebGPU only, as the Scene.
+  orthoDepth: () => {
+    const n = nodes();
+    return n ? n.comp.createOrthoDepthNodeMaterial() : null;
+  },
+  // A twin with no original: the 3D Scene draws only on WebGPU, and on WebGL its layer shows a notice instead (world3dLayer.js).
   worldPlate: (units) => {
     const n = nodes();
     return n ? n.comp.createWorldPlateNodeMaterial(units) : null;
@@ -345,6 +352,40 @@ export const materials = {
   depthComposite: () => {
     const n = nodes();
     return n ? n.comp.createDepthCompositeNodeMaterial() : null;
+  },
+  // (mblur3) a twin with no original: a Scene's moving frame over a see-through sky goes over the stack in linear light (WebGPU only)
+  depthCompositeLinear: (opts) => {
+    const n = nodes();
+    return n ? n.comp.createDepthCompositeNodeMaterial({ linear: true, ...(opts || {}) }) : null;
+  },
+  // (mblur4) a twin with no original: a shadow catcher's shadow (and a Scene's shutter share) laid over the stack in linear light
+  overBlitLinear: (opts) => {
+    const n = nodes();
+    return n ? n.comp.createOverBlitLinearNodeMaterial(opts) : null;
+  },
+  // (hdr2) an HDR render through 2D layers (hdrComposite.js): the world's own light as the Scene's plate, the motion-blur sum and the
+  // resample of the float picture. Twins with no original: the 3D Scene draws only on WebGPU
+  hdrPlate: (opts) => {
+    const n = nodes();
+    return n ? n.comp.createHdrPlateNodeMaterial(opts) : null;
+  },
+  hdrAccumulate: (opts) => {
+    const n = nodes();
+    return n ? n.comp.createHdrAccumulateNodeMaterial(opts) : null;
+  },
+  hdrResample: (src, opts) => {
+    const n = nodes();
+    return n ? n.comp.createHdrResampleNodeMaterial(src, opts) : null;
+  },
+  // (hdr3) the float composite's frame: the HDR stack less what 2D layers alone pushed past white
+  hdrCombine: (opts) => {
+    const n = nodes();
+    return n ? n.comp.createHdrCombineNodeMaterial(opts) : null;
+  },
+  // (vfx) a twin with no original either: the footage's light wrapped onto a placed object's edge (the world draws only on WebGPU)
+  lightWrap: () => {
+    const n = nodes();
+    return n ? n.comp.createLightWrapNodeMaterial() : null;
   },
   /*
    * Two more pipeline passes that the effect-shaped matrix never listed:
@@ -376,9 +417,9 @@ export const materials = {
     return n ? n.bd.createBackdropMixNodeMaterial(opts) : null;
   },
   /** Glass (shape layers): the one refraction pass (glassEffect.js / glassNodes.js). */
-  glass: () => {
+  glass: (opts) => {
     const n = nodes();
-    return n ? n.glass.createGlassNodeMaterial() : null;
+    return n ? n.glass.createGlassNodeMaterial(opts) : null;
   },
   // The destination-reading blend pass (overlay, soft light, hue…). `opts.flipLayer`
   // selects the plate-read orientation — see createBlendCompositeNodeMaterial;
@@ -400,6 +441,11 @@ export const materials = {
   modelTonePass: () => {
     const n = nodes();
     return n ? n.m3d.createModelTonePassNodeMaterial() : null;
+  },
+  /** The tone pass of a model a world Scene let go of, with that world's contact shadows on its own depth. WebGPU only (null on WebGL). */
+  releasedModelTonePass: (depthTexture, camera) => {
+    const n = nodes();
+    return n ? n.m3d.createModelTonePassNodeMaterial({ occlusion: n.m3d.createModelOcclusion(depthTexture, camera) }) : null;
   },
   rigContactPasses: () => {
     const n = nodes();

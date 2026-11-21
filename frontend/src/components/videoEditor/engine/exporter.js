@@ -4,7 +4,14 @@
  * frame at a time and returns it as a PNG data URL; exportVideo renders the project frame by frame into a video file
  * (WebCodecs mp4 / webm, alpha, motion blur, audio mix). The Player's handle keeps the same keys and calls these.
  */
-import { settleWorldFrame } from '../world3dLayer';
+import { settleWorldFrame, worldMovesBetween, finalFrameBudgetMs, worldMotionBlur, clearWorldMotion, worldHolds, reserveWorldMotion, worldDraftBlur, clearWorldDraftBlur, worldHdrOut, worldHdrFrame, worldSdrPixels, worldTakesLetters, worldRigIn, worldClockIn, primeWorldFrame, setWorldFarm, worldFarmHandoff, worldFrameFacts, releaseLostWorld, worldGuardSampling, worldHold, worldSceneOn } from '../world3dLayer';
+import { averageHandoffs } from '../farmHandoff.js';
+import { armFrameFaults, createFrameGuardLog, disarmFrameFaults, frameFaultOn, frameGuardError, frameVerdict, FRAME_GUARD_RETRIES } from '../frameGuard';
+import { noteGpuReset } from '../gpuReset';
+import { createSceneLight, hdrFloatReason, sceneOnlyReason } from '../hdrScene';
+import { createHdrComposite } from '../hdrComposite';
+import { createHdrEncoder } from '../hdrEncode';
+import { text3dRunAt } from './channelRender';
 import { posterizedTimeInClip } from '../posterizeTime';
 import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 import { prepareLocalEffectsFor } from '../adjustmentEffects';
@@ -16,7 +23,7 @@ import { cssColorAlpha, isTransparentBackground } from '../backgroundLayer';
 import { setAlphaExportMode } from '../clipShader';
 import { releaseFrameResampler, resampleFrame } from '../frameResampler';
 import { describeGpuLoad, gpuResetCount } from '../gpuReset';
-import { getItemKeyframeValues, itemHasKeyframes } from '../gsapTransitions';
+import { evaluatePropertyTrack, getItemKeyframeValues, itemHasKeyframes } from '../gsapTransitions';
 import { disposeHtmlLiveExportPages, htmlBlankCanvas, htmlLiveExportCanvas, htmlLiveSettleUsed, htmlLiveSupported } from '../htmlLive';
 import { preloadImagePlate } from '../imagePlate';
 import { preloadVideoPlate, videoPlateUrl } from '../videoPlate';
@@ -26,18 +33,22 @@ import { ensureMotionTemplate, motionMediaPending, pumpMotionMedia } from '../mo
 import { notePerfRenderer } from '../perfRegistry.js';
 import { CAMERA_KF_LABELS, perspectiveDistance, resolveCameraPose } from '../projectCamera';
 import { resolveScaledOutputSize, resolveScaledRenderSize } from '../renderOutputSize';
+import { rigUsesWorld } from '../rig3d';
 import { getTimelineLayout } from '../speedUtils';
 import { waitForTransitionPackageInstances } from '../transitionPackageRuntime';
 import { isContainerClip, SEQUENCE_MAX_DEPTH } from '../types';
-import { exportVideo as runExport, isWebCodecsSupported } from '../videoExporter';
+import { exportVideo as runExport, exportAudioOnly, isWebCodecsSupported } from '../videoExporter';
+import { filmFrames, rangeFrames } from '../frameGrid';
 import { selectedBackend } from '../videoRenderer';
 import { ClipDecoder, ClipSource, SegmentedClipDecoder, SegmentedSource } from '../webcodecsClipDecoder';
 import { isWebmUrl, WebmFrameCache } from '../webmFrameCache';
 import { WebmClipDecoder, WebmSource } from '../webmClipDecoder';
+import { modelClipMovesBetween, rigKeysMove, rigKeysMoveBeyondLights, sceneMovesBetween, textAnimatorsMoveBetween } from '../worldMotion';
+import { poseMayMove } from '../modelPose';
 import { ensureSequenceState as ensureSequenceStateInEngine } from './channelStates';
 import { resolveActiveIndex } from './compositeHelpers';
 import { calculateVideoTime, clamp01 } from './layerHelpers';
-import { getTotalDuration as getTotalDurationInEngine, seekAllVideosForTime as seekAllVideosForTimeInEngine, seekParticleObjectVideos as seekParticleObjectVideosInEngine, seekVideoAndWait as seekVideoAndWaitInEngine } from './mediaClock';
+import { getTotalDuration as getTotalDurationInEngine, releasePreviewSeekGate, seekAllVideosForTime as seekAllVideosForTimeInEngine, seekParticleObjectVideos as seekParticleObjectVideosInEngine, seekVideoAndWait as seekVideoAndWaitInEngine } from './mediaClock';
 import { awaitImageTextures as awaitImageTexturesInEngine, getClipExportUrl, getClipPlaybackUrl, normalizeUrl } from './mediaTextures';
 import { resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
 import { ensureModel3dModule as ensureModel3dModuleInEngine, ensureParticleModule as ensureParticleModuleInEngine } from './modules3d';
@@ -77,6 +88,43 @@ function cameraMagnificationAt(engine, env, time) {
   return dist > 0 ? (zoom * D) / dist : zoom;
 }
 
+/**
+ * The 3D Scene settles after everything else in the frame has landed. A model's video screen decoded after a Final trace changed its
+ * texture, which started the trace over, so the still or frame came back as the Draft picture. A screen first asked for by the traced
+ * frame's own repaint (a world built late) is decoded and traced again.
+ */
+async function settleWorldLast(engine, opts) {
+  if (await settleWorldFrame(engine, opts)) engine.renderFrame();
+  for (let guard = 0; guard < 2 && motionMediaPending(); guard += 1) {
+    await pumpMotionMedia();
+    engine.renderFrame();
+    if (await settleWorldFrame(engine, opts)) engine.renderFrame();
+  }
+}
+
+/** (renderpro) The longest picture side this compositor can draw: its GPU's 2D texture limit (WebGPU device, WebGL context), 0 when
+ *  unknown. A bigger render made every target invalid and came back as a black file with no error. */
+export function maxPictureSide(renderer) {
+  return renderer?.backend?.device?.limits?.maxTextureDimension2D || renderer?.capabilities?.maxTextureSize || 0;
+}
+
+/** Throws a machine-readable `[GPU_TEXTURE_LIMIT]` error when a w x h picture is past that limit; nothing otherwise. */
+export function checkPictureSize(renderer, w, h) {
+  const max = maxPictureSide(renderer);
+  if (!max || (w <= max && h <= max)) return;
+  const engineName = renderer?.backend?.device ? 'WebGPU' : 'WebGL';
+  throw new Error(`[GPU_TEXTURE_LIMIT] The picture is ${w}x${h}, past the largest this GPU draws on the ${engineName} engine (${max} px a side). `
+    + `Render at ${max} px or less on the long side.`);
+}
+
+// (badframes) The last kept still's frame guard (captureFrameAtTime): what was drawn again and why, for the still's report
+// (VideoProjectRenderPage.renderStill: scene.frameGuard and scene.warnings). Null when nothing was.
+let stillGuard = null;
+export function stillGuardReport() {
+  const g = stillGuard;
+  return g && g.retried ? { summary: g.summary(), warnings: g.warnings() } : null;
+}
+
 export async function captureFrameAtTime(engine, env, time, opts = {}) {
   // A still is one render, so installed effect packages the project uses have
   // to be loaded before it (they are listed lazily).
@@ -85,6 +133,8 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
     for (const cs of engine.channelStates.values()) {
       for (const video of [cs.videos.a, cs.videos.b]) {
         if (video.src && video.readyState >= 2) {
+          // the still's own seek landed: no preview seek of this element holds its texture back (mediaClock.releasePreviewSeekGate)
+          releasePreviewSeekGate(engine, video);
           engine.videoFrameReady.add(video);
           const cached = engine.videoTextureCache.get(video);
           if (cached) { cached.texture.needsUpdate = true; cached.hadFrame = true; }
@@ -133,20 +183,12 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
     stillScale ? cameraMagnificationAt(engine, env, time) : 1,
   );
   let resampled = false;
-  try {
-    engine.currentTime = time;
-    // A still capture is an export too: authoring aids (the grid's guide
-    // line) must not appear in it.
-    engine.exporting = true;
-    if (stillBuffer && renderer) {
-      renderer.setSize(stillBuffer.w, stillBuffer.h, false);
-      notePerfRenderer({ w: stillBuffer.w, h: stillBuffer.h });
-    }
-    if (wantAlpha) {
-      engine.alphaExport = true;
-      setAlphaExportMode(true);
-      renderer?.setClearColor(0x000000, 0);
-    }
+  // (badframes) the frame guard (frameGuard.js): the picture read is checked before it leaves, drawn again when it is not whole, and
+  // the still fails with a sentence when it never is. A warm-up's capture (`prime`) is not kept, so it is not checked.
+  const guard = opts?.prime ? null : createFrameGuardLog();
+  if (guard) stillGuard = guard;
+  // Everything from the readiness waits to the read, once per attempt.
+  const drawAndRead = async () => {
     // Same readiness the export loop insists on before its first frame:
     // template images, and the plate of every image layer (a plate resolved
     // late would capture the fitted, blown-up picture instead).
@@ -164,7 +206,6 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
     await seekAllVideosForTimeInEngine(engine, env, time);
     markTexturesFresh();
     engine.renderFrame();
-    if (await settleWorldFrame(engine)) engine.renderFrame();
     // That render is what ASKS for the image textures (getImageTexture runs
     // inside it), so only now can the capture wait for them. A texture that
     // lands after the readback is a black layer in the still, never repainted.
@@ -203,6 +244,8 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
       if (!consumeBakeChange()) break;
       engine.renderFrame();
     }
+    // (a warm-up's capture, renderWarmup `prime`: a Final Scene is drawn, not traced)
+    await settleWorldLast(engine, opts?.prime ? { prime: true } : undefined);
     // ONE-SHOT CAPTURE MUST RENDER TWICE ON WEBGPU. The loop above only
     // re-renders when a bake actually landed, so a still with no pending
     // bake is read back after a single render — and WebGPU presents the
@@ -266,7 +309,64 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
       return out.toDataURL('image/png');
     }
     return engine.canvas?.toDataURL('image/png') || null;
-  } catch {
+  };
+  try {
+    // a picture past the GPU's largest texture comes back black with no error: say so instead (an agent reads the code)
+    checkPictureSize(renderer, stillBuffer?.w || engine.canvas?.width || 0, stillBuffer?.h || engine.canvas?.height || 0);
+    engine.currentTime = time;
+    // A still capture is an export too: authoring aids (the grid's guide
+    // line) must not appear in it.
+    engine.exporting = true;
+    if (stillBuffer && renderer) {
+      renderer.setSize(stillBuffer.w, stillBuffer.h, false);
+      notePerfRenderer({ w: stillBuffer.w, h: stillBuffer.h });
+    }
+    if (wantAlpha) {
+      engine.alphaExport = true;
+      setAlphaExportMode(true);
+      renderer?.setClearColor(0x000000, 0);
+    }
+    for (let attempt = 0; ; attempt += 1) {
+      const since = performance.now(), resets = gpuResetCount();
+      if (guard) armFrameFaults();
+      let dataUrl;
+      try {
+        dataUrl = await drawAndRead();
+      } catch (err) {
+        // (simgaps) a draw that threw because the Scene's GPU device was lost (the read of a dead device: "mapAsync ... Device is
+        // lost"; macOS takes a page's device when the screen needs the GPU and another job keeps it busy): the world is loaded again on
+        // a new device and the still drawn again, as a render's frame is (2 times at most); any other throw stops the still as before
+        disarmFrameFaults();
+        if (!guard || attempt >= FRAME_GUARD_RETRIES || !releaseLostWorld()) throw err;
+        const detail = `the 3D Scene's GPU device was lost while the still was drawn (${String(err?.message || err).slice(0, 160)})`;
+        guard.note('device', { time, detail });
+        console.warn(`[frame guard] the still at ${time} s is drawn again (device): ${detail}`);
+        continue;
+      }
+      if (guard && frameFaultOn('gpuReset')) noteGpuReset();
+      const unchecked = guard && frameFaultOn('guardOff');
+      disarmFrameFaults();
+      if (!guard || !dataUrl || unchecked) return dataUrl;
+      // what the read picture is, after the read (a target holds it; the canvas is read already): free on a good frame
+      const facts = (await worldFrameFacts(engine, { since })) || {};
+      // a rebuilt compositor is a new canvas this capture does not hold: no retry on it
+      const rebuilt = engine.renderer !== renderer;
+      if (rebuilt) facts.gpuReset = "the compositor's GPU device was lost and the compositor rebuilt";
+      else if (gpuResetCount() !== resets && !facts.gpuReset) facts.gpuReset = 'a GPU context of the page was lost';
+      const verdict = frameVerdict(facts, rebuilt ? FRAME_GUARD_RETRIES : attempt, { time });
+      if (verdict.ok) return dataUrl;
+      if (verdict.fail) throw frameGuardError(verdict);
+      guard.note(verdict.retry, { time, detail: verdict.detail });
+      console.warn(`[frame guard] the still at ${time} s is drawn again (${verdict.retry}): ${verdict.detail}`);
+      // a lost device of the Scene's own: the world is built again on a new one by the next attempt
+      if (verdict.retry === 'device') releaseLostWorld();
+    }
+  } catch (err) {
+    // The headless render-still (opts.rethrow) needs the real error: an "[html-live]" one is what sends the backend to
+    // bakes. Swallowed here, every still of a live html clip whose page could not be drawn (Chrome 157 before the
+    // `content=drawable` attribute) came back as "Frame capture produced no output", and nothing fell back.
+    console.warn('[still] capture failed:', err?.message || err);
+    if (opts?.rethrow) throw err;
     return null;
   } finally {
     // Restore the frame the user was looking at.
@@ -303,6 +403,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   // (playback keeps the layers' own audio).
   const previewCacheRender = encodeOpts?.previewCache === true;
   let htmlLiveFatal = null; // 'strict': stops the export (checkFatal) — the exporter swallows a frame's throw
+  let worldFatal = null; // a Final 3D Scene frame that never finished tracing (world3dLayer.finalFrameBudgetMs): stops the export too
   if (!isWebCodecsSupported()) {
     alert('WebCodecs is not supported in this browser. Please use Chrome or Edge.');
     return;
@@ -316,13 +417,26 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   // first deterministic export frame.
   await loadAdvancedTransitionPackages();
 
+  // (engine100) a timeline that plays is stopped and given 150 ms to come to rest; one that does not (every render page's export, an
+  // export started while paused) has nothing to stop and only yields a task (not a frame: a hidden window runs no animation frames):
+  // 150 ms off each export's start (finaltime / framestep)
+  const wasPlaying = !!engine.isPlaying;
   env.setIsPlaying(false);
   // An export renders through the same scene, so world view has to be off
   // before the first frame — otherwise the rigs stay identity and the chrome
   // is still in the scene.
   if (engine.worldActive) await env.setWorldViewActive(false);
+  // (farm1) a render whose Final Scene frames were traced on a render farm: its frames stand in for the traces (world3dLayer.js). Every
+  // export sets it, so a render page kept warm between renders never carries one render's farm into the next.
+  setWorldFarm(encodeOpts?.farm?.base ? encodeOpts.farm : null);
+  // (lookfix) and with motion blur, each farm frame is its frame's whole shutter (the pod traced it as worldMotionBlur would here)
+  const farmFrames = !!encodeOpts?.farm?.base;
+  // (farmparity) a render farm pod's frames (VideoProjectRenderPage.jsx farmFrames): { onFrame(n, handoff, info), keep: [n…] } with the
+  // frames in encodeOpts.frameRanges; each drawn as this export draws it and its Scene's picture handed back, nothing encoded
+  const farmPod = !farmFrames && encodeOpts?.farmPod && typeof encodeOpts.farmPod.onFrame === 'function' ? encodeOpts.farmPod : null;
   engine.exporting = true;
-  await new Promise((r) => setTimeout(r, 150)); // let playback fully stop
+  if (wasPlaying) await new Promise((r) => setTimeout(r, 150)); // let playback fully stop
+  else await new Promise((r) => setTimeout(r, 0));
   // Motion-template images must be decoded before the first encoded frame;
   // template videos must at least be demuxed (their duration drives layout).
   await env.awaitMotionImages();
@@ -373,11 +487,24 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   const outScale = resolveScaledOutputSize(engine.outputSize, W, H);
   const OW = outScale ? outScale.w : W;
   const OH = outScale ? outScale.h : H;
+  // The longest one frame of a Final 3D Scene may trace in this export (world3dLayer.finalFrameBudgetMs), from its samples and the larger of
+  // the composition and the output. 0 without a Final Scene, which leaves every frame's watchdog exactly as it was.
+  const finalFrameMs = env.channels.reduce((most, ch) => Math.max(most, ...(ch.items || []).map((it) => (rigUsesWorld(it.rig) && it.rig?.render?.mode === 'final'
+    ? finalFrameBudgetMs(it.rig.render.spp ?? 64, Math.max(W, OW), Math.max(H, OH)) : 0))), 0);
+  // Whether the frame at this export time (the loop's clock: a range render starts at 0) has a Final Scene as its active rig.
+  const finalAt = (t) => {
+    const at = isPartial ? (rangeStartFrames + Math.round(t * clampedFps)) / clampedFps
+      : pieceFrames ? pieceFrames[Math.min(pieceFrames.length - 1, Math.round(t * clampedFps))] / clampedFps : t;
+    const rig = engine.activeRigAt?.(at);
+    return rigUsesWorld(rig) && rig?.render?.mode === 'final';
+  };
   // A render cache file draws natively at its smaller size too, exactly as the
   // preview's own reduced buffer does — no full-size render to resample.
   const RW = (outScale?.upscale || (previewCacheRender && outScale)) ? OW : W;
   const RH = (outScale?.upscale || (previewCacheRender && outScale)) ? OH : H;
 
+  // a render past the GPU's largest texture comes back black with no error: stop now with the reason (machine-readable code)
+  try { checkPictureSize(renderer, RW, RH); } catch (e) { engine.exporting = false; throw e; }
   // Set renderer to full resolution for export
   renderer.setSize(RW, RH, false);
   notePerfRenderer({ w: RW, h: RH });
@@ -411,7 +538,8 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
 
   // For alpha export, use transparent background. setAlphaExportMode also stops
   // clip letterboxing from filling its bars with opaque black (see clipShader).
-  const useAlpha = format === 'webm-alpha';
+  // ProRes 4444 (mov-prores4444) keeps its alpha as the transparent WebM does
+  const useAlpha = format === 'webm-alpha' || format === 'mov-prores4444';
   if (useAlpha) {
     renderer.setClearColor(0x000000, 0);
     engine.alphaExport = true;
@@ -437,6 +565,9 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   let rangeStart = 0;
   let rangeStartFrames = 0;
   let exportDuration = totalDuration;
+  // (polish3) the frames encoded, counted on the frame grid (frameGrid.js): the whole film's, or the range's from its snapped start to its
+  // last frame before its end. ceil(exportDuration * fps) made 2.9-3.0 s at 30 fps four frames (its float 3.0000000000000027).
+  let exportFrames = filmFrames(totalDuration, clampedFps);
   if (timeRange && Number.isFinite(Number(timeRange.end))) {
     const reqStart = Math.max(0, Math.min(Number(timeRange.start) || 0, totalDuration));
     const reqEnd = Math.max(reqStart, Math.min(Number(timeRange.end), totalDuration));
@@ -453,13 +584,14 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       rangeStartFrames = Math.round(reqStart * clampedFps);
       rangeStart = rangeStartFrames / clampedFps;
       exportDuration = reqEnd - rangeStart;
+      exportFrames = rangeFrames(rangeStart, reqEnd, clampedFps).count;
     }
   }
   const isPartial = rangeStart > 0 || exportDuration < totalDuration - 1e-6;
   // Render only what changed (reuseRender.js, a server job with `reuse`): these
   // timeline frames [from, to), encoded back to back, each piece opening a GOP so
   // the backend can cut the file there; the sound is the whole film's.
-  const totalFilmFrames = Math.max(1, Math.ceil(totalDuration * clampedFps));
+  const totalFilmFrames = filmFrames(totalDuration, clampedFps);
   const pieces = !isPartial && Array.isArray(encodeOpts?.frameRanges)
     ? encodeOpts.frameRanges
       .map((r) => ({ from: Math.max(0, Math.floor(Number(r?.from))), to: Math.min(totalFilmFrames, Math.floor(Number(r?.to))) }))
@@ -489,7 +621,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   const exportAudioClips = [];
   const audioWindowStart = isPartial ? rangeStart : -Infinity;
   const audioWindowEnd = isPartial ? rangeStart + exportDuration : Infinity;
-  for (const cue of env.transitionSoundCues) {
+  for (const cue of encodeOpts?.noAudio === true ? [] : env.transitionSoundCues) {
     const clipped = clampTransitionSoundCue(cue, audioWindowStart, audioWindowEnd);
     if (!clipped) continue;
     exportAudioClips.push({
@@ -575,7 +707,11 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       }
     }
   };
-  if (!previewCacheRender) collectExportAudio(
+  // (chatfarm2) a part of a render shared by several machines: `noAudio` encodes the part's frames without sound (the page joins the
+  // parts and puts ONE sound under them: each part's own AAC would carry its own encoder priming at the seam); `audioOnly` is that one
+  // sound — the whole film's (or the range's) mix as an audio-only MP4, no frame drawn
+  const noAudio = encodeOpts?.noAudio === true;
+  if (!previewCacheRender && !noAudio) collectExportAudio(
     env.channels, env.clipsMap, (ch) => env.layoutMap.get(ch.id), 0, 0,
     isPartial ? rangeStart : -Infinity,
     isPartial ? rangeStart + exportDuration : Infinity,
@@ -591,6 +727,12 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         entry.placedEnd -= rangeStart;
       }
     }
+  }
+  if (encodeOpts?.audioOnly === true) {
+    window.__exportPhase = 'Mixing the sound';
+    const blob = await exportAudioOnly({ audioClips: exportAudioClips, duration: exportDuration, audioBitrate: encodeOpts?.audioBitrate, signal, onProgress, codec: encodeOpts?.audioCodec || null });
+    window.__exportPhase = null;
+    return { blob, frameCount: 0, audioOnly: true, duration: exportDuration };
   }
 
   // ── Fast decode: WebCodecs. Decoding a clip sequentially is ~1000x faster
@@ -1101,9 +1243,11 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     await Promise.all(seeks);
   };
 
-  const renderFrameAtTime = async (time) => {
+  // `footageTime`: the time the footage shows, the frame's own under the motion-blur accumulator (each sub-frame draws every layer at its
+  // own time, and the footage's picture of the frame: it already carries its camera's blur).
+  const renderFrameAtTime = async (time, footageTime = time) => {
     engine.currentTime = time;
-    await decodeAllVideosForTime(time);
+    await decodeAllVideosForTime(footageTime);
     // Mark seek-fallback video textures fresh (decode clips update via canvas) —
     // top-level env.channels and any sequence-inner env.channels alike.
     const allChannelStates = [
@@ -1120,8 +1264,6 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       }
     }
     engine.renderFrame();
-    // A world Scene lands late on its first frame, and a Final render traces every frame to its samples.
-    if (await settleWorldFrame(engine)) engine.renderFrame();
     // An image layer that first appears mid-timeline asks for its texture in the
     // pass above. Encoded before it lands, the frame has no picture for that layer
     // (or, before the draw-side guard, two opaque black letterbox bars). Wait and
@@ -1169,6 +1311,17 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       if (!consumeBakeChange()) break;
       engine.renderFrame();
     }
+    // A world Scene lands late on its first frame, and a Final render traces every frame to its samples. The frame rate lets a frame that
+    // follows the one before it carry that frame's soft light (world3dLayer.settleWorldFrame, softReuse).
+    try {
+      // (badframes) a frame the guard sent back reads the Scene's canvas as a still does (first since a rendering update)
+      const redraw = engine.guardRedraw === true;
+      engine.guardRedraw = false;
+      await settleWorldLast(engine, { fps: clampedFps, handoff: redraw });
+    } catch (e) {
+      if (e?.finalStall) worldFatal = worldFatal || e.message;
+      throw e;
+    }
     /*
      * THE GPU PARTICLE PLATES, LAST — after every repaint above, because
      * each of those steps the runtimes again and submits more work.
@@ -1209,7 +1362,14 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   // disabled switch leaves renderFrameAtTime untouched — byte-for-byte today's
   // export.
   let renderExportFrame = renderFrameAtTime;
+  // (farmparity) a render farm pod (encodeOpts.farmPod): each of its frames rendered as this export renders it, and the Scene's picture of
+  // the frame (the world's handoff canvas) handed back in place of the composite. Motion blur sets its own below.
+  let podFrame = farmPod ? async (time) => { await renderFrameAtTime(time); return worldFarmHandoff(engine); } : null;
   let motionBlurInfo = null; // for the GPU-reset message: which frames multiply
+  // (hdrscene) this frame is an average of 2D sub-frames (no single world frame is its picture)
+  let accumulatedNow = false;
+  // (hdr2) an HDR render that keeps its Scene's light averages those sub-frames in float too (hdrComposite.js): set below when it does
+  let hdrAccumulation = null;
   if (engine.motionBlurEnabled && !previewCacheRender) {
     try {
       if (!engine.motionBlurModule) engine.motionBlurModule = await import('../motionBlur');
@@ -1219,6 +1379,12 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       // the accumulation agree.
       const level = motionBlurLevelForShutter(engine.motionBlurShutter);
       const shutterWindow = (level.shutter / 360) / clampedFps;
+      // A Scene's keys are sampled as its world samples them, loaded only for a project with a Scene: a 2D project loads nothing of the world.
+      const worldKeys = env.channels.some((ch) => ch.items?.some((it) => rigUsesWorld(it.rig)))
+        ? await import('../../../world3d/keys.js') : null;
+      const sampleTrack = worldKeys?.sampleTrack || null;
+      // (animtools) drives on the Scene's clocks, ƒx on its keys and follow paths, sampled as the world samples them
+      const fieldsMove = worldKeys?.fieldsMoveBetween || null;
       // Two poses differ by more than rounding. Thresholds: px, radians, scale factor.
       const prsMoves = (a, b) => Math.abs(a.px - b.px) > 5e-3 || Math.abs(a.py - b.py) > 5e-3
         || Math.abs(a.pz - b.pz) > 5e-3
@@ -1237,8 +1403,8 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         return prsMoves(localPrs(it, ka, W, H), localPrs(it, kb, W, H));
       };
       // Transform motion detector for one output frame: keyframed transforms
-      // (incl. adjustment-layer zoom/pan) and speed-ramped video on the active
-      // top-level items, and the same inside every active sequence clip.
+      // (incl. adjustment-layer zoom/pan) on the active top-level items, and the
+      // same inside every active sequence clip.
       const layoutFor = (ch) => env.layoutMap.get(ch.id);
       // A sequence's own timeline over one output frame's shutter: its camera clip, and
       // each live inner layer's keyed transform, speed ramp, particles, live page or
@@ -1276,11 +1442,14 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           const en = layout[ai];
           const c = innerClips.get(it?.clipId);
           if (!c) continue;
-          if (c.mediaType === 'video' && Array.isArray(it.speedPoints)
-            && it.speedPoints.some((p) => Math.abs((p?.y ?? 1) - 1) > 1e-3)) return true;
           if (c.mediaType === PARTICLE_MEDIA_TYPE && it?.particleSystem) return true;
           if (c.htmlSource && htmlLiveMode !== 'off' && htmlLiveSupported()) return true;
           if (c.mediaType === 'sequence' && sequenceHasMotion(c, it, en.startTime, a, b, depth + 1)) return true;
+          if (c.mediaType === 'text' && textAnimatorsMoveBetween(it, en.startTime, a, b, evaluatePropertyTrack)) return true;
+          if (c.mediaType === 'model3d' && it.model3dConfig?.animation?.clip && modelClipMovesBetween(it.model3dConfig.animation,
+            engine.model3d?.modelAnimationClips?.(c, it) ?? null, a - en.startTime, b - en.startTime)) return true;
+          // (pose) a model posed by model3dConfig.pose: its clips, keys and targets (modelPose.js poseMayMove)
+          if (c.mediaType === 'model3d' && it.model3dConfig?.pose && poseMayMove(it.model3dConfig.pose, a - en.startTime, b - en.startTime)) return true;
           if (itemHasKeyframes(it) && keyedPoseMoves(it, en, a, b)) return true;
         }
         return false;
@@ -1300,6 +1469,17 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         } else if (Boolean(camA) !== Boolean(camB)) {
           return true; // entering or leaving a camera clip
         }
+        // The Rig's own keyframes, and what moves inside a Scene's world, move nothing a layer's transform shows (worldMotion.js): its
+        // objects' and its camera's keys, its bodies, a .blend's baked playback, particles, smoke and cloth.
+        if (rigKeysMove(engine.activeRigAt?.(t0), engine.activeRigAt?.(t1))) return true;
+        const rigNow = engine.activeRigAt?.(time);
+        const inWorld = rigUsesWorld(rigNow);
+        // (mblur2) a rigged object's pose too (its clips, keys and targets)
+        // (its keys on the Scene's own clock, from its clip's start: rig3d.js sceneTimeAt; worldMovesBetween turns timeline times itself)
+        // (mblur5) the frame's own Scene's clock across its whole shutter, past a cut too (world3dLayer.js worldClockIn)
+        const clock = worldClockIn(engine, time);
+        if (inWorld && sceneMovesBetween(rigNow.scene, clock(t0), clock(t1),
+          { runtime: () => worldMovesBetween(t0, t1, time), sampleTrack, poseMoves: poseMayMove, fieldsMove })) return true;
         for (const channel of env.channels) {
           if (channel.visible === false) continue;
           const layout = env.layoutMap.get(channel.id);
@@ -1310,8 +1490,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           const entry = layout[ai];
           const clip = env.clipsMap.get(item?.clipId);
           if (!clip) continue;
-          if (clip.mediaType === 'video' && Array.isArray(item.speedPoints)
-            && item.speedPoints.some((p) => Math.abs((p?.y ?? 1) - 1) > 1e-3)) return true;
+          // (a video's speed ramp is not motion here: the footage shows the frame's own picture in every sub-frame, renderFrameAtTime)
           if (clip.mediaType === 'sequence' && sequenceHasMotion(clip, item, entry.startTime, t0, t1, 1)) return true;
           // A particle system's CONTENT moves even when its layer does not: the
           // solver is running whatever the transform does. Without this a solver
@@ -1319,6 +1498,15 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           // while everything around it blurs. Each sub-frame then samples the
           // bake at its own time — it never advances the simulation.
           if (clip.mediaType === PARTICLE_MEDIA_TYPE && item?.particleSystem) return true;
+          // Letters a Text Animator moves inside a still layer, 2D or 3D, while one of them really moves (worldMotion.js).
+          if (clip.mediaType === 'text' && textAnimatorsMoveBetween(item, entry.startTime, t0, t1, evaluatePropertyTrack)) return true;
+          // A model layer's own GLB clips, while they play and the pose changes; a model that falls in a Scene's world, until it rests.
+          if (clip.mediaType === 'model3d') {
+            if (item.model3dConfig?.animation?.clip && modelClipMovesBetween(item.model3dConfig.animation,
+              engine.model3d?.modelAnimationClips?.(clip, item) ?? null, t0 - entry.startTime, t1 - entry.startTime)) return true;
+            if (item.model3dConfig?.pose && poseMayMove(item.model3dConfig.pose, t0 - entry.startTime, t1 - entry.startTime)) return true;
+            if (inWorld && !channel.cameraLocked && item.model3dConfig?.physics === 'falls' && worldMovesBetween(t0, t1, time) !== false) return true;
+          }
           // Same for an html clip drawn live: its page animates inside a still
           // layer. Each sub-frame steps the page to its own time (htmlLivePageFps).
           // A bake is one picture per frame, so it has nothing to blur.
@@ -1347,6 +1535,80 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         }
         return false;
       };
+      // (mblur) Whether anything besides a Final Scene's own world moves across this frame's shutter: a layer the world does not draw (its
+      // keys, parent, follow, text animators, particles, live page, a sequence's inside), the Rig's own keys (lights, environment,
+      // backdrop), a model the world draws moving by its layer (keys, its clip, a fall), or the Camera layer while it films any layer but
+      // the world. When nothing does, the world's trace takes the frame's motion itself (worldMotionBlur): one trace, not one a sub-frame.
+      // (mblur3) The Rig's keys on its lights (colour, strength, place) and a model the world draws (its keys, clip, pose, a fall) are the
+      // world's now: it relights and poses them at each of the shutter's times (world3dLayer.js worldMotionBlur / worldDraftBlur).
+      // (mblur5) So are a 3D Text layer's letters the world takes (its Text Animators, its keys, its parent, its track): laid out at each of
+      // those times (channelRender.js text3dRunAt) and traced moving as any object. Before, they sent the frame to the sub-frames (cloverx:
+      // 158 s a Final frame where the titles' letters move, against 9.7 s).
+      const textAt = env.setupMesh ? (channel, t) => text3dRunAt(engine, env, channel, t) : null;
+      const outsideWorldMoves = (time) => {
+        const t0 = time - shutterWindow / 2;
+        const t1 = time + shutterWindow / 2;
+        // (mblur5) the frame's own Scene layer's Rig across its whole shutter: past a cut into another Scene, the frame keeps its own
+        const rigAt = worldRigIn(engine, time);
+        if (rigKeysMoveBeyondLights(rigAt(t0), rigAt(t1))) return true;
+        const camFrame = { width: W, height: H };
+        const camA = resolveCameraPose(env.channels, env.clipsMap, layoutFor, t0, camFrame);
+        const camB = resolveCameraPose(env.channels, env.clipsMap, layoutFor, t1, camFrame);
+        let cameraMoves = Boolean(camA) !== Boolean(camB);
+        if (camA && camB) {
+          for (const key of CAMERA_KF_LABELS) {
+            if (Math.abs(camA[key] - camB[key]) > (key === 'camZoom' ? 5e-4 : 5e-3)) cameraMoves = true;
+          }
+        }
+        for (const channel of env.channels) {
+          if (channel.visible === false) continue;
+          const layout = env.layoutMap.get(channel.id);
+          if (!layout) continue;
+          const ai = resolveActiveIndex(layout, time);
+          if (ai < 0) continue;
+          const item = channel.items[ai];
+          const entry = layout[ai];
+          const clip = env.clipsMap.get(item?.clipId);
+          if (!clip || clip.mediaType === 'audio' || clip.mediaType === 'camera' || channel.kind === 'camera') continue;
+          // (mblur5) 3D Text letters the world takes move in it: laid out at each of the shutter's times (textAt)
+          const worldLetters = !!textAt && clip.mediaType === 'text' && worldTakesLetters(engine, channel, item, clip);
+          if (worldLetters) continue;
+          const inWorld = rigUsesWorld(item.rig) || (clip.mediaType === 'model3d' && worldHolds(item.id));
+          if (cameraMoves && !inWorld && !channel.cameraLocked) return true;
+          if (clip.mediaType === 'sequence' && sequenceHasMotion(clip, item, entry.startTime, t0, t1, 1)) return true;
+          if (clip.mediaType === PARTICLE_MEDIA_TYPE && item?.particleSystem) return true;
+          if (clip.mediaType === 'text' && textAnimatorsMoveBetween(item, entry.startTime, t0, t1, evaluatePropertyTrack)) return true;
+          // a model the world draws moves in the world (its keys, its clip, its pose, a fall: posed at each time of the shutter); one it does
+          // not draw (its own pass) moves outside it
+          const worldModel = clip.mediaType === 'model3d' && worldHolds(item.id);
+          if (clip.mediaType === 'model3d' && !worldModel) {
+            if (item.model3dConfig?.animation?.clip && modelClipMovesBetween(item.model3dConfig.animation,
+              engine.model3d?.modelAnimationClips?.(clip, item) ?? null, t0 - entry.startTime, t1 - entry.startTime)) return true;
+            if (item.model3dConfig?.pose && poseMayMove(item.model3dConfig.pose, t0 - entry.startTime, t1 - entry.startTime)) return true;
+            if (item.model3dConfig?.physics === 'falls') return true;
+          }
+          if (clip.htmlSource && htmlLiveMode !== 'off' && htmlLiveSupported()) return true;
+          if (getParenting(item)) {
+            const pa = resolveParentingInEngine(engine, env.parentIndex, item, t0)?.prs;
+            const pb = resolveParentingInEngine(engine, env.parentIndex, item, t1)?.prs;
+            if (pa && pb && prsMoves(pa, pb)) return true;
+          }
+          if (item?.motionFollow) {
+            const fa = resolveFollowInEngine(engine, env.parentIndex, item, t0);
+            const fb = resolveFollowInEngine(engine, env.parentIndex, item, t1);
+            if (fa && fb && (Math.abs(fa.dxPx - fb.dxPx) > 5e-3 || Math.abs(fa.dyPx - fb.dyPx) > 5e-3
+              || Math.abs(fa.rotateDeg - fb.rotateDeg) > 5e-3 || Math.abs(fa.scaleMul - fb.scaleMul) > 5e-4)) return true;
+          }
+          if (!worldModel && itemHasKeyframes(item) && keyedPoseMoves(item, entry, t0, t1)) return true;
+        }
+        return false;
+      };
+      // (filmbugs) and only where a Scene layer is on the timeline (worldSceneOn): past its clip nothing of the world is in the frame
+      const finalWorldAt = (time) => {
+        const rig = engine.activeRigAt?.(time);
+        return rigUsesWorld(rig) && rig?.render?.mode === 'final' && worldSceneOn(engine, time);
+      };
+      const cameraPoseAt = (t) => resolveCameraPose(env.channels, env.clipsMap, layoutFor, t, { width: W, height: H });
       if (pipeline) {
         // Html pages step through the sub-frames: K page frames per output frame, so
         // one page step lies between each two samples (the accumulator's clamps; K is
@@ -1355,16 +1617,122 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         const blurSamples = Math.max(2, Math.min(32, Math.round(level.samples)));
         const blurShutter = Math.max(45, Math.min(360, level.shutter));
         htmlLivePageFps = clampedFps * Math.ceil((360 * blurSamples) / blurShutter - 1e-9);
+        const maxTime = Math.max(0, totalDuration - 1e-3);
+        // (mblur) a Final Scene's world makes room for the shutter's poses before its first trace, so its kernels are built once
+        // (mblur2) and any Scene's sims are drawn at the time drawn (Draft's sub-frames between two sim frames see them move)
+        if (env.channels.some((ch) => ch.items?.some((it) => rigUsesWorld(it.rig)))) {
+          await reserveWorldMotion(true, { trace: !farmFrames && env.channels.some((ch) => ch.items?.some((it) => rigUsesWorld(it.rig) && it.rig?.render?.mode === 'final')) });
+        }
+        // (filmbugs) the frame at `time` with its world traced once with the shutter and held while the 2D sub-frames are drawn over it.
+        // False (nothing drawn for the frame yet) when the world refuses its one pass or does not hold this frame (3D Text letters in it)
+        const renderHeldWorldFrame = async (time) => {
+          const window = (level.shutter / 360) / clampedFps;
+          await primeWorldFrame(engine, time, window);
+          if (!worldMotionBlur(engine, { time, window, maxTime, cameraPoseAt, env, textAt })) return false;
+          try { await renderFrameAtTime(time); } finally { clearWorldMotion(); }
+          if (!worldHold(true, engine)) return false;
+          motionBlurInfo.held += 1;
+          engine.shutterFrameTime = time;
+          try {
+            await pipeline.renderAccumulated((t) => renderFrameAtTime(t, time), time, { fps: clampedFps, shutter: level.shutter, samples: level.samples, maxTime });
+          } finally {
+            engine.shutterFrameTime = null;
+            worldHold(false);
+          }
+          return true;
+        };
         renderExportFrame = async (time) => {
           if (!frameHasMotion(time)) { await renderFrameAtTime(time); return; }
-          await pipeline.renderAccumulated(renderFrameAtTime, time, {
-            fps: clampedFps,
-            shutter: level.shutter,
-            samples: level.samples,
-            maxTime: Math.max(0, totalDuration - 1e-3),
-          });
+          // (mblur5) the first frame of another Scene layer (a cut): the world laid out and built for it before its shutter's poses are taken
+          const worldOnly = !outsideWorldMoves(time);
+          if (worldOnly) await primeWorldFrame(engine, time, (level.shutter / 360) / clampedFps);
+          // (lookfix) a Final Scene frame a render farm traced: its picture is the shutter's already (the pod's `farmPod` frame below), drawn once
+          if (farmFrames && finalWorldAt(time) && worldOnly) {
+            await renderFrameAtTime(time);
+            motionBlurInfo.traced += 1;
+            return;
+          }
+          // (mblur) a Final Scene whose world is all that moves: its one trace gives each sample its own time in the shutter
+          if (finalWorldAt(time) && worldOnly
+            && worldMotionBlur(engine, { time, window: (level.shutter / 360) / clampedFps, maxTime, cameraPoseAt, env, textAt })) {
+            try { await renderFrameAtTime(time); } finally { clearWorldMotion(); }
+            motionBlurInfo.traced += 1;
+            return;
+          }
+          // (mblur2) a Draft Scene whose world is all that moves: the world averages its own light over the shutter's times, filmed once
+          // (as Final's trace does), and the frame is rendered once over it. A 2D project, or a Scene the world cannot average, as before
+          if (!finalWorldAt(time) && worldOnly
+            && worldDraftBlur(engine, { time, window: (level.shutter / 360) / clampedFps, samples: level.samples, maxTime, cameraPoseAt, env, textAt })) {
+            try { await renderFrameAtTime(time); } finally { clearWorldDraftBlur(); }
+            motionBlurInfo.averaged += 1;
+            return;
+          }
+          // (filmbugs) a Final Scene under 2D layers that move: the world traced ONCE with its own shutter at the frame's time and held
+          // (worldHold) while the 2D layers are drawn at the sub-frames' times over it. It was traced again at every sub-frame: 16 traces
+          // a frame under a fading end card or moving titles. A render farm's pod hands the same one-pass picture (podFrame below)
+          if (!farmFrames && !hdrAccumulation && finalWorldAt(time)) {
+            if (await renderHeldWorldFrame(time)) return;
+          }
+          motionBlurInfo.accumulated += 1;
+          accumulatedNow = true;
+          // every sub-frame at its own time, the footage at the frame's (renderFrameAtTime); (smallfix) and a Scene's objects shown or
+          // hidden as at the frame's time (their `visible` keys: a switch is never blurred, world3dLayer.js poseWorld)
+          engine.shutterFrameTime = time;
+          // (hdr2) and in float, each sub-frame's own float composite added in at its weight: the frame keeps its light
+          const hdrSub = hdrAccumulation;
+          hdrSub?.beginAccumulation(blurSamples);
+          try {
+            await pipeline.renderAccumulated(hdrSub
+              ? async (t) => { await renderFrameAtTime(t, time); await hdrSub.subFrame(!!sceneLight?.checkDue()); }
+              : (t) => renderFrameAtTime(t, time), time, {
+              fps: clampedFps,
+              shutter: level.shutter,
+              samples: level.samples,
+              maxTime,
+            });
+          } finally {
+            engine.shutterFrameTime = null;
+          }
         };
-        motionBlurInfo = { label: level.label, samples: level.samples, hasMotion: frameHasMotion };
+        // (farmparity) a render farm pod's frame with motion blur: the Scene's picture of the frame exactly as the home render above makes it.
+        // The same choice as above: where only the world moves, the world's shutter in its one trace (worldMotionBlur) when it takes it;
+        // otherwise (the world refuses one pass, or something outside it moves, which sends the home render to its sub-frames) the world at
+        // the accumulator's own times (motionBlur.js renderAccumulated), each with the frame's `visible` keys, averaged as pictures
+        // (farmHandoff.js): the very traces a home render averages. Home lays its own 2D sub-frames over that one farm picture.
+        if (farmPod) {
+          const podWindow = (blurShutter / 360) / clampedFps;
+          podFrame = async (time) => {
+            if (!frameHasMotion(time)) { await renderFrameAtTime(time); return worldFarmHandoff(engine); }
+            const worldOnly = !outsideWorldMoves(time);
+            // (filmbugs) where 2D layers move over the Scene, home holds the world's one-pass picture under them (renderHeldWorldFrame): the
+            // pod hands that same picture, unless the frame's world took 3D Text letters (home renders those as sub-frames)
+            await primeWorldFrame(engine, time, (level.shutter / 360) / clampedFps);
+            if (finalWorldAt(time) && worldMotionBlur(engine, { time, window: (level.shutter / 360) / clampedFps, maxTime, cameraPoseAt, env, textAt })) {
+              let h = null;
+              try {
+                await renderFrameAtTime(time);
+                if (worldOnly || !engine.worldTakesText) h = await worldFarmHandoff(engine);
+              } finally { clearWorldMotion(); }
+              if (h) {
+                motionBlurInfo.traced += 1;
+                return { ...h, meta: { ...h.meta, motion: worldOnly ? 'traced' : 'held' } };
+              }
+            }
+            motionBlurInfo.accumulated += 1;
+            engine.shutterFrameTime = time;
+            const subs = [];
+            try {
+              for (let k = 0; k < blurSamples; k += 1) {
+                await renderFrameAtTime(Math.max(0, Math.min(maxTime, time - podWindow / 2 + (podWindow * (k + 0.5)) / blurSamples)), time);
+                subs.push(await worldFarmHandoff(engine));
+              }
+            } finally {
+              engine.shutterFrameTime = null;
+            }
+            return averageHandoffs(subs);
+          };
+        }
+        motionBlurInfo = { label: level.label, samples: level.samples, hasMotion: frameHasMotion, traced: 0, accumulated: 0, averaged: 0, held: 0 };
         console.warn('[export] motion blur accumulation enabled ('
           + level.label + ' — shutter ' + level.shutter + '°, ' + level.samples + ' samples; html pages step at '
           + htmlLivePageFps + ' fps)');
@@ -1377,6 +1745,69 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   if (sizeBufferForFrame) {
     const renderSized = renderExportFrame;
     renderExportFrame = async (time) => { sizeBufferForFrame(time); await renderSized(time); };
+  }
+
+  // (hdrscene) An HDR render keeps its Scene's own light when the render is the Scene alone (../hdrScene.js): the world films each frame
+  // through its HDR view too and the frame goes out as half floats. Anything else drawn with the Scene, and the render is today's.
+  const hdrMode = (encodeOpts?.hdr === 'pq' || encodeOpts?.hdr === 'hlg') && typeof frameSinks?.onFrameImage === 'function' && !previewCacheRender ? encodeOpts.hdr : null;
+  // (hdr2) Titles, cards, fades and the common transitions with the Scene: every frame composited again in float (../hdrComposite.js), the
+  // Scene's plate carrying its own light and every 2D layer at SDR white. Also a Scene alone at another size than the project's (the float
+  // picture resampled), and a frame averaged over 2D sub-frames in either (the float frames averaged). WebGPU only, as the Scene.
+  // (hdr3) An HDR MP4's frames of light leave as the file's own 4:2:0 planes, luma-adjusted on the GPU (../hdrEncode.js), made on the first
+  // frame that needs them; ProRes 4444 (4:4:4, alpha) keeps the planar half floats.
+  let hdrEncoderMade = null;
+  const encoderNow = () => {
+    if (!hdrEncoderMade) hdrEncoderMade = createHdrEncoder(engine, { width: OW, height: OH, transfer: hdrMode });
+    if (!hdrEncoderMade) throw new Error('the HDR frames could not be encoded on this GPU');
+    return hdrEncoderMade;
+  };
+  const hdrEncoder = hdrMode && encodeOpts?.hdrYuv === true && !useAlpha && renderer.isWebGPURenderer ? {
+    encodeData: (data, o) => encoderNow().encodeData(data, o),
+    encodeTexture: (target, o) => encoderNow().encodeTexture(target, o),
+    stats: () => hdrEncoderMade?.stats() || null,
+    dispose: () => hdrEncoderMade?.dispose(),
+  } : null;
+  const hdrComposite = hdrMode && renderer.isWebGPURenderer ? createHdrComposite(engine, { width: OW, height: OH, alpha: useAlpha, encoder: hdrEncoder }) : null;
+  // the frame being drawn's time: what it draws is the key its check goes by (a new set of layers, a transition's stretch, every 2 s)
+  let litFrameTime = 0;
+  const layerSignature = () => {
+    const parts = [];
+    for (const ch of env.channels) {
+      if (ch.visible === false) continue;
+      const layout = env.layoutMap.get(ch.id);
+      if (!layout) continue;
+      const ai = resolveActiveIndex(layout, litFrameTime);
+      if (ai < 0) continue;
+      const it = ch.items[ai], e = layout[ai];
+      const into = litFrameTime - e.startTime, left = e.endTime - litFrameTime;
+      const phase = e.overlapIn > 0 && into <= e.overlapIn ? 'x'
+        : it.transitionInType && it.transitionInType !== 'None' && into < (Number(it.transitionInDuration) || 0) ? 'i'
+          : it.transitionOutType && it.transitionOutType !== 'None' && left < (Number(it.transitionOutDuration) || 0) ? 'o' : '';
+      parts.push(`${it.id}${phase}`);
+    }
+    return `${parts.join(',')}|${engine.worldFrameReady ? 'w' : ''}|${Math.floor((litFrameTime * clampedFps) / 60)}`;
+  };
+  const sceneLight = hdrMode ? createSceneLight({
+    world: { hdrFrame: () => worldHdrFrame(engine), sdrPixels: () => worldSdrPixels(), off: () => worldHdrOut(false) },
+    width: OW, height: OH, alpha: useAlpha, accumulated: () => accumulatedNow, worldDrew: () => engine.worldFrameReady === true,
+    composite: hdrComposite, signature: layerSignature, encoder: hdrEncoder,
+  }) : null;
+  if (sceneLight) {
+    const range = { channels: env.channels, clipsMap: env.clipsMap, layoutMap: env.layoutMap,
+      start: isPartial ? rangeStart : 0, end: isPartial ? rangeStart + exportDuration : totalDuration, isWorldRig: rigUsesWorld };
+    const alone = sceneOnlyReason({ ...range, background: engine.background, size: { w: W, h: H }, outSize: { w: OW, h: OH } });
+    const floatWhy = alone ? (hdrComposite ? hdrFloatReason(range) : alone) : null;
+    const mode = !alone ? 'scene' : !floatWhy ? 'composite' : null;
+    const reason = mode ? null : floatWhy;
+    if (mode) worldHdrOut(true, { alpha: useAlpha });
+    sceneLight.start(reason, mode);
+    if (mode && hdrComposite) hdrAccumulation = hdrComposite;
+    const frames = hdrEncoder ? '4:2:0 planes made on the GPU (luma-adjusted)' : 'half-float frames';
+    console.warn('[export-phase] HDR ' + hdrMode + ': ' + (reason ? 'today\'s 8-bit frames (' + reason + ')'
+      : mode === 'composite' ? "the Scene's own light through the float composite (" + alone + '), ' + frames
+        : "the Scene's own light, " + frames));
+    const renderLit = renderExportFrame;
+    renderExportFrame = async (time) => { accumulatedNow = false; litFrameTime = time; await renderLit(time); };
   }
 
   engine.exportActive = true; // renderFrame skips <video> seeks; uses decode canvases
@@ -1405,17 +1836,84 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     const firstFrameTimeoutMs = Math.min(180000, Math.max(60000, primeVideoCount * 20000));
     console.warn(`[export-phase] frame0 budget=${firstFrameTimeoutMs}ms (${primeVideoCount} video clip(s) at ${primeTime.toFixed(2)}s)`);
 
+    // (badframes) the frame guard (frameGuard.js): every frame's picture is checked after it is read and before it is encoded or sent,
+    // drawn again when it is not whole, and the render stops with a sentence when it never is. The checks read what the render keeps
+    // anyway; a Scene's picture costs a 32 x 32 sample of it, drawn and sent for reading as the plate fills (worldGuardSampling), so
+    // the check finds it read and does not wait on the GPU (world3dLayer.worldFrameFacts).
+    const frameGuardLog = createFrameGuardLog();
+    worldGuardSampling(true);
+    const timelineFrame = (t) => (isPartial ? rangeStartFrames + Math.round(t * clampedFps)
+      : pieceFrames ? pieceFrames[Math.min(pieceFrames.length - 1, Math.round(t * clampedFps))] : Math.round(t * clampedFps));
+    const checkFrame = async (i, t, attempt, { error = null, since = 0, resets = 0 } = {}) => {
+      const frame = timelineFrame(t);
+      const time = frame / clampedFps;
+      if (frameFaultOn('gpuReset')) noteGpuReset();
+      const unchecked = frameFaultOn('guardOff');
+      disarmFrameFaults();
+      if (unchecked) return { ok: true };
+      const facts = (await worldFrameFacts(engine, { since, time })) || {};
+      if (error && !error.finalStall) facts.error = String(error?.message || error);
+      // a rebuilt compositor draws on a new canvas this render does not hold: no retry on it
+      const rebuilt = engine.renderer !== renderer;
+      if (rebuilt) facts.gpuReset = "the compositor's GPU device was lost and the compositor rebuilt";
+      else if (gpuResetCount() !== resets && !facts.gpuReset) facts.gpuReset = 'a GPU context of the page was lost';
+      const verdict = frameVerdict(facts, rebuilt ? FRAME_GUARD_RETRIES : attempt, { frame, time });
+      if (verdict.ok) return verdict;
+      if (verdict.fail) throw frameGuardError(verdict);
+      frameGuardLog.note(verdict.retry, { frame, time, detail: verdict.detail });
+      console.warn(`[frame guard] frame ${frame} (${time.toFixed(3)} s) is drawn again (${verdict.retry}): ${verdict.detail}`);
+      if (verdict.retry === 'device') releaseLostWorld();
+      // the redraw reads the Scene's canvas as a still does: first since a rendering update (worldHandoff.js)
+      engine.guardRedraw = true;
+      return verdict;
+    };
+
+    // (farmparity) a render farm pod: its frames in turn, each checked by the frame guard as an encoded one is (drawn again when it is not
+    // whole, the render stopped with a sentence when it never is), and each kept one's Scene picture handed to the pod's sink
+    if (farmPod) {
+      if (!pieceFrames?.length) throw new Error('[FARM_POD] no frames were given to this pod');
+      const keep = new Set(Array.isArray(farmPod.keep) ? farmPod.keep.map(Number) : pieceFrames);
+      let sent = 0;
+      for (let i = 0; i < pieceFrames.length; i += 1) {
+        const n = pieceFrames[i];
+        for (let attempt = 0; ; attempt += 1) {
+          if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+          armFrameFaults();
+          const since = performance.now();
+          const resets = gpuResetCount();
+          let error = null, handoff = null;
+          try { handoff = await podFrame(n / clampedFps); } catch (e) { error = e; }
+          if (worldFatal || error?.finalStall) throw error || new Error(worldFatal);
+          if (htmlLiveFatal) throw new Error(htmlLiveFatal);
+          const verdict = await checkFrame(i, i / clampedFps, attempt, { error, since, resets });
+          if (verdict?.retry) continue;
+          if (error) throw error;
+          if (keep.has(n)) { await farmPod.onFrame(n, handoff, { ms: Math.round(performance.now() - since), attempt }); sent += 1; }
+          break;
+        }
+      }
+      if (motionBlurInfo && (motionBlurInfo.traced || motionBlurInfo.accumulated)) {
+        console.warn(`[export] farm pod motion blur: ${motionBlurInfo.traced} frame(s) traced once with their motion, ${motionBlurInfo.accumulated} from ${motionBlurInfo.samples} sub-frames`);
+      }
+      return { farmPod: true, frames: sent, frameGuard: frameGuardLog.summary() };
+    }
+
     const out = await runExport({
+      checkFrame,
       // The exporter's clock runs 0..exportDuration; shift into absolute
       // timeline time so a partial render shows the same frames as playback.
       // The shift is counted in FRAMES (rangeStart is frame-snapped above), so
       // frame i of a range render evaluates the identical double the full render
       // evaluates for the same instant — see the note where rangeStart is set.
-      renderFrameAtTime: isPartial
-        ? (t) => renderExportFrame((rangeStartFrames + Math.round(t * clampedFps)) / clampedFps)
-        : pieceFrames
-          ? (t) => renderExportFrame(pieceFrames[Math.min(pieceFrames.length - 1, Math.round(t * clampedFps))] / clampedFps)
-          : renderExportFrame,
+      // (badframes) each attempt at a frame arms the guard tests' faults (frameGuard.armFrameFaults: one property read when none)
+      renderFrameAtTime: (t) => {
+        armFrameFaults();
+        return isPartial
+          ? renderExportFrame((rangeStartFrames + Math.round(t * clampedFps)) / clampedFps)
+          : pieceFrames
+            ? renderExportFrame(pieceFrames[Math.min(pieceFrames.length - 1, Math.round(t * clampedFps))] / clampedFps)
+            : renderExportFrame(t);
+      },
       canvas,
       // A camera-sized buffer between output and composition takes the filtered
       // resample (frameResampler.js) and is encoded at the output size as it is;
@@ -1428,8 +1926,8 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         }
         : undefined,
       duration: pieceFrames ? pieceFrames.length / clampedFps : exportDuration,
+      frameCount: pieceFrames ? pieceFrames.length : exportFrames,
       ...(pieceFrames ? {
-        frameCount: pieceFrames.length,
         keyFrameAt: (i) => pieceStarts.has(i),
         audioDuration: exportDuration,
       } : {}),
@@ -1444,15 +1942,24 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       onOutputChunk,
       onFrameImage: frameSinks?.onFrameImage || null,
       onAudioData: frameSinks?.onAudioData || null,
+      onFrameTime: frameSinks?.onFrameTime || null,
       forceFrames: encodeOpts?.forceFrames === true,
+      sceneLight,
       // Sized above from the decoders frame 0 actually has to cold-start;
       // error/log times shift back into absolute timeline time.
       firstFrameTimeoutMs,
+      // A frame where a Final Scene is the active rig waits for its trace (settleWorldFrame: every sample and the denoiser's own end),
+      // however long that takes: its watchdog is the world's own limit for a frame, a minute more, so the world's clearer error comes
+      // first, and one stall stops the render. A blurred frame is `samples` renders, each traced. Every other frame, and every frame of a
+      // project without a Final Scene, keeps the 15 s and three stalls in a row it always had.
+      frameTimeoutMs: finalFrameMs ? (t) => (finalAt(t) ? (finalFrameMs + 60000) * (motionBlurInfo?.samples || 1) : 0) : 0,
+      stallLimit: finalFrameMs ? (t) => (finalAt(t) ? 1 : 3) : 3,
       displayTimeOffset: rangeStart,
       // Prepared segments that will not decode here end the render. The
       // backend rebuilds that source as transcoded segments and retries once;
       // continuing would produce a finished-looking file with a blank layer.
       checkFatal: () => {
+        if (worldFatal) return worldFatal;
         if (htmlLiveFatal) return htmlLiveFatal;
         if (!segmentFailures.size) return null;
         const f = [...segmentFailures.values()][0];
@@ -1491,6 +1998,10 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           }
           return parts.join(' — ');
         }
+        if (finalFrameMs) {
+          return `a Final 3D Scene frame did not finish tracing in ${Math.round(finalFrameMs / 60000)} min. Lower the Scene's samples or the `
+            + 'video size, or render it in Draft.';
+        }
         return null;
       },
       // A GPU reset kills the encoder silently; name what was on screen — the
@@ -1522,6 +2033,20 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         : undefined,
     });
 
+    // (hdr2) how an HDR render's frames were made, and the float composite's checks against the 8-bit picture
+    if (sceneLight) {
+      const r = sceneLight.report();
+      if (r.mode) {
+        console.warn('[export-phase] HDR frames: ' + JSON.stringify({ mode: r.mode, frames: r.frames, sdrFrames: r.sdrFrames, checks: r.checks, blurred: r.blurred,
+          check: r.check ? { same: r.check.same, meanDiff: Math.round(r.check.meanDiff * 1000) / 1000, off: r.check.off, above: r.check.above } : null,
+          reason: r.reason || null, ms: r.ms, composite: hdrComposite?.stats() || null, encode: hdrEncoder?.stats() || null }));
+      }
+    }
+    // (mblur) how the blurred frames were made: traced once with the motion (a Final Scene's world), or accumulated sub-frames
+    if (motionBlurInfo && (motionBlurInfo.traced || motionBlurInfo.accumulated || motionBlurInfo.averaged || motionBlurInfo.held)) {
+      console.warn(`[export] motion blur: ${motionBlurInfo.traced} frame(s) traced once with their motion, ${motionBlurInfo.held} traced once under 2D sub-frames, ${motionBlurInfo.averaged} Draft frame(s) averaged in light, ${motionBlurInfo.accumulated} accumulated from ${motionBlurInfo.samples} sub-frames`);
+    }
+
     // Hand the result back to the caller (download + board copy happen there).
     // When streamed, output already went out via onOutputChunk — there's no blob.
     const ext = format === 'mp4' ? 'mp4' : 'webm';
@@ -1531,18 +2056,30 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     const segmentDecodeFailures = [...segmentFailures.entries()].map(([manifestUrl, f]) => ({
       code: 'SOURCE_SEGMENT_DECODE_FAILED', manifestUrl, ...f,
     }));
-    if (out?.framesMode) return { framesMode: true, frames: out.frames, ext, segmentDecodeFailures };
+    // (badframes) the frames drawn again, by reason: the render succeeded, and its report says so
+    const frameGuard = frameGuardLog.summary();
+    if (frameGuard) console.warn('[export] frame guard: ' + JSON.stringify(frameGuard).slice(0, 600));
+    if (out?.framesMode) {
+      return { framesMode: true, frames: out.frames, ext, segmentDecodeFailures, frameGuard,
+        ...(sceneLight ? { hdrScene: { ...sceneLight.report(), ...(hdrComposite && sceneLight.report().mode ? { msComposite: hdrComposite.stats() } : {}) } } : {}) };
+    }
     // audioWarning names clips whose sound could not be read. It rides all the
     // way out because the file itself is finished and looks fine — nothing
     // downstream can tell it went out partly silent unless we say so.
     const encoder = out?.encoder || null;
-    if (out?.streamed) return { streamed: true, ext, audioWarning: out?.audioWarning || null, segmentDecodeFailures, encoder };
-    return { blob: out?.blob, ext, audioWarning: out?.audioWarning || null, segmentDecodeFailures, encoder };
+    if (out?.streamed) return { streamed: true, ext, audioWarning: out?.audioWarning || null, segmentDecodeFailures, encoder, frameGuard };
+    return { blob: out?.blob, ext, audioWarning: out?.audioWarning || null, segmentDecodeFailures, encoder, frameGuard };
   } finally {
     // Tear down the fast-decode session: stop skipping seeks, free decoders +
     // their canvas textures, and detach decode canvases from the video elements.
     engine.exportActive = false;
     engine.exporting = false;
+    worldGuardSampling(false);
+    setWorldFarm(null);
+    reserveWorldMotion(false);
+    if (sceneLight) worldHdrOut(false);
+    hdrComposite?.dispose();
+    hdrEncoder?.dispose();
     if (engine.phonePictureEdge) { engine.phonePictureEdge = 0; dropPhonePictures(engine); }
     for (const d of allDecoders) { try { d.close(); } catch { /* ignore */ } }
     disposeHtmlLiveExportPages();

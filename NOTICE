@@ -19,5 +19,9 @@ Files the engine downloads from the GreenLight CDN when a project uses them (sou
 lighting environments) are not part of this software and are not covered by the Apache License; see
 legal/THIRD_PARTY_ASSETS.md and legal/README.md.
 
+The 3D Scene engine is not part of this software: it is the 3D plugin, the separate package greenlight-motion-3d, which
+the engine downloads only when a project has a 3D Scene (or a page asks for it). It has its own licence (use yes; no
+copying, redistribution, modification or competing products) and is not covered by the Apache License.
+
 "GreenLight", "GreenLight Dash", "GLEA" and "GreenLight Motion" are trademarks of WPSOUL. The Apache
 License does not grant permission to use them; see legal/TRADEMARKS.md.

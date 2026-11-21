@@ -13,7 +13,7 @@ import { cameraProxyFromPose } from './projectCamera';
 import { resolveModelUrl, modelScreenTarget, isPrimitiveUrl, PRIMITIVE_DEFAULT_COLOR } from './model3dPresets';
 import { buildPrimitiveScene, loadPrimitiveFont } from './model3dPrimitives';
 import { setModelFootprint, clearModelFootprint } from './model3dFootprint';
-import { applyModelGrowFill, removeModelGrowFill } from './model3dGrowFill';
+import { applyModelGrowFill, removeModelGrowFill, growFillForWorld } from './model3dGrowFill';
 import { notifyModelAssetLoaded } from './model3dEvents';
 import { createModelTonePassMaterial } from './model3dTonePass';
 import { glyphGeometry, clearGlyphGeometries } from './text3dGlyphs';
@@ -27,13 +27,21 @@ import { rigUsesWorld,
 import { PCSS_INSTALLED, pcssRadiusFor, lightSpread, autoShadowBias } from './rigSoftShadows';
 import { fitDirectionalShadow } from './rigShadowFit';
 import { createRigContactShadows } from './rigContactShadows';
-import { lowestPointY } from './model3dFloor';
+import { lowestPointY, restBox } from './model3dFloor';
 // The Mockup builder's screen fit maths, shared rather than reimplemented so a screen
 // looks identical in both features.
 import { createCanvasSurface, drawMediaToCanvas } from '../mockupGenerator/screenTexture';
 // Frame-exact video for screens: the same decoder lanes motion templates and layer mattes
 // use, settled by the preview pump and by every export/still (motionMediaPending).
-import { requestVideoFrame, isSupportedMotionVideo, getMotionVideoSource } from './motionTemplates/motionVideo';
+import { requestVideoFrame, isSupportedMotionVideo, getMotionVideoSource, videoLaneStamp } from './motionTemplates/motionVideo';
+// A screen that shows another layer of this timeline (an HTML clip live, a video, an image): its own surface (liveLayers.js).
+import { LiveSurface, liveLayerTime } from './liveLayers';
+// (pose) A character's pose pipeline: model3dConfig.pose (modelPose.js). A layer without one keeps the mixer path below, unchanged.
+import { makePoseRig, applyPose, sceneObjectMatrix, metresToEditor, poseInfo } from './modelPose';
+import { solidLayerEuler } from './keyframeParenting';
+import { bindRig, solveRigAhead } from '../../world3d/rig/bind.js';
+import { editorRigSolver } from './rigSolveEditor.js';
+import { useDualQuaternionsWebGL } from './skinDQWebGL.js';
 
 /*
  * 3D model layers — real geometry standing in the editor's world, filmed by the
@@ -85,12 +93,18 @@ export function modelExt(url) {
 
 export const isSplatUrl = (url) => ['ply', 'splat', 'spz'].includes(modelExt(url));
 
+// Every lazy load this module has started (asset, environment, screen artwork, the effects module), counting up: a render page's
+// warm-up (renderPrime.js) tells from it that a frame it drew asked for nothing new.
+let resourceStarts = 0;
+export const modelResourceStarts = () => resourceStarts;
+
 function loadAsset(url) {
   const hit = assets.get(url);
   if (hit) return hit;
   const ext = modelExt(url);
   const entry = { status: 'loading', promise: null, scene: null, animations: [], error: null };
   assets.set(url, entry);
+  resourceStarts += 1;
 
   // Procedural shapes are built here, synchronously — except Text before its font
   // has arrived, which settles like any other async asset.
@@ -178,6 +192,21 @@ function loadAsset(url) {
   return entry;
 }
 
+// (leftovers-rig) A model layer's skeleton solved in a worker (rigSolveEditor.js) before its instance is made, so a big mesh's weights do not
+// hold the page: url|skeleton → the solve on its way. The instance waits for it as it waits for its file; the solve is cached by content
+// (world3d/rig/bind.js), so bindRig then binds at once with the very weights it would have made here.
+const rigSolves = new Map();
+function rigSolvedFor(url, scene, skeleton, skeletonKey) {
+  const k = `${url}|${skeletonKey}`;
+  if (rigSolves.has(k)) return false;
+  const ahead = solveRigAhead(scene, skeleton, { solve: editorRigSolver() });
+  if (!ahead) return true;      // solved already, or no worker here: bindRig solves on this thread as before
+  rigSolves.set(k, ahead);
+  resourceStarts += 1;
+  ahead.then(() => { rigSolves.delete(k); notifyModelAssetLoaded(); });
+  return false;
+}
+
 /** Kick off a parse without waiting — used by the render page's warm-up. */
 export function preloadModel(url) {
   return url ? loadAsset(url).promise : Promise.resolve(null);
@@ -194,6 +223,8 @@ export function modelResourcesPending() {
   // A layer carrying a real-3D effect waits for the effects module (and, on
   // WebGPU, its node twin): exported frames must not render it plain.
   if (fxModulePromise && !fxModule) return true;
+  // (leftovers-rig) a skeleton's weights still on their way back from the worker
+  if (rigSolves.size) return true;
   if (fxModule?.modelFxPending()) return true;
   for (const a of assets.values()) if (a.status === 'loading') return true;
   for (const e of envCache.values()) if (e.status === 'loading') return true;
@@ -303,6 +334,7 @@ export function environmentForUrl(renderer, url) {
   if (hit) return hit;
   const entry = { status: 'loading', texture: null, promise: null };
   envCache.set(url, entry);
+  resourceStarts += 1;
   const Loader = /\.exr(\?.*)?$/i.test(url) ? EXRLoader : RGBELoader;
   entry.promise = new Promise((resolve) => {
     new Loader().load(
@@ -390,6 +422,7 @@ function screenImage(url) {
   if (entry) return entry;
   entry = { image: null, ready: false };
   screenImages.set(url, entry);
+  resourceStarts += 1;
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.onload = () => { entry.image = img; entry.ready = true; notifyModelAssetLoaded(); };
@@ -411,6 +444,7 @@ function ensureScreenVideo(entry, url) {
   releaseScreenVideo(entry);
   if (!url) return null;
   const v = document.createElement('video');
+  resourceStarts += 1;
   v.src = url;
   v.crossOrigin = 'anonymous';
   v.muted = true;
@@ -445,10 +479,32 @@ function drawScreenMedia(surface, media, opts) {
   drawMediaToCanvas(surface.ctx, surface.canvas, media, opts);
 }
 
+// A/B switch for gates: localStorage 'gl-live-url-screens' = 'off' draws a url video screen into a 2048-high canvas, as before.
+const LIVE_URL_SCREENS = (() => { try { return localStorage.getItem('gl-live-url-screens') !== 'off'; } catch { return true; } })();
+
 // `entry` is a model instance (its preset device screen) or one of its screen SLOTS
 // (model3dConfig.screens) — both carry `root` plus the screen* bookkeeping fields.
 function applyScreen(entry, target, screen, time) {
-  const url = screen?.url || null;
+  // `layer`: the screen shows a layer of this timeline at the playhead, drawn into a surface of its own at the source's size, again only
+  // when that layer shows another picture (liveLayers.js). The artwork's key is that surface's canvas.
+  entry.screenSpec = screen || null;
+  // A video by url draws through such a surface too, at the video's own size: a 1290x540 loop on an ultrawide screen was drawn into a
+  // 4884x2048 canvas, and uploaded at that size, on every frame. MP4/MOV (the decoder lanes); WebM keeps its <video> below.
+  const liveUrl = LIVE_URL_SCREENS && !screen?.layer && !!target && isVideoUrl(screen?.url) && isSupportedMotionVideo(screen.url);
+  let live = null, liveChanged = false;
+  if ((screen?.layer || liveUrl) && target) {
+    live = entry.liveSurface ||= new LiveSurface(`${entry.laneKey || 'scr'}:live`);
+    // a preset's inset shrinks the artwork inside the mesh, as the canvas below does (padding + inset)
+    const inset = Number.isFinite(target.inset) ? target.inset : 0;
+    const padding = Math.min(0.45, (Number.isFinite(screen.padding) ? screen.padding : 0) + inset);
+    liveChanged = live.update({ ...screen, aspect: target.aspect, padding }, liveUrl ? time : liveLayerTime(time));
+  } else if (entry.liveSurface) {
+    entry.liveSurface.dispose();
+    entry.liveSurface = null;
+  }
+  const url = screen?.layer || liveUrl
+    ? (live?.canvas ? `${screen.layer ? `layer:${screen.layer}` : screen.url}#${live.generation}` : null)
+    : (screen?.url || null);
   const key = target
     ? `${target.node || ''}|${target.material || ''}|${url || ''}|${target.aspect || ''}|${target.planarUv ? 1 : 0}|${target.shading || ''}|${target.mirrorX ? 1 : 0}|${target.rotate || 0}|${target.gltfUv ? (target.flipY ? 'f' : 'g') : ''}`
     : `||${url || ''}`;
@@ -533,7 +589,7 @@ function applyScreen(entry, target, screen, time) {
       return;
     }
 
-    const surface = createCanvasSurface(target.aspect || 0.47, 1);
+    const surface = live ? { canvas: live.canvas, ctx: live.ctx, texture: live.editorTexture() } : createCanvasSurface(target.aspect || 0.47, 1);
     if (!surface) return;
     // Per-device UV fixes, mirrored from the mockup builder's components: these screens
     // are authored with flipped or rotated winding.
@@ -603,6 +659,22 @@ function applyScreen(entry, target, screen, time) {
 
   const surface = entry.screenSurface;
   if (!surface || !url) return;
+  if (live) {
+    // drawn by its surface; a preset's inset ring goes over each new picture
+    if (liveChanged && Number.isFinite(target.inset) && target.inset > 0 && target.insetFill) {
+      const { ctx, canvas } = surface;
+      const px = target.inset * canvas.width, py = target.inset * canvas.height;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.width, canvas.height);
+      ctx.rect(px, py, canvas.width - px * 2, canvas.height - py * 2);
+      ctx.fillStyle = target.insetFill;
+      ctx.fill('evenodd');
+      ctx.restore();
+    }
+    if (liveChanged) surface.texture.needsUpdate = true;
+    return;
+  }
 
   // A preset-level `inset` shrinks the drawn artwork inside the mesh (the iMac's
   // screen mesh is its ENTIRE front panel), and `insetFill` paints the revealed
@@ -644,12 +716,17 @@ function applyScreen(entry, target, screen, time) {
       // frame as pending until it is decoded; the preview pump and every export /
       // still settle it and repaint (motionMediaPending), so the screen is frame-exact.
       const src = getMotionVideoSource(url);
-      const frame = requestVideoFrame(url, wrap(src.loaded ? src.duration : 0), entry.laneKey || `scr:${url}`);
+      const laneKey = entry.laneKey || `scr:${url}`;
+      const frame = requestVideoFrame(url, wrap(src.loaded ? src.duration : 0), laneKey);
       if (!frame) return;
+      // Redraw only when another frame is on the lane: a paused playhead flagging the texture every frame made the
+      // 3D Scene's Final restart its samples every frame, so it never left 0.
+      const drawn = `${url}|${videoLaneStamp(laneKey)}|${JSON.stringify(opts)}|${inset}`;
+      if (entry.screenDrawn === drawn) return;
+      entry.screenDrawn = drawn;
       drawScreenMedia(surface, frame, opts);
       paintInsetRing();
       surface.texture.needsUpdate = true;
-      entry.screenDrawn = null;   // a video redraws every frame
       return;
     }
     // Other containers (WebM): a seeked <video> element — best effort.
@@ -657,10 +734,13 @@ function applyScreen(entry, target, screen, time) {
     if (!v || !v.videoWidth) return;
     const want = wrap(v.duration || 0);
     if (Math.abs(v.currentTime - want) > 0.02 && !v.seeking) v.currentTime = want;
+    if (v.seeking) return;
+    const drawn = `${url}|${v.currentTime}|${JSON.stringify(opts)}|${inset}`;
+    if (entry.screenDrawn === drawn) return;
+    entry.screenDrawn = drawn;
     drawScreenMedia(surface, v, opts);
     paintInsetRing();
     surface.texture.needsUpdate = true;
-    entry.screenDrawn = null;   // a video redraws every frame
     return;
   }
 
@@ -689,6 +769,8 @@ function releaseScreenState(state) {
   state.screenSurface = null;
   state.screenKey = null;
   state.screenDrawn = null;
+  state.liveSurface?.dispose();
+  state.liveSurface = null;
   releaseScreenVideo(state);
 }
 
@@ -856,6 +938,7 @@ function areaLightsReady() {
   }
   if (areaLtc.webgpu === true) return true;
   if (areaLtc.webgpu === null) {
+    resourceStarts += 1;
     areaLtc.webgpu = Promise.all([
       import('three/webgpu'),
       import('three/examples/jsm/lights/RectAreaLightTexturesLib.js'),
@@ -1392,7 +1475,11 @@ export function ensureModelInstance(item, clip) {
     if (entry) disposeModelLayer(item.id);
     return { ready: false, error: 'This model layer has no asset.', entry: null };
   }
-  if (entry && entry.url !== url) {
+  // (rigging) a skeleton made for a file that has none (world3d/rig): part of what the instance IS, so a new one rebuilds it. A procedural
+  // shape has none (the world takes its parts as plain arrays): figures to rig are built in the Scene's own graph.
+  const skeleton = item?.model3dConfig?.skeleton;
+  const skeletonKey = skeleton && typeof skeleton === 'object' && !Array.isArray(skeleton) && !isPrimitiveUrl(url) ? JSON.stringify(skeleton) : null;
+  if (entry && (entry.url !== url || (entry.skeletonKey || null) !== skeletonKey)) {
     // Retire the previous asset BEFORE the replacement finishes loading. Keeping it
     // until `ready` made model switching appear to do nothing on large presets.
     disposeInstance(entry);
@@ -1403,6 +1490,8 @@ export function ensureModelInstance(item, clip) {
   const asset = loadAsset(url);
   if (asset.status === 'error') return { ready: false, error: asset.error, entry: null };
   if (asset.status !== 'ready') return { ready: false, error: null, entry: null };
+  // (leftovers-rig) a skeleton's weights come from the worker first
+  if (!entry && skeletonKey && !rigSolvedFor(url, asset.scene, skeleton, skeletonKey)) return { ready: false, error: null, entry: null };
   if (!entry) {
     const root = cloneSkinned(asset.scene);
     // Two nested groups: the inner one carries fit offset + scale (so the pivot maths
@@ -1431,7 +1520,20 @@ export function ensureModelInstance(item, clip) {
       });
     }
 
-    const box = new THREE.Box3().setFromObject(root);
+    // (ownercalls) the rest pose as it draws, a skinned mesh through its bones (model3dFloor.js restBox): every fit mode, every layer
+    const box = restBox(root, outer);
+    // (rigging) after the box (the plain meshes' own): bones under the file's root, its meshes skinned. The world binds its own copy the
+    // same way (WorldRenderer #bindObjectRig), so the two share their nodes in the same order.
+    let animations = asset.animations, restSource = asset.scene, bound = null;
+    let skinDQ = null;
+    if (skeletonKey) {
+      bound = bindRig(root, skeleton);
+      // (leftovers-rig) its own WebGL pass skins by dual quaternions too, as the world draws it (skinDQWebGL.js)
+      skinDQ = (bound?.meshes || []).map(useDualQuaternionsWebGL).filter(Boolean);
+      if (bound?.clips?.length) animations = [...asset.animations, ...bound.clips];
+      // the rest pose with the bones in it (the file itself has none)
+      restSource = root.clone();
+    }
     entry = {
       tintMaterials,
       itemId: item.id,
@@ -1442,10 +1544,15 @@ export function ensureModelInstance(item, clip) {
       outer,
       lightRig,
       box,
-      mixer: asset.animations.length ? new THREE.AnimationMixer(root) : null,
-      animations: asset.animations,
+      mixer: animations.length ? new THREE.AnimationMixer(root) : null,
+      animations,
       actions: new Map(),
+      // (pose) the file as loaded, never posed: the pose pipeline's rest pose (modelPose.js makePoseRig)
+      restSource,
       envKey: null,
+      skeletonKey,
+      skinDQ,
+      skeletonReport: bound ? { joints: bound.joints.map((j) => ({ name: j.name, parent: j.parent >= 0 ? bound.joints[j.parent].name : null, at: j.at })), landmarks: bound.landmarks || null, found: bound.found || [], report: bound.report, warnings: bound.warnings } : null,
     };
     instances.set(item.id, entry);
   }
@@ -1457,6 +1564,13 @@ export function modelAnimationNames(clip, item = null) {
   const url = item ? resolveModelUrl(item, clip) : clip?.url;
   const asset = url ? assets.get(url) : null;
   return asset?.status === 'ready' ? asset.animations.map((a) => a.name) : [];
+}
+
+/** The GLB clips themselves, for the export's motion blur (worldMotion.js modelClipMovesBetween). Null until the file has loaded. */
+export function modelAnimationClips(clip, item = null) {
+  const url = item ? resolveModelUrl(item, clip) : clip?.url;
+  const asset = url ? assets.get(url) : null;
+  return asset?.status === 'ready' ? asset.animations : null;
 }
 
 // ── Contact shadow ──────────────────────────────────────────────────────────
@@ -1559,6 +1673,15 @@ function applyGroundAO(root) {
     if (!n.isMesh) return;
     for (const mat of [].concat(n.material || [])) {
       if (!mat || mat.userData?.__groundAO || !GROUND_AO_LIT.has(mat.type)) continue;
+      // (leftovers-rig) a skeleton's dual-quaternion material (skinDQWebGL.js) takes the ground AO after its own injection
+      if (mat.userData?.skinDQ && Object.prototype.hasOwnProperty.call(mat, 'onBeforeCompile')) {
+        const dq = mat.onBeforeCompile;
+        mat.onBeforeCompile = (shader, renderer) => { dq(shader, renderer); groundAoCompile(shader); };
+        mat.customProgramCacheKey = () => 'skin-dq-v1|ground-ao-v1';
+        mat.userData.__groundAO = true;
+        mat.needsUpdate = true;
+        continue;
+      }
       // Never stack on another injection (Grow Fill swaps in its own clones).
       if (Object.prototype.hasOwnProperty.call(mat, 'onBeforeCompile')) continue;
       mat.onBeforeCompile = groundAoCompile;
@@ -1629,6 +1752,31 @@ function ensureTonePass() {
   toneScene.add(toneMesh);
   toneCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   return { toneMesh, toneScene, toneCamera };
+}
+
+/** A model a world Scene let go of: its own tone pass, with that world's contact shadows on its own depth, filmed by its own camera
+ *  (materialFactory.releasedModelTonePass). Made the first time the model leaves a world, again when its targets are resized, and
+ *  given back with the model. WebGPU only, as the world Scene itself is. */
+function ensureReleasedTonePass(entry, cam) {
+  const depth = entry.hdr.depthTexture;
+  const held = entry.releasedTone;
+  if (held && held.depth === depth && held.camera === cam) return held;
+  disposeReleasedTonePass(entry);
+  const material = makeMaterial.releasedModelTonePass(depth, cam);
+  if (!material) return null;
+  const toneMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+  const toneScene = new THREE.Scene();
+  toneScene.add(toneMesh);
+  entry.releasedTone = { toneMesh, toneScene, toneCamera: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), depth, camera: cam };
+  return entry.releasedTone;
+}
+
+function disposeReleasedTonePass(entry) {
+  const held = entry?.releasedTone;
+  if (!held) return;
+  held.toneMesh.geometry.dispose();
+  held.toneMesh.material.dispose();
+  entry.releasedTone = null;
 }
 
 function disposeTonePass() {
@@ -2117,6 +2265,9 @@ export function renderPlateLayer(renderer, opts) {
 
 const text3dInstances = new Map();
 
+// The glyph meshes, for letters that stand in a Scene's world instead (world3dLayer.js finishWorldFrame).
+export { glyphGeometry };
+
 // Light without a Rig: the model's own three directionals at preset strengths,
 // plus an environment for reflections.
 // Studio matches a model's own default light (key 1, fill 0.45, rim 0.35), so a
@@ -2129,7 +2280,7 @@ const TEXT3D_LIGHTING = {
 
 // Plastic's lacquer stays light: clearcoat reflects the environment on top of the
 // colour, and a heavy coat washes a toy red to pink (more so on WebGL).
-const TEXT3D_FINISH = {
+export const TEXT3D_FINISH = {
   plastic: { roughness: 0.32, metalness: 0, clearcoat: 0.3, clearcoatRoughness: 0.2, opacity: 1 },
   matte: { roughness: 0.85, metalness: 0, clearcoat: 0, clearcoatRoughness: 0, opacity: 1 },
   metal: { roughness: 0.22, metalness: 1, clearcoat: 0, clearcoatRoughness: 0, opacity: 1 },
@@ -2174,6 +2325,9 @@ function syncText3dLetters(entry, run) {
       mesh.matrixAutoUpdate = false;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      // (item 20) the layer it is filmed on under a classic Rig: joinWorld set it on the plate before any letter existed, and the pass's
+      // camera sees that layer alone, so a new letter on layer 0 only was never drawn (an empty title, preview and render alike)
+      mesh.layers.mask = entry.plate.layers.mask;
       entry.plate.add(mesh);
       entry.meshes.push(mesh);
     }
@@ -2259,7 +2413,8 @@ export function renderText3dLayer(renderer, opts) {
 
     const count = syncText3dLetters(entry, run);
     if (!count) return none;
-    if (world) setShadowFlags(entry.outer, true, true, true);
+    // (bugsB) the 3D TEXT section's shadow switches (text3d.castShadow / receiveShadow, on unless switched off)
+    if (world) setShadowFlags(entry.outer, s.castShadow !== false, s.receiveShadow !== false, true);
 
     // The layer, placed by the compositor quad's world transform. The quad's scale
     // carries the plate's width over the comp's (wide nowrap text); taken out here
@@ -2369,6 +2524,7 @@ export function pruneText3dLayers(keepIds) {
  *                                   world view, and a sequence's inner render — whose
  *                                   output already travels through the sequence clip)
  * @param opts.prs                   resolved position/rotation/scale for the layer
+ * @param opts.sceneTurn             (enginebugs2) `prs` turns as a world Scene turns its objects (keyframeParenting.js sceneTurnPrs)
  * @param opts.W / opts.H            composition size in pixels (world units)
  * @param opts.width / opts.height   render-target size (may include supersampling)
  * @param opts.time                  clip-local seconds, for glTF animation
@@ -2988,6 +3144,7 @@ let fxModulePromise = null;
 function modelFxModule() {
   if (fxModule) return fxModule;
   if (!fxModulePromise) {
+    resourceStarts += 1;
     fxModulePromise = import('./model3dFx')
       .then((m) => { fxModule = m; notifyModelAssetLoaded(); })
       .catch(() => { fxModulePromise = null; });
@@ -3000,12 +3157,12 @@ function modelFxModule() {
  * says whether they are the held ones. Per frame: a new frameToken always poses again,
  * so an edit between frames can never reuse a stale pose.
  */
-function samePoseInputs(entry, frameToken, config, prs, rig, W, H, time) {
+function samePoseInputs(entry, frameToken, config, prs, rig, W, H, time, sceneTurn = false) {
   const held = entry.poseInputs || (entry.poseInputs = []);
   let i = 0;
   let same = frameToken != null;
   const keep = (v) => { if (held[i] !== v) { held[i] = v; same = false; } i += 1; };
-  keep(frameToken); keep(config); keep(time); keep(W); keep(H);
+  keep(frameToken); keep(config); keep(time); keep(W); keep(H); keep(sceneTurn);
   keep(prs?.px); keep(prs?.py); keep(prs?.pz); keep(prs?.rx); keep(prs?.ry); keep(prs?.rz);
   keep(prs?.sx); keep(prs?.sy); keep(prs?.sz);
   keep(rig?.cyclorama?.shape); keep(rig?.cyclorama?.y);
@@ -3021,8 +3178,8 @@ function samePoseInputs(entry, frameToken, config, prs, rig, W, H, time) {
  * shared shadow map, then its own pass — with the same inputs: the second call gets
  * the held pose instead of evaluating the mixer and the floor bounding box again.
  */
-function poseModel(entry, item, config, prs, rig, W, H, time, frameToken) {
-  if (samePoseInputs(entry, frameToken, config, prs, rig, W, H, time) && entry.pose) return entry.pose;
+function poseModel(entry, item, config, prs, rig, W, H, time, frameToken, sceneTime = null, sceneTurn = false) {
+  if (samePoseInputs(entry, frameToken, config, prs, rig, W, H, time, sceneTurn) && entry.pose) return entry.pose;
   entry.pose = null;
   // Fit + anchor on the inner group.
   const fit = computeFit(entry.box, config, W, H);
@@ -3037,25 +3194,15 @@ function poseModel(entry, item, config, prs, rig, W, H, time, frameToken) {
   // pixels, rx/ry/rz already in RADIANS with the editor's sign convention, sx/sy/sz.
   // Unlike a plane layer — whose z-scale is meaningless and pinned to 1 — a solid
   // scales on all three axes, so it uses sz too.
-  const base = config.baseRotation || { x: 0, y: 0, z: 0 };
-  const D2R = Math.PI / 180;
+  // (enginebugs2) `sceneTurn`: a world Scene's model, whose `prs` turns as the Scene's objects do (keyframeParenting.js sceneTurnPrs):
+  // the Base Rotation is a turn of the layer's own, so it is mapped the same way (X and Y add as Rotate X / Y do there, Z stays).
   entry.outer.position.set(prs?.px || 0, prs?.py || 0, prs?.pz || 0);
-  entry.outer.rotation.set(
-    (prs?.rx || 0) - (base.x || 0) * D2R,
-    (prs?.ry || 0) - (base.y || 0) * D2R,
-    (prs?.rz || 0) - (base.z || 0) * D2R,
-    'XYZ'
-  );
+  const [ex, ey, ez] = solidLayerEuler(prs, config.baseRotation, sceneTurn);
+  entry.outer.rotation.set(ex, ey, ez, 'XYZ');
   const sx = Number.isFinite(prs?.sx) && prs.sx > 0 ? prs.sx : 1;
   const sy = Number.isFinite(prs?.sy) && prs.sy > 0 ? prs.sy : sx;
   const sz = Number.isFinite(prs?.sz) && prs.sz > 0 ? prs.sz : sx;
   entry.outer.scale.set(sx, sy, sz);
-
-  // Animation, sampled by ABSOLUTE time. A delta-driven mixer is a function of frame
-  // pacing, which would make export frames drift from preview and scrubbing
-  // irreproducible. Before the floor box, so the box is THIS frame's animated pose
-  // (sampled after it, one pose lagged the animation by a frame).
-  applyModelAnimation(entry, config.animation, time);
 
   // A model is part of the set, so by default its lowest rendered point rests on
   // the cyclorama floor. Evaluate the real geometry after fit, rotation and scale;
@@ -3064,13 +3211,28 @@ function poseModel(entry, item, config, prs, rig, W, H, time, frameToken) {
   // inspector restores unconstrained placement.
   // The lowest point is measured on the geometry, not the union of mesh boxes: a
   // rotating part's box corners dip below it and made the model hop (model3dFloor.js).
-  if (rig && config.placeOnRigFloor !== false && CYC_FLOOR_SHAPES.has(rig.cyclorama?.shape)) {
-    entry.outer.updateMatrixWorld(true);
-    const lowY = lowestPointY(entry.root);
-    if (Number.isFinite(lowY)) {
-      const floorY = -H * 0.42 + (rig.cyclorama?.y || 0);
-      entry.outer.position.y += floorY + (prs?.py || 0) - lowY;
+  const placeOnFloor = () => {
+    if (rig && config.placeOnRigFloor !== false && CYC_FLOOR_SHAPES.has(rig.cyclorama?.shape)) {
+      entry.outer.updateMatrixWorld(true);
+      const lowY = lowestPointY(entry.root);
+      if (Number.isFinite(lowY)) {
+        const floorY = -H * 0.42 + (rig.cyclorama?.y || 0);
+        entry.outer.position.y += floorY + (prs?.py || 0) - lowY;
+      }
     }
+  };
+  if (config.pose && typeof config.pose === 'object' && entry.animations) {
+    // (pose) The pose pipeline (modelPose.js), a pure function of the layer's time like the mixer path: clips, morphs, bones, then
+    // the floor on that pose, then the constraints against this frame's world transform.
+    applyModelPose(entry, config, time, rig, sceneTime ?? time, placeOnFloor);
+  } else {
+    // Animation, sampled by ABSOLUTE time. A delta-driven mixer is a function of frame
+    // pacing, which would make export frames drift from preview and scrubbing
+    // irreproducible. Before the floor box, so the box is THIS frame's animated pose
+    // (sampled after it, one pose lagged the animation by a frame).
+    if (entry.poseRig) leavePose(entry);
+    applyModelAnimation(entry, config.animation, time);
+    placeOnFloor();
   }
   entry.pose = { fit, sx, sy, sz };
   return entry.pose;
@@ -3086,9 +3248,12 @@ function poseModel(entry, item, config, prs, rig, W, H, time, frameToken) {
  * only meaningful with a rig.
  */
 // Screen artwork on a preset device, then media on named meshes of any model (model3dConfig.screens).
-function syncModelScreens(entry, item, config, time) {
+function syncModelScreens(entry, item, config, time, inWorld = false) {
   if (!entry.laneKey) entry.laneKey = `scr:${entry.itemId}:device`;
-  applyScreen(entry, modelScreenTarget(item), config.screen || null, time);
+  // In a world Scene a device with no artwork keeps its file's own screen, as the world draws it (the world loads the file itself and
+  // knows no black panel): a model one of the six takes out of the world must not turn its screen black. Everywhere else, the panel.
+  const fileScreen = inWorld && !config.screen?.url && !config.screen?.layer;
+  applyScreen(entry, fileScreen ? null : modelScreenTarget(item), config.screen || null, time);
   applyModelScreens(entry, config.screens, time);
 }
 
@@ -3106,16 +3271,96 @@ export function poseModelLayer(opts) {
   if (!opts.rig) return;
   const { ready, entry } = ensureModelInstance(item, clip);
   if (!ready || !entry) return;
-  // The world draws this model, so nothing else will keep its screens current.
-  if (rigUsesWorld(opts.rig)) syncModelScreens(entry, item, item?.model3dConfig || {}, time);
+  // The world draws this model, so nothing else will keep its screens current. (mblur3) Not for a shutter's other times (`screens: false`:
+  // the world's motion blur poses its models there), whose screens and video lanes stay at the frame's.
+  if (rigUsesWorld(opts.rig) && opts.screens !== false) syncModelScreens(entry, item, item?.model3dConfig || {}, time, true);
   const rig = normalizeRig(opts.rig);
   const world = ensureSharedWorld();
   joinWorld(world, `m:${item.id}`, entry.outer, entry.scene);
   const config = item?.model3dConfig || {};
   syncPrimitiveTint(entry, config);
   setShadowFlags(entry.outer, config.castShadow !== false, config.receiveShadow !== false, true);
-  poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken);
+  poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken, opts.sceneTime, !!opts.sceneTurn);
   entry.lastFrameToken = opts.frameToken ?? 0;
+}
+
+/**
+ * (gaps1) A model pass's camera: three's perspective one, which a world Scene's orthographic camera (`camera.projection: "ortho"`) makes
+ * orthographic for the pass: a frame `orthoHeight` px tall at every depth, slid by `orthoShift` (shares of its width and height) as the
+ * world's frame slides. three builds a material's view direction for the camera's kind (isOrthographicCamera), so a model lit in the
+ * world is lit the same here. A copy into a plain PerspectiveCamera (an effect's own camera, the shadow fit) keeps its pose and fov.
+ */
+class PassCamera extends THREE.PerspectiveCamera {
+  constructor(...args) {
+    super(...args);
+    this.orthoHeight = 0;
+    this.orthoShift = [0, 0];
+  }
+
+  /** Orthographic, `height` px tall (0: perspective). Returns whether the kind changed. */
+  setOrtho(height, shift = [0, 0]) {
+    const ortho = height > 0;
+    const changed = ortho !== !!this.isOrthographicCamera;
+    this.orthoHeight = ortho ? height : 0;
+    this.orthoShift = ortho ? [shift?.[0] || 0, shift?.[1] || 0] : [0, 0];
+    this.isOrthographicCamera = ortho;
+    this.isPerspectiveCamera = !ortho;
+    return changed;
+  }
+
+  updateProjectionMatrix() {
+    if (!(this.orthoHeight > 0)) { super.updateProjectionMatrix(); return; }
+    const h = this.orthoHeight / (this.zoom || 1), w = h * this.aspect;
+    const left = -w / 2 + this.orthoShift[0] * w, top = h / 2 + this.orthoShift[1] * h;
+    this.projectionMatrix.makeOrthographic(left, left + w, top, top - h, this.near, this.far, this.coordinateSystem, this.reversedDepth);
+    this.projectionMatrixInverse.copy(this.projectionMatrix).invert();
+  }
+
+  copy(source, recursive) {
+    super.copy(source, recursive);
+    this.setOrtho(source.orthoHeight || 0, source.orthoShift);
+    return this;
+  }
+}
+
+/** (gaps1) An orthographic pass's depth `src` (straight with distance) as the compositor keeps depth: a perspective camera's with the same
+ *  near/far (makeMaterial.orthoDepth). Into a depth target of the entry's own (`key`), made at the pass's size. */
+function perspectiveDepthOf(renderer, entry, key, src, cam) {
+  const { width, height } = entry.hdr;
+  let held = entry[key];
+  if (held && (held.target.width !== width || held.target.height !== height)) held.target.setSize(width, height);
+  if (!held) {
+    const material = makeMaterial.orthoDepth();
+    if (!material) return src;
+    const target = new THREE.WebGLRenderTarget(width, height, { depthBuffer: true, stencilBuffer: false });
+    target.depthTexture = new THREE.DepthTexture(width, height);
+    target.depthTexture.type = THREE.UnsignedIntType;
+    target.depthTexture.minFilter = THREE.NearestFilter;
+    target.depthTexture.magFilter = THREE.NearestFilter;
+    const scene = new THREE.Scene();
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+    quad.frustumCulled = false;
+    scene.add(quad);
+    held = entry[key] = { target, material, scene, camera: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
+  }
+  held.material.uniforms.uDepth.value = src;
+  held.material.uniforms.uNear.value = cam.near;
+  held.material.uniforms.uFar.value = cam.far;
+  renderer.setRenderTarget(held.target);
+  renderer.clear(false, true, false);
+  renderer.render(held.scene, held.camera);
+  return held.target.depthTexture;
+}
+
+function disposePerspectiveDepth(entry) {
+  for (const key of ['orthoDepth', 'orthoTDepth']) {
+    const held = entry?.[key];
+    if (!held) continue;
+    held.target.dispose();
+    held.material.dispose();
+    held.scene.children[0]?.geometry.dispose();
+    entry[key] = null;
+  }
 }
 
 export function renderModelLayer(renderer, opts) {
@@ -3155,7 +3400,8 @@ export function renderModelLayer(renderer, opts) {
       scene.environment = null;
       world.envKey = envUrl;
     }
-    scene.environmentIntensity = rig.env.intensity;
+    // A model a world Scene let go of: the environment as strong as the world's raster has it (opts.worldLook).
+    scene.environmentIntensity = Number.isFinite(opts.worldLook?.envIntensity) ? opts.worldLook.envIntensity : rig.env.intensity;
     scene.environmentRotation?.set?.(
       (rig.env.rotX * Math.PI) / 180,
       (rig.env.rotY * Math.PI) / 180,
@@ -3185,7 +3431,10 @@ export function renderModelLayer(renderer, opts) {
   // but per-layer here.
   // A project Rig layer lights every model in the scene; without one the layer's own
   // model3dConfig does, exactly as it always has.
-  syncLightsToScene(world ? world.lightRig : entry.lightRig, rig ? rig.lights : rigLightsForConfig(config));
+  // A model a world Scene let go of also takes the light the world makes of its environment's brightest region (opts.worldLook.envKey).
+  syncLightsToScene(world ? world.lightRig : entry.lightRig, rig
+    ? [...rig.lights, ...[opts.worldLook?.envKey, opts.worldLook?.bounce].filter(Boolean)]
+    : rigLightsForConfig(config));
   // Models are real solids and participate when a shared Rig world exists, unless
   // the layer opts out (model3dConfig.castShadow / receiveShadow, both default on).
   // Blended cards inside a model (a baked contact-shadow blob, a glow) never cast.
@@ -3198,7 +3447,7 @@ export function renderModelLayer(renderer, opts) {
   entry.lastConfig = config;
 
   // Screen artwork on a preset device, if it has a screen and the user set one.
-  syncModelScreens(entry, item, config, time);
+  syncModelScreens(entry, item, config, time, rigUsesWorld(opts.rig));
   // Screen depth bias at this pass's size (see SCREEN_DEPTH_BIAS).
   scaleScreenDepthBias(entry, entry.hdr.height);
   // Self-lit screens that opt in still take the rig's shadows (screens[].receiveShadow).
@@ -3211,7 +3460,7 @@ export function renderModelLayer(renderer, opts) {
   applyContactShadow(entry, hasRigFloor ? { enabled: false } : config.shadow);
 
   // Fit, layer transform, floor placement and animation (poseModel).
-  const { fit, sx, sy, sz } = poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken);
+  const { fit, sx, sy, sz } = poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken, opts.sceneTime, !!opts.sceneTurn);
   if (rig) {
     // Shared by every model's injected material — the floor is the rig's.
     GROUND_AO.uGroundAoY.value = -H * 0.42 + (rig.cyclorama?.y || 0);
@@ -3227,9 +3476,11 @@ export function renderModelLayer(renderer, opts) {
 
   scene.updateMatrixWorld(true);
 
-  // Pass camera: the forward pose, with camZoom folded into an effective FOV.
-  const proxy = pose ? cameraProxyFromPose(pose, W, H) : null;
-  const cam = entry.camera || (entry.camera = new THREE.PerspectiveCamera(28, 1, 1, 100000));
+  // Pass camera: the forward pose, with camZoom folded into an effective FOV; or the camera a world Scene films from (opts.cameraProxy).
+  const proxy = opts.cameraProxy || (pose ? cameraProxyFromPose(pose, W, H) : null);
+  // (gaps1) a PassCamera, so a world Scene's orthographic camera can film the pass as it films the world
+  if (entry.camera && !(entry.camera instanceof PassCamera)) entry.camera = null;
+  const cam = entry.camera || (entry.camera = new PassCamera(28, 1, 1, 100000));
   // In the shared world this camera films ONLY this model's private layer, so the
   // pass still returns one object's pixels even though the scene holds the whole set.
   if (world) cam.layers.set(passLayer); else cam.layers.set(0);
@@ -3249,6 +3500,16 @@ export function renderModelLayer(renderer, opts) {
   // the caller doesn't care (the standalone harnesses).
   cam.near = Number.isFinite(opts.near) && opts.near > 0 ? opts.near : Math.max(1, D * 0.001);
   cam.far = Number.isFinite(opts.far) && opts.far > cam.near ? opts.far : D * 20;
+  // (gaps1) a world Scene's orthographic camera (`proxy.ortho`, its frame's height in px): the pass films orthographic too, with the
+  // world's shift, so the model stands where the world would show it. A change of kind builds the model's materials again (three builds
+  // a material's view direction for one kind of camera and keeps it).
+  const orthoPx = proxy?.ortho > 0 ? proxy.ortho : 0;
+  if (cam.setOrtho(orthoPx, proxy?.shift)) {
+    entry.outer.traverse((o) => { for (const m of [o.material].flat()) if (m) m.needsUpdate = true; });
+  }
+  // (cameras) a world Scene's camera with a lens shift: the frame slides as the world's does (shares of its width and height)
+  if (proxy?.shift && !orthoPx) cam.setViewOffset(W, H, proxy.shift[0] * W, -proxy.shift[1] * H, W, H);
+  else if (cam.view?.enabled) cam.clearViewOffset();
   cam.updateProjectionMatrix();
   cam.updateMatrixWorld(true);
 
@@ -3292,7 +3553,7 @@ export function renderModelLayer(renderer, opts) {
     // composition px — what turns an effect's px sizes into surface units.
     const fitPx = Math.max(fit.size.x, fit.size.y, fit.size.z) * fit.scale * Math.max(sx, sy, sz);
     // The tone pass's exposure below, for effects that judge the DISPLAYED light (Bloom's threshold).
-    const exposure = rig ? rig.env.exposure : (Number.isFinite(config.env?.exposure) ? config.env.exposure : 1);
+    const exposure = opts.worldLook ? opts.worldLook.exposure : rig ? rig.env.exposure : (Number.isFinite(config.env?.exposure) ? config.env.exposure : 1);
     const out = fx ? fx.runModelFx(renderer, entry, { scene, cam, list: opts.fx3d, time: opts.time || 0, W, H, viewDistance, fitPx, exposure }) : null;
     if (out) toneSource = out;
     // Light the effects put PAST the silhouette has no surface depth, and the
@@ -3303,6 +3564,8 @@ export function renderModelLayer(renderer, opts) {
       _spillNdc.copy(_viewCenter).applyMatrix4(cam.projectionMatrix);
       const z = cam.coordinateSystem === THREE.WebGPUCoordinateSystem ? _spillNdc.z : _spillNdc.z * 0.5 + 0.5;
       spillDepth = Math.min(1, Math.max(0, z));
+      // (gaps1) an orthographic pass: the depth of the model's centre as the compositor keeps it (a perspective camera's)
+      if (orthoPx) spillDepth = Math.min(1, Math.max(0, (cam.far * (viewDistance - cam.near)) / ((cam.far - cam.near) * Math.max(viewDistance, cam.near))));
     }
   } else if (entry.fx && fxModule) {
     fxModule.releaseModelFx(entry);
@@ -3316,15 +3579,25 @@ export function renderModelLayer(renderer, opts) {
   const screenMask = screenMeshes.length ? renderScreenMask(renderer, entry, scene, cam, screenMeshes) : null;
   if (!screenMeshes.length && entry.screenMask) { entry.screenMask.dispose(); entry.screenMask = null; }
 
-  const { toneMesh: tm, toneScene: ts, toneCamera: tc } = ensureTonePass();
+  // A model a world Scene let go of (opts.worldLook) takes that world's contact shadows too, in a tone pass of its own.
+  const { toneMesh: tm, toneScene: ts, toneCamera: tc } = (opts.worldLook && ensureReleasedTonePass(entry, cam)) || ensureTonePass();
   tm.material.uniforms.uTexture.value = toneSource;
   tm.material.uniforms.uResolution.value.set(entry.ldr.width, entry.ldr.height);
   if (tm.material.uniforms.uScreenMask) {
     tm.material.uniforms.uScreenMask.value = screenMask;
     tm.material.uniforms.uScreenMaskOn.value = screenMask ? 1 : 0;
   }
-  // The rig owns exposure once there is one; otherwise the layer's own env does.
-  tm.material.uniforms.uExposure.value = rig
+  // The rig owns exposure once there is one; otherwise the layer's own env does. A model a world Scene let go of (opts.worldLook) is filmed
+  // through that world's curve, Look and exposure, so it looks as it did in the world.
+  // Only the WebGPU twin has the film curve: a world Scene, and so a model it let go of, draws only on WebGPU.
+  const look = opts.worldLook || null;
+  if (tm.material.uniforms.uLook) tm.material.uniforms.uLook.value = look ? 1 : 0;
+  if (tm.material.uniforms.uAoAmount) tm.material.uniforms.uAoAmount.value = look ? (look.aoAmount ?? 1) : 1;
+  if (look) {
+    tm.material.uniforms.uLookContrast.value = look.contrast;
+    tm.material.uniforms.uLookSaturation.value = look.saturation;
+  }
+  tm.material.uniforms.uExposure.value = look ? look.exposure : rig
     ? rig.env.exposure
     : (Number.isFinite(config.env?.exposure) ? config.env.exposure : 1);
   renderer.setRenderTarget(entry.ldr);
@@ -3332,12 +3605,19 @@ export function renderModelLayer(renderer, opts) {
   renderer.clear(true, true, true);
   renderer.render(ts, tc);
 
+  // (gaps1) an orthographic pass hands its depth over as the compositor keeps it (a perspective camera's with the same near/far)
+  let depthTexture = entry.hdr.depthTexture, handedTransparent = transparentDepthTexture;
+  if (orthoPx) {
+    depthTexture = perspectiveDepthOf(renderer, entry, 'orthoDepth', entry.hdr.depthTexture, cam);
+    if (transparentDepthTexture) handedTransparent = perspectiveDepthOf(renderer, entry, 'orthoTDepth', transparentDepthTexture, cam);
+  } else if (entry.orthoDepth) disposePerspectiveDepth(entry);
+
   renderer.setRenderTarget(prevTarget);
   renderer.autoClear = prevAutoClear;
   renderer.setClearColor(prevClear, prevClearAlpha);
 
   return {
-    texture: entry.ldr.texture, depthTexture: entry.hdr.depthTexture, transparentDepthTexture,
+    texture: entry.ldr.texture, depthTexture, transparentDepthTexture: handedTransparent,
     viewDistance, viewRange, spillDepth, error: null,
   };
 }
@@ -3560,6 +3840,70 @@ function proxyDistance(W, H) {
   return (H * 0.5) / Math.tan((28 * Math.PI) / 180 / 2);
 }
 
+/**
+ * (pose) A layer's pose pipeline for this frame (modelPose.js applyPose). The mixer's actions stop first, so the two paths never mix.
+ * Targets: [x, y, z] in the Scene's metres (the editor's 3D space scaled by WORLD_UNITS), "@id" a Scene object as it stands at the scene's
+ * time, { bone } one of the model's own. `attach` hands a Scene object to a bone: entry.attachments, for the world (modelAttachments).
+ */
+function applyModelPose(entry, config, time, rig, sceneTime, placeOnFloor) {
+  for (const a of entry.activeActions || []) a.stop();
+  entry.activeActions = null;
+  if (entry.activeAction) { entry.activeAction.stop(); entry.activeAction = null; }
+  entry.poseRig ||= makePoseRig(entry.root, entry.animations || [], entry.restSource);
+  const scene = rig?.scene && typeof rig.scene === 'object' ? rig.scene : null;
+  const attachments = new Map();
+  // a pose asks at its own (layer) seconds; the Scene's objects stand at the Scene's: the two clocks differ by where the layer starts
+  const sceneAt = (t) => sceneTime + ((Number.isFinite(t) ? t : time) - time);
+  const point = (ref, t) => {
+    if (Array.isArray(ref) && ref.length === 3 && ref.every(Number.isFinite)) return new THREE.Vector3(ref[0] * 1000, ref[1] * 1000, ref[2] * 1000);
+    if (typeof ref === 'string' && scene) {
+      const m = sceneObjectMatrix(scene, ref.replace(/^@/, ''), sceneAt(t));
+      if (m) return new THREE.Vector3().setFromMatrixPosition(metresToEditor(m));
+    }
+    return null;
+  };
+  const ctx = {
+    sceneRef: scene,
+    resolve: (ref, t) => point(ref, t),
+    resolveMatrix: (ref, t) => {
+      if (typeof ref !== 'string' || !scene) return null;
+      const m = sceneObjectMatrix(scene, ref.replace(/^@/, ''), sceneAt(t));
+      if (!m) return null;
+      const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+      metresToEditor(m).decompose(p, q, s);
+      return m.compose(p, q, s.set(1, 1, 1));
+    },
+    attach: (id, matrix, w) => {
+      if (!scene || !Array.isArray(scene.objects) || !scene.objects.some((o) => o?.id === id)) return false;
+      attachments.set(id, { matrix: matrix.toArray(), weight: w });
+      return true;
+    },
+    beforeConstraints: placeOnFloor,
+  };
+  const result = applyPose(entry.poseRig, config.pose, time, ctx, config.animation || null);
+  entry.poseWarnings = result.warnings;
+  // what the constraints reached, by the Scene's time, for a still's report (the render page draws its frame again after the capture)
+  const history = entry.poseHistory ||= new Map();
+  history.delete(Math.round(sceneTime * 1e4));
+  history.set(Math.round(sceneTime * 1e4), entry.poseRig.solved);
+  if (history.size > 64) history.delete(history.keys().next().value);
+  entry.attachments = attachments.size ? attachments : null;
+  entry.posed = true;
+}
+
+/** (pose) A layer whose pose was removed goes back to the mixer path from the file's own pose. */
+function leavePose(entry) {
+  const r = entry.poseRig;
+  if (r) r.nodes.forEach((n, i) => {
+    n.position.copy(r.rest[i].p); n.quaternion.copy(r.rest[i].q); n.scale.copy(r.rest[i].s);
+    if (r.rest[i].w && n.morphTargetInfluences) n.morphTargetInfluences.splice(0, r.rest[i].w.length, ...r.rest[i].w);
+  });
+  entry.poseRig = null;
+  entry.posed = false;
+  entry.attachments = null;
+  entry.poseWarnings = null;
+}
+
 /** Drive the mixer to an absolute clip-local time, honouring speed/offset/loop. */
 // A clip's local time for this playhead, by the layer's loop mode. 'once' stops a hair
 // before the end: three wraps an action that sits EXACTLY on its duration back to frame 0.
@@ -3629,15 +3973,64 @@ export function modelWorldMatrix(itemId) {
   return entry.inner.matrixWorld.elements;
 }
 
+/** What a model's effects in the world measure by, as its own pass does (model3dFx.js): the asset root's frame in world px, the asset's
+ *  box in that frame, and its largest side on screen in composition px (renderModelLayer's fitPx). */
+export function modelFxFrame(itemId) {
+  const entry = instances.get(itemId);
+  if (!entry?.root || !entry.box) return null;
+  entry.root.updateWorldMatrix(true, false);
+  const b = entry.box, o = entry.outer.scale;
+  const fitPx = Math.max(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z) * entry.inner.scale.x * Math.max(o.x, o.y, o.z);
+  return { matrix: entry.root.matrixWorld.elements, box: [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z], fitPx };
+}
+
+/** A model's Grow Fill in a world Scene, as plain data for the world's material (model3dGrowFill.growFillForWorld). The model is posed first. */
+export function modelGrowFillForWorld(itemId, growFill) {
+  return growFillForWorld(instances.get(itemId), growFill);
+}
+
 /** Every node's local transform in traversal order, while a clip plays. Bones are nodes, so this carries skinning too. */
 export function modelNodePose(itemId) {
   const entry = instances.get(itemId);
-  if (!entry?.mixer || !(entry.activeActions?.length || entry.activeAction)) return null;
+  if (!entry?.posed && (!entry?.mixer || !(entry.activeActions?.length || entry.activeAction))) return null;
   const nodes = [];
   entry.root.traverse((n) => nodes.push(n));
   const out = new Float32Array(nodes.length * 16);
   nodes.forEach((n, i) => { n.updateMatrix(); n.matrix.toArray(out, i * 16); });
   return out;
+}
+
+/** (pose) A model's morph weights, every morph mesh in traversal order one after another, for the world (WorldRenderer.#setMorphs): a
+ *  posed model's, and a model whose GLB clips play (they may key the weights; the world, which has a copy of its own, showed the file's
+ *  shape). Null when nothing poses it. The world mixes only weights that differ from the file's own. */
+export function modelMorphWeights(itemId) {
+  const entry = instances.get(itemId);
+  const playing = entry?.mixer && (entry.activeActions?.length || entry.activeAction);
+  if (!entry?.posed && !playing) return null;
+  const meshes = entry.poseRig?.morphMeshes || (entry.morphMeshes ||= (() => { const l = []; entry.root.traverse((n) => { if (n.isMesh && n.morphTargetInfluences?.length) l.push(n); }); return l; })());
+  if (!meshes.length) return null;
+  const out = [];
+  for (const m of meshes) out.push(...m.morphTargetInfluences);
+  return Float32Array.from(out);
+}
+
+/** (pose) Whether the layer's pose pipeline (model3dConfig.pose) posed it, rather than the mixer path. */
+export function modelIsPosed(itemId) {
+  return !!instances.get(itemId)?.posed;
+}
+
+/** (pose) The Scene objects a posed model holds this frame (`attach`): id → { matrix (editor px, unit scale), weight }. */
+export function modelAttachments(itemId) {
+  return instances.get(itemId)?.attachments || null;
+}
+
+/** (pose) What an agent needs to write a pose for this layer's file (clips, morphs, the node tree) and what the last pose warned about. */
+export function modelPoseReport(itemId, sceneTime = null) {
+  const entry = instances.get(itemId);
+  if (!entry?.root) return null;
+  const rig = entry.poseRig || makePoseRig(entry.root, entry.animations || [], entry.restSource);
+  const at = Number.isFinite(sceneTime) ? entry.poseHistory?.get(Math.round(sceneTime * 1e4)) : null;
+  return { ...poseInfo(rig), warnings: entry.poseWarnings || [], solved: at || entry.poseRig?.solved || [], ...(entry.skeletonReport ? { skeleton: entry.skeletonReport } : {}) };
 }
 
 /** What the model's screens show, for the world renderer: a canvas crosses between two threes as it is. */
@@ -3650,12 +4043,23 @@ export function modelScreensForWorld(itemId) {
   for (const holder of [entry, ...(entry.screenSlots || [])]) {
     const surface = holder.screenSurface;
     if (!surface?.texture?.image) continue;
-    const swapped = [...(holder.screenOriginals?.keys() || [])];
+    // (presetscreen) What applyScreen swapped is the screen itself AND a preset's cover glass, which it fades (`glass`): only the meshes
+    // that wear the picture are the screen. The world put the picture on iphone_pro_max's glass too, whose uvs run across the phone: the
+    // artwork lay over the screen turned 90°, mirrored and cropped. The glass goes as a pane, faded as it is here.
+    const swapped = [...(holder.screenOriginals?.keys() || [])].map((m) => ({ m, at: meshes.indexOf(m) })).filter((s) => s.at >= 0);
+    const wearsPicture = (m) => [m.material].flat().some((x) => x?.map === surface.texture);
+    const screen = swapped.filter((s) => wearsPicture(s.m)), panes = swapped.filter((s) => !wearsPicture(s.m));
     out.push({
-      meshes: swapped.map((m) => meshes.indexOf(m)).filter((i) => i >= 0),
-      uv: swapped.map((m) => (holder.screenGeomOriginals?.has(m) ? m.geometry.attributes.uv?.array : null)),
+      meshes: screen.map((s) => s.at),
+      uv: screen.map((s) => (holder.screenGeomOriginals?.has(s.m) ? s.m.geometry.attributes.uv?.array : null)),
+      panes: panes.map((s) => ({ mesh: s.at, opacity: [s.m.material].flat()[0]?.opacity ?? 1 })),
       canvas: surface.texture.image, version: surface.texture.version,
       flipY: surface.texture.flipY, mirrorX: surface.texture.repeat.x < 0, rotation: surface.texture.rotation,
+      // how the world dresses it: `look: "monitor"` is glass over a glowing panel (WorldRenderer.setScreens)
+      look: holder.screenSpec?.look === 'monitor' ? 'monitor' : null,
+      strength: Number.isFinite(holder.screenSpec?.strength) ? holder.screenSpec.strength : null,
+      glass: Number.isFinite(holder.screenSpec?.glass) ? holder.screenSpec.glass : null,
+      light: holder.screenSpec?.light !== false,
     });
   }
   return out;
@@ -3691,7 +4095,17 @@ export function cycloramaArrays(rawRig, compH) {
   if (!mesh?.visible) return null;
   mesh.updateMatrix();
   const g = mesh.geometry;
-  return { position: g.attributes.position.array, normal: g.attributes.normal?.array, uv: g.attributes.uv?.array, index: g.index?.array, matrix: mesh.matrix.toArray() };
+  // (vfx) The floor that wears the footage's own floor (vfxScene.js floorPicture) gets uvs across its rectangle: u along +x, v along
+  // +z from its far edge. Only the world's copy, and only then: every other set keeps the arrays it always had.
+  const m = norm.cyclorama.material;
+  let uv = g.attributes.uv?.array;
+  if (!uv && norm.cyclorama.shape === 'floor' && m?.mode === 'shadowCatcher' && m.light > 0 && m.imageUrl) {
+    const { width, depth } = cycSizePx(norm.cyclorama, compH);
+    const p = g.attributes.position.array;
+    uv = new Float32Array((p.length / 3) * 2);
+    for (let i = 0, k = 0; i < p.length; i += 3, k += 2) { uv[k] = p[i] / width + 0.5; uv[k + 1] = 0.5 - p[i + 2] / depth; }
+  }
+  return { position: g.attributes.position.array, normal: g.attributes.normal?.array, uv, index: g.index?.array, matrix: mesh.matrix.toArray() };
 }
 
 /** The layer's real geometry group, for the 3D view's gizmo and selection box. */
@@ -3788,7 +4202,22 @@ export function projectModelPoint(itemId, point) {
 const worldLightRigs = new WeakMap();   // borrowing scene → { rig, refs }
 
 export function attachModelToScene(itemId, scene) {
-  const entry = instances.get(itemId);
+  return lendToScene(instances.get(itemId), scene);
+}
+
+/** (enginebugs2) A 3D Text layer's letters (its 3D pass's group), for the 3D view's gizmo and selection box: in a world Scene they are
+ *  posed there as the world stands them (channelRender.js promoteText3dMesh), so the box and the handles sit on the letters and turn
+ *  as they do. Before, the 3D view held the layer's own quad: a frame-sized box at the composition's centre, never turned. */
+export function getText3dObject(itemId) {
+  return text3dInstances.get(itemId)?.outer || null;
+}
+
+/** (enginebugs2) Lends a 3D Text layer's letters to the 3D view as a model is lent (attachModelToScene), lights included. */
+export function attachText3dToScene(itemId, scene) {
+  return lendToScene(text3dInstances.get(itemId), scene);
+}
+
+function lendToScene(entry, scene) {
   if (!entry || !scene || entry.outer.parent === scene) return null;
   const home = entry.outer.parent || entry.scene;
 
@@ -3854,6 +4283,8 @@ function disposeInstance(entry) {
   entry.outer.userData.__disposed = true;
   entry.outer.removeFromParent();
   releaseWorldLayer(sharedWorld, `m:${entry.itemId}`);
+  disposeReleasedTonePass(entry);
+  disposePerspectiveDepth(entry);
   entry.hdr?.dispose();
   entry.ldr?.dispose();
   entry.tdepth?.dispose();
@@ -3884,9 +4315,14 @@ function disposeInstance(entry) {
     entry.shadowMesh = null;
   }
   entry.screenSurface = null;
+  entry.liveSurface?.dispose();
+  entry.liveSurface = null;
   // A shape's per-layer materials are ours; its geometry belongs to the asset.
   for (const m of entry.tintMaterials || []) m.dispose();
   entry.tintMaterials = null;
+  // (leftovers-rig) a skeleton's dual-quaternion materials and bone table
+  for (const d of entry.skinDQ || []) d.dispose();
+  entry.skinDQ = null;
 
   // Lights are ours: they were created by syncLightsToScene, not cloned from the
   // shared asset, so unlike geometry and materials they must be disposed here.

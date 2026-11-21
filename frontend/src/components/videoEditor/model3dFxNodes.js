@@ -24,6 +24,18 @@ import { veDisplayTransform } from './threeDisplayTransformNodes.js';
 
 const sampler = () => makeTslSampler({ rgba: [0, 0, 0, 0] });
 
+/*
+ * THE WORLD'S INPUTS. A world Scene builds the passes in WORLD_PASSES on the
+ * model's object inside the world (src/world3d/render/objectFx.js), which has
+ * no model picture and no gN / gP of its own: it hands in tColor, tN and tP
+ * that read its own buffers in exactly the meaning the passes expect (the
+ * model as a layer, premultiplied by its coverage; the view normal and the
+ * normalised position, coverage in alpha). With none handed in, `input` is
+ * `sampler`, so the editor's own graphs are what they always were.
+ */
+let worldInputs = null;
+const input = (name) => (worldInputs?.[name] ? worldInputs[name]() : sampler());
+
 function finish(material, u) {
   material.depthTest = false;
   material.depthWrite = false;
@@ -55,7 +67,7 @@ const viewRay = (uvn, invProj) => {
 
 // ── Surface cells (model3dFx.js SURFACE_CELL) ───────────────────────────────
 const cellUniforms = () => ({
-  tColor: sampler(), tN: sampler(), tP: sampler(), uRes: uniform(new THREE.Vector2(1, 1)),
+  tColor: input('tColor'), tN: input('tN'), tP: input('tP'), uRes: uniform(new THREE.Vector2(1, 1)),
   uViewToModel: uniform(new THREE.Matrix3()), uPosToClip: uniform(new THREE.Matrix4()),
   uCell: uniform(0.03), uCellAspect: uniform(new THREE.Vector2(1, 1)), uOffset: uniform(new THREE.Vector2(0, 0)),
   uMode: uniform(0), uCellPx: uniform(24), uAvg: uniform(0),
@@ -106,7 +118,7 @@ const fxHash = (p) => fract(sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453123));
 
 // ── Surface toolkit (model3dFx.js FX_SURF) ──────────────────────────────────
 const surfUniforms = () => ({
-  tColor: sampler(), tN: sampler(), tP: sampler(), uRes: uniform(new THREE.Vector2(1, 1)),
+  tColor: input('tColor'), tN: input('tN'), tP: input('tP'), uRes: uniform(new THREE.Vector2(1, 1)),
   uViewToModel: uniform(new THREE.Matrix3()), uPosToClip: uniform(new THREE.Matrix4()),
   uMix: uniform(1), uTime: uniform(0), uCell: uniform(0.03),
 });
@@ -175,6 +187,553 @@ function e3Edges(u, q, r) {
   const col = select(acc.a.greaterThan(1e-4), acc.rgb.div(max(acc.a, 1e-4)), vec3(0.0));
   return { e, col };
 }
+
+// The passes a world Scene also builds on a model's object (src/world3d/render/objectFx.js, createWorldPassNodeMaterial), kept apart
+// from the rest so the world's bundle carries these and no other pass of this file.
+const WORLD_PASSES = {
+  fractal3d() {
+    const u = {
+      ...surfUniforms(), uType: uniform(0), uOctaves: uniform(4), uGain: uniform(0.55), uRidge: uniform(2.5),
+      uContrast: uniform(1), uBright: uniform(0), uFloor: uniform(0.35), uLightAmt: uniform(0), uBlendMode: uniform(0),
+      uInvertF: uniform(0), uDrift: uniform(new THREE.Vector3()), uShadow: uniform(new THREE.Color()),
+      uLightC: uniform(new THREE.Color()), uLightDir: uniform(new THREE.Vector3(0, 0, 1)),
+    };
+    const h3 = (pp) => fract(sin(dot(pp, vec3(127.1, 311.7, 74.7))).mul(43758.5453123));
+    const vn3 = (x) => {
+      const i = floor(x).toVar();
+      const f0 = x.sub(i);
+      const f = f0.mul(f0).mul(float(3.0).sub(f0.mul(2.0))).toVar();
+      const a = mix(mix(h3(i), h3(i.add(vec3(1, 0, 0))), f.x), mix(h3(i.add(vec3(0, 1, 0))), h3(i.add(vec3(1, 1, 0))), f.x), f.y);
+      const b = mix(mix(h3(i.add(vec3(0, 0, 1))), h3(i.add(vec3(1, 0, 1))), f.x), mix(h3(i.add(vec3(0, 1, 1))), h3(i.add(vec3(1, 1, 1))), f.x), f.y);
+      return mix(a, b, f.z);
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const uvn = screenUV;
+      const own = u.tColor.sample(uvn).toVar();
+      const p = u.tP.sample(uvn).xyz.div(u.uCell).add(u.uDrift).toVar();
+      const sum = float(0.0).toVar();
+      const amp = float(0.5).toVar();
+      const norm = float(0.0).toVar();
+      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
+        If(float(i).lessThan(u.uOctaves), () => {
+          const n0 = vn3(p).toVar();
+          const n = select(u.uType.greaterThan(1.5), pow(float(1.0).sub(abs(n0.mul(2.0).sub(1.0))), u.uRidge),
+            select(u.uType.greaterThan(0.5), abs(n0.mul(2.0).sub(1.0)), n0));
+          sum.addAssign(n.mul(amp));
+          norm.addAssign(amp);
+          amp.mulAssign(u.uGain);
+          p.assign(p.mul(2.03).add(vec3(17.1, 5.3, 11.7)));
+        });
+      });
+      const v0 = clamp(sum.div(max(norm, 1e-4)).sub(0.5).mul(u.uContrast).add(0.5).add(u.uBright), 0.0, 1.0);
+      const v1 = smoothstep(u.uFloor.mul(0.5), 1.0, v0);
+      const v2 = select(u.uInvertF.greaterThan(0.5), float(1.0).sub(v1), v1);
+      const nv = normalize(u.tN.sample(uvn).rgb.mul(2.0).sub(1.0));
+      const v = v2.mul(mix(float(1.0), clamp(dot(nv, u.uLightDir).mul(0.5).add(0.5), 0.0, 1.0), u.uLightAmt)).toVar();
+      const field = mix(u.uShadow, u.uLightC, v);
+      const base = clamp(fxUnpre(own), 0.0, 1.0);
+      const bm = u.uBlendMode;
+      const mixed = select(bm.lessThan(0.5), fxBlend(base, field, float(2.0)),
+        select(bm.lessThan(1.5), fxBlend(base, field, float(5.0)),
+          select(bm.lessThan(2.5), fxBlend(base, field, float(1.0)),
+            select(bm.lessThan(3.5), fxBlend(base, field, float(3.0)),
+              select(bm.lessThan(4.5), fxBlend(base, field, float(4.0)), mix(base, field, v))))));
+      return outMix(u, own, mixed);
+    })();
+    return finish(m, u);
+  },
+
+  pixelate3d() {
+    const u = { ...cellUniforms(), uMix: uniform(1) };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const c = cellAt(u, screenUV);
+      const own = c.own;
+      const fx = vec4(c.color.rgb.div(max(c.color.a, 1e-4)).mul(own.a), own.a);
+      return select(own.a.lessThan(0.001), own, mix(own, fx, u.uMix));
+    })();
+    return finish(m, u);
+  },
+
+  beam3d() {
+    const u = {
+      ...surfUniforms(), uC1: uniform(new THREE.Color()), uC2: uniform(new THREE.Color()), uC3: uniform(new THREE.Color()),
+      uSpeed: uniform(1), uAngle: uniform(0), uBlur: uniform(0.6), uWidth: uniform(0.5), uHold: uniform(1.4),
+      uOpacity: uniform(0.75), uBlendMode: uniform(0), uType: uniform(0), uKeepLayer: uniform(1),
+    };
+    const ramp = (t0) => {
+      const t = clamp(t0, 0.0, 1.0);
+      const a = smoothstep(0.0, 1.0, clamp(t.mul(2.0), 0.0, 1.0));
+      const b = smoothstep(0.0, 1.0, clamp(t.mul(2.0).sub(1.0), 0.0, 1.0));
+      return mix(mix(u.uC1, u.uC2, a), u.uC3, b);
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const own = u.tColor.sample(screenUV).toVar();
+      const p = u.tP.sample(screenUV).xyz.toVar();
+      const dir = vec3(cos(u.uAngle), sin(u.uAngle), 0.0);
+      const nrm = vec3(sin(u.uAngle).negate(), cos(u.uAngle), 0.0);
+      const halfDiag = float(0.7071);
+      const travel = float(2.6).div(max(u.uSpeed, 0.05));
+      const cycle = travel.add(u.uHold);
+      const prog = clamp(mod(u.uTime, cycle).div(travel), 0.0, 1.0).toVar();
+      const glide = mix(prog, prog.mul(prog).mul(float(3.0).sub(prog.mul(2.0))), 0.65);
+      // Directional
+      const hwD = u.uWidth.mul(halfDiag).mul(1.6);
+      const cD = hwD.add(halfDiag).negate().add(halfDiag.add(hwD).mul(2.0).mul(glide));
+      const q = dot(p, nrm).add(p.z.mul(0.6)).toVar();
+      const wob = sin(q.mul(2.3).add(u.uTime.mul(0.5))).mul(0.5).add(sin(q.mul(4.1).sub(u.uTime.mul(0.31))).mul(0.5));
+      const dD = dot(p, dir).sub(cD).add(wob.mul(hwD).mul(0.22)).div(hwD);
+      const rD = q.div(halfDiag).mul(0.52).add(0.5).add(dD.mul(0.26)).add(wob.mul(0.1));
+      // From Center
+      const hwC = u.uWidth.mul(halfDiag).mul(0.9);
+      const cC = hwC.mul(-0.72).add(halfDiag.add(hwC.mul(1.35)).mul(glide));
+      const dC = length(p).sub(cC).div(max(hwC, 1e-4));
+      const rC = dC.mul(0.55).add(0.5);
+      const isC = u.uType.greaterThan(0.5);
+      const d = select(isC, dC, dD).toVar();
+      const rampPos = select(isC, rC, rD);
+      const shape = mix(7.0, 1.6, u.uBlur);
+      const env = exp(pow(max(abs(d), 1e-4), shape).mul(-2.2)).mul(float(1.0).sub(smoothstep(1.7, 3.1, abs(d))));
+      const fade = smoothstep(0.0, 0.16, prog).mul(float(1.0).sub(smoothstep(0.66, 1.0, prog)));
+      const k = clamp(env.mul(fade).mul(u.uOpacity), 0.0, 1.0).toVar();
+      const keep = mix(clamp(env.mul(fade), 0.0, 1.0), 1.0, u.uKeepLayer);
+      const beam = ramp(rampPos).toVar();
+      const b = fxUnpre(own).toVar();
+      const bm = u.uBlendMode;
+      const outCol = select(bm.lessThan(0.5), b.add(beam.mul(k).mul(float(1.0).sub(clamp(b, 0.0, 1.0)))),
+        select(bm.lessThan(1.5), b.add(beam.mul(k)),
+          select(bm.lessThan(2.5), mix(b, max(b, beam), k),
+            select(bm.lessThan(3.5), mix(b, fxBlend(clamp(b, 0.0, 1.0), beam, float(4.0)), k), mix(b, beam, k)))));
+      const a = own.a.mul(keep);
+      return select(own.a.lessThan(0.001), own, mix(own, vec4(outCol.mul(a), a), u.uMix));
+    })();
+    return finish(m, u);
+  },
+
+  sweep3d() {
+    const u = {
+      ...surfUniforms(), tLight: sampler(), tHalo: sampler(), uInvProj: uniform(new THREE.Matrix4()),
+      uCore: uniform(new THREE.Color()), uWarm: uniform(new THREE.Color()), uHot: uniform(new THREE.Color()),
+      uCool: uniform(new THREE.Color()), uDeep: uniform(new THREE.Color()), uStroke: uniform(new THREE.Color()),
+      uStage: uniform(1), uMode: uniform(0), uAngle: uniform(0), uBand: uniform(0.2), uCoreW: uniform(1), uFront: uniform(0),
+      uStrength: uniform(1), uBlendMode: uniform(0), uCoolFill: uniform(0.34), uDim: uniform(0.45), uSheenFade: uniform(0.5),
+      uGlow: uniform(0), uStrokeOp: uniform(0.9), uStrokeW: uniform(0.1),
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const uvn = screenUV;
+      const own = u.tColor.sample(uvn).toVar();
+      const p = u.tP.sample(uvn).xyz;
+      const s01 = dot(p, vec3(cos(u.uAngle), sin(u.uAngle), 0.0)).div(1.4142).add(0.5);
+      const x = u.uFront.sub(s01).div(max(u.uBand, 1e-3)).toVar();
+      const bandEnv = exp(x.mul(x).mul(-3.0)).toVar();
+      const core = float(1.0).sub(smoothstep(u.uCoreW.mul(0.5), u.uCoreW.mul(0.5).add(0.15), abs(x)));
+      const bandCol = mix(mix(u.uHot, u.uWarm, smoothstep(-0.4, 0.6, x)), u.uCore, core).toVar();
+      const facing = facingAt(u, uvn, u.uInvProj).toVar();
+      const lightA = bandCol.mul(bandEnv).mul(u.uStrength);
+      const edge = float(1.0).sub(smoothstep(0.0, max(u.uStrokeW, 0.02), facing));
+      const lightB = lightA.add(u.uStroke.mul(u.uStrokeOp).mul(step(0.0, x))).mul(edge);
+      const graze = pow(float(1.0).sub(facing), u.uSheenFade.mul(2.0).add(0.5));
+      const lightC = lightA.mul(graze.add(0.25));
+      const light = select(u.uMode.lessThan(0.5), lightA, select(u.uMode.lessThan(1.5), lightB, lightC)).toVar();
+      const b = fxUnpre(own).toVar();
+      const ahead = select(u.uMode.lessThan(0.5), smoothstep(0.0, -1.0, x), float(0.0));
+      const waiting = mix(b.mul(float(1.0).sub(u.uDim)), mix(u.uDeep, u.uCool, fxTone(b)), u.uCoolFill);
+      const base = mix(b, waiting, ahead).toVar();
+      const c = select(u.uBlendMode.lessThan(0.5), base.add(light),
+        select(u.uBlendMode.lessThan(1.5), base.add(light.mul(float(1.0).sub(clamp(base, 0.0, 1.0)))),
+          mix(base, bandCol, clamp(bandEnv.mul(u.uStrength), 0.0, 1.0))));
+      const halo = u.tHalo.sample(uvn).rgb.mul(u.uGlow);
+      // Past the silhouette the glow is the only light: its strength is its coverage.
+      const haloOut = mix(own, vec4(halo, clamp(max(halo.r, max(halo.g, halo.b)), 0.0, 1.0)), u.uMix);
+      const composite = select(own.a.lessThan(0.001), haloOut, mix(own, vec4(c.add(halo).mul(own.a), own.a), u.uMix));
+      const stage0 = select(own.a.lessThan(0.001), vec4(0.0), vec4(light, 1.0));
+      return select(u.uStage.lessThan(0.5), stage0, composite);
+    })();
+    return finish(m, u);
+  },
+
+  bloomBright3d() {
+    const u = { tColor: input('tColor'), uRes: uniform(new THREE.Vector2(1, 1)), uThr: uniform(0.62), uKnee: uniform(0.5), uExposure: uniform(1) };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const s = u.tColor.sample(screenUV).toVar();
+      const c = fxUnpre(s).toVar();
+      const shown = veDisplayTransform(c, u.uExposure).toVar();
+      const br = max(shown.r, max(shown.g, shown.b));
+      const knee = max(u.uThr.mul(u.uKnee), 1e-4).toVar();
+      const soft0 = clamp(br.sub(u.uThr).add(knee), 0.0, knee.mul(2.0));
+      const soft = soft0.mul(soft0).div(knee.mul(4.0));
+      const w = max(max(soft, br.sub(u.uThr)).div(max(br, 1e-4)), 0.0).toVar();
+      return vec4(c.mul(w).mul(s.a), w.mul(s.a));
+    })();
+    return finish(m, u);
+  },
+
+  bloom3d() {
+    const u = {
+      tColor: input('tColor'), tBloom: sampler(), tStreak: sampler(), uRes: uniform(new THREE.Vector2(1, 1)),
+      uMix: uniform(1), uGain: uniform(1), uSat: uniform(1), uTintAmt: uniform(0), uAnamorph: uniform(0), uBlendMode: uniform(0),
+      uTint: uniform(new THREE.Color()),
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const uvn = screenUV;
+      const src = u.tColor.sample(uvn).toVar();
+      const bl = u.tBloom.sample(uvn).rgb.toVar();
+      const an = abs(u.uAnamorph).toVar();
+      // The streak's taps run every frame (uniform control flow); Anamorphic 0 weighs them out.
+      const dir = select(u.uAnamorph.greaterThanEqual(0.0), vec2(1.0, 0.0), vec2(0.0, 1.0)).toVar();
+      const len = an.mul(0.35).add(0.10).toVar();
+      const jit = fxHash(screenCoordinate.xy).sub(0.5).toVar();
+      const acc = vec3(0.0).toVar();
+      const ws = float(0.0).toVar();
+      const w = float(1.0).toVar();
+      Loop({ start: int(1), end: int(17), type: 'int', condition: '<' }, ({ i }) => {
+        w.mulAssign(0.91);
+        const o = dir.mul(len).mul(float(i).add(jit).div(16.0));
+        acc.addAssign(u.tStreak.sample(uvn.add(o)).rgb.add(u.tStreak.sample(uvn.sub(o)).rgb).mul(w));
+        ws.addAssign(w.mul(2.0));
+      });
+      bl.addAssign(select(an.greaterThan(0.01), acc.div(max(ws, 1.0)).mul(2.0).mul(an).mul(1.2), vec3(0.0)));
+      const b0 = bl.mul(u.uGain);
+      const l = fxLuma(b0).toVar();
+      const b1 = max(mix(vec3(l), b0, u.uSat), 0.0);
+      const b = mix(b1, vec3(l).mul(u.uTint).mul(1.6), u.uTintAmt).toVar();
+      const ba = clamp(max(b.r, max(b.g, b.b)), 0.0, 1.0).toVar();
+      const sc = src.rgb;
+      const bm = u.uBlendMode;
+      const col = select(bm.lessThan(0.5), sc.add(b),
+        select(bm.lessThan(1.5), sc.add(b.mul(float(1.0).sub(clamp(sc, 0.0, 1.0)))),
+          select(bm.lessThan(2.5), max(sc, b),
+            select(bm.lessThan(3.5), mix(sc.add(b), sc.div(max(vec3(1.0).sub(min(b, vec3(0.96))), vec3(0.04))), src.a), b))));
+      const outA = select(bm.lessThan(3.5), max(src.a, ba), ba);
+      return mix(src, vec4(col, outA), u.uMix);
+    })();
+    return finish(m, u);
+  },
+
+  lines3d() {
+    const u = {
+      ...surfUniforms(), uCenter: uniform(new THREE.Vector2(0.5, 0.5)), uLines: uniform(4), uHead: uniform(0), uTrail: uniform(0.35),
+      uWidthPx: uniform(7), uMinW: uniform(0.06), uWf: uniform(1), uTaper: uniform(0.12), uSpreadPx: uniform(8), uLag: uniform(0),
+      uHeadBright: uniform(0.3), uIntensity: uniform(1), uDirSign: uniform(1),
+      uC1: uniform(new THREE.Color()), uC2: uniform(new THREE.Color()), uC3: uniform(new THREE.Color()),
+    };
+    // Dilated coverage: the most coverage within r px.
+    const cov = (q, r) => {
+      const mx = atGl(u.tN, q).a.toVar();
+      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
+        const ang = float(i).mul(RING);
+        mx.assign(max(mx, atGl(u.tN, q.add(vec2(cos(ang), sin(ang)).mul(r).div(u.uRes))).a));
+      });
+      return mx;
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const q = glUv().toVar();
+      const d = q.sub(u.uCenter).mul(u.uRes);
+      const s = atan(d.y, d.x).div(6.2831853).add(0.5).toVar();
+      const L = vec3(0.0).toVar();
+      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
+        const fi = float(i).toVar();
+        const on = step(fi.add(0.5), u.uLines);
+        const dist = fract(u.uHead.sub(fi.mul(u.uLag)).sub(s).mul(u.uDirSign));
+        const tr = clamp(float(1.0).sub(dist.div(max(u.uTrail, 1e-3))), 0.0, 1.0).toVar();
+        const w = max(u.uWidthPx.mul(max(u.uWf, u.uMinW)).mul(smoothstep(0.0, max(u.uTaper, 1e-3), tr)), 0.75).toVar();
+        const off = fi.mul(u.uSpreadPx).toVar();
+        const ring = clamp(cov(q, off.add(w)).sub(cov(q, off)), 0.0, 1.0);
+        const headGlow = float(1.0).add(u.uHeadBright.mul(3.0).mul(smoothstep(0.94, 1.0, tr)));
+        const slot = mod(fi, 3.0);
+        const c = select(slot.lessThan(0.5), u.uC1, select(slot.lessThan(1.5), u.uC2, u.uC3));
+        L.addAssign(c.mul(ring).mul(step(1e-4, tr)).mul(mix(0.35, 1.0, tr)).mul(headGlow).mul(on));
+      });
+      return vec4(L.mul(u.uIntensity), 1.0);
+    })();
+    return finish(m, u);
+  },
+
+  glowComp3d() {
+    const u = {
+      tColor: input('tColor'), tLight: sampler(), tHalo: sampler(), uRes: uniform(new THREE.Vector2(1, 1)),
+      uMix: uniform(1), uCore: uniform(1), uHalo: uniform(0), uSrcLevel: uniform(1),
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const c = u.tColor.sample(screenUV).toVar();
+      const L = u.tLight.sample(screenUV).rgb.mul(u.uCore).add(u.tHalo.sample(screenUV).rgb.mul(u.uHalo)).toVar();
+      const la = clamp(max(L.r, max(L.g, L.b)), 0.0, 1.0);
+      return mix(c, vec4(c.rgb.mul(u.uSrcLevel).add(L), max(c.a.mul(u.uSrcLevel), la)), u.uMix);
+    })();
+    return finish(m, u);
+  },
+
+  edge3d() {
+    const u = {
+      ...surfUniforms(), ...edgeUniforms(), uCenter: uniform(new THREE.Vector2(0.5, 0.5)), uHalf: uniform(new THREE.Vector2(0.25, 0.25)),
+      uMethod: uniform(0), uThr: uniform(0.12), uKnee: uniform(0.35), uLow: uniform(0.4), uThick: uniform(0), uGain: uniform(1),
+      uColorMode: uniform(0), uInvert: uniform(0), uBands: uniform(8), uSigma: uniform(2), uK: uniform(1.6), uTau: uniform(15),
+      uPhi: uniform(25), uEps: uniform(0), uAnim: uniform(0), uSpd: uniform(1), uProgress: uniform(0), uSweepAngle: uniform(0),
+      uSweepSoft: uniform(0.1), uEdgeA: uniform(new THREE.Color()), uEdgeB: uniform(new THREE.Color()),
+    };
+    const ring = (q, r) => {
+      const acc = fxTone(fxUnpre(atGl(u.tColor, q))).mul(2.0).toVar();
+      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
+        const ang = float(i).mul(RING);
+        acc.addAssign(fxTone(fxUnpre(atGl(u.tColor, q.add(vec2(cos(ang), sin(ang)).mul(r).div(u.uRes))))));
+      });
+      return acc.div(10.0);
+    };
+    const vn = (p) => {
+      const i = floor(p).toVar();
+      const f = fract(p);
+      const w = f.mul(f).mul(vec2(3.0).sub(f.mul(2.0))).toVar();
+      return mix(mix(fxHash(i), fxHash(i.add(vec2(1.0, 0.0))), w.x), mix(fxHash(i.add(vec2(0.0, 1.0))), fxHash(i.add(vec2(1.0, 1.0))), w.x), w.y);
+    };
+    const level = (q, bands) => floor(clamp(e3Z(u, q).sub(u.uZRange.x).div(max(u.uZRange.y.sub(u.uZRange.x), 1e-4)), 0.0, 0.9999).mul(bands));
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const uv = glUv().toVar();
+      const q = uv.sub(u.uCenter).div(max(u.uHalf.mul(2.0), vec2(1e-4))).toVar();
+      const axis = vec2(cos(u.uSweepAngle), sin(u.uSweepAngle));
+      const asp = u.uHalf.x.mul(u.uRes.x).div(max(u.uHalf.y.mul(u.uRes.y), 1e-4));
+      const span = abs(axis.x).mul(asp).add(abs(axis.y)).mul(0.5).add(1e-5);
+      const sweep = dot(q.mul(vec2(asp, 1.0)), axis).div(span.mul(2.0)).add(0.5).toVar();
+      const bt = floor(u.uTime.mul(8.0).mul(u.uSpd));
+      const boil = vec2(vn(q.mul(14.0).add(bt.mul(7.13))), vn(q.mul(14.0).add(91.7).sub(bt.mul(3.31)))).sub(0.5).mul(vec2(3.5).div(u.uRes));
+      const euv = uv.add(select(u.uAnim.greaterThan(4.5), boil, vec2(0.0))).toVar();
+      const { e: g, col: near } = e3Edges(u, euv, u.uThick.add(1.0));
+      const cov = atGl(u.tN, euv).a.toVar();
+      const geo = max(g.x, max(g.y.mul(1.2), g.z.mul(6.0))).toVar();
+      const th = u.uThr.mul(0.7).toVar();
+      const eGrad = smoothstep(th.mul(float(1.0).sub(u.uKnee)), th.mul(float(1.0).add(u.uKnee)).add(0.003), geo);
+      const eThin = select(geo.greaterThanEqual(th), float(1.0), select(geo.greaterThanEqual(th.mul(u.uLow)), float(0.5), float(0.0)));
+      const a = ring(euv, u.uSigma);
+      const b = ring(euv, u.uSigma.mul(u.uK));
+      const S = float(1.0).add(u.uTau).mul(a).sub(u.uTau.mul(b)).toVar();
+      const t2 = exp(clamp(u.uPhi.mul(S.sub(u.uEps)), -8.0, 8.0).mul(2.0));
+      const T = select(S.greaterThanEqual(u.uEps), float(1.0), float(1.0).add(t2.sub(1.0).div(t2.add(1.0))));
+      const eInk = max(clamp(float(1.0).sub(T), 0.0, 1.0).mul(cov), g.x);
+      const bands = max(floor(u.uBands.add(0.5)), 2.0).toVar();
+      const px = vec2(1.0).div(u.uRes);
+      const l0 = level(euv, bands);
+      const lr = level(euv.add(vec2(px.x, 0.0)), bands);
+      const lu = level(euv.add(vec2(0.0, px.y)), bands);
+      const c3 = cov.mul(atGl(u.tN, euv.add(vec2(px.x, 0.0))).a).mul(atGl(u.tN, euv.add(vec2(0.0, px.y))).a);
+      const stepped = abs(lr.sub(l0)).greaterThan(0.5).or(abs(lu.sub(l0)).greaterThan(0.5));
+      const eBands = max(select(stepped, c3, float(0.0)), g.x);
+      const meth = u.uMethod;
+      const e0 = select(meth.lessThan(0.5), eGrad, select(meth.lessThan(1.5), eThin, select(meth.lessThan(2.5), eInk, eBands)));
+      const e1 = select(u.uInvert.greaterThan(0.5), float(1.0).sub(e0).mul(max(cov, g.x)), e0);
+      const e = clamp(e1.mul(u.uGain), 0.0, 1.0).toVar();
+      const prog = clamp(u.uProgress.mul(u.uSpd), 0.0, 1.0);
+      const s2 = u.uSweepSoft.add(0.02);
+      const pp = mix(s2.negate(), s2.add(1.0), prog);
+      const showDraw = float(1.0).sub(smoothstep(pp.sub(s2), pp.add(s2), sweep));
+      const sd = sweep.sub(prog.mul(1.1).sub(0.05)).toVar();
+      const showScan = select(sd.lessThan(0.0), float(1.0), float(0.0));
+      const fl = fxHash(vec2(floor(u.uTime.mul(24.0).mul(u.uSpd)), 7.0));
+      const an = u.uAnim;
+      const show = select(an.greaterThan(0.5).and(an.lessThan(1.5)), showDraw,
+        select(an.greaterThan(1.5).and(an.lessThan(2.5)), showScan,
+          select(an.greaterThan(2.5).and(an.lessThan(3.5)), fl.mul(fl).mul(0.55).add(0.45), float(1.0))));
+      const scan = select(an.greaterThan(1.5).and(an.lessThan(2.5)), exp(abs(sd).mul(-90.0)).mul(max(cov, g.x)), float(0.0)).toVar();
+      e.mulAssign(show);
+      const n = atGl(u.tN, euv).rgb.mul(2.0).sub(1.0);
+      const hp = abs(mod(fract(atan(n.y, n.x).div(6.2831853).add(0.5)).mul(6.0).add(vec3(0.0, 4.0, 2.0)), 6.0).sub(3.0));
+      const hue = clamp(hp.sub(1.0), 0.0, 1.0);
+      const z01 = clamp(e3Z(u, euv).sub(u.uZRange.x).div(max(u.uZRange.y.sub(u.uZRange.x), 1e-4)), 0.0, 1.0);
+      const cm = u.uColorMode;
+      const col = select(cm.lessThan(0.5), u.uEdgeA,
+        select(cm.lessThan(1.5), clamp(pow(clamp(near, 0.0, 1.0), vec3(0.6)).mul(1.25), 0.0, 1.0),
+          select(cm.lessThan(2.5), hue, mix(u.uEdgeA, u.uEdgeB, z01)))).toVar();
+      return vec4(col.mul(e).add(col.mul(0.85).add(0.15).mul(scan)), clamp(e.add(scan.mul(0.5)), 0.0, 1.0));
+    })();
+    return finish(m, u);
+  },
+
+  edgeComp3d() {
+    const u = {
+      tColor: input('tColor'), tLight: sampler(), tHalo: sampler(), uRes: uniform(new THREE.Vector2(1, 1)),
+      uMix: uniform(1), uSrcLevel: uniform(0), uGlow: uniform(0), uBlendMode: uniform(0),
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const src = u.tColor.sample(screenUV).toVar();
+      const ed = u.tLight.sample(screenUV).toVar();
+      const e = clamp(ed.a, 0.0, 1.0).toVar();
+      const base = src.mul(u.uSrcLevel).toVar();
+      const bm = u.uBlendMode;
+      const rgb = select(bm.lessThan(0.5), ed.rgb.add(base.rgb.mul(float(1.0).sub(e))),
+        select(bm.lessThan(1.5), base.rgb.add(ed.rgb), base.rgb.add(ed.rgb.mul(float(1.0).sub(clamp(base.rgb, 0.0, 1.0))))));
+      const a = select(bm.lessThan(0.5), e.add(base.a.mul(float(1.0).sub(e))),
+        select(bm.lessThan(1.5), base.a.add(e), base.a.add(e.mul(float(1.0).sub(base.a)))));
+      const h = u.tHalo.sample(screenUV).rgb.mul(u.uGlow).toVar();
+      const outA = clamp(a.add(clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0).mul(0.8)), 0.0, 1.0);
+      return mix(src, vec4(rgb.add(h), outA), u.uMix);
+    })();
+    return finish(m, u);
+  },
+
+  rulers3d() {
+    const seg = uniformArray(new Float32Array(60), 'float');
+    const cor = uniformArray(new Float32Array(16), 'float');
+    const u = {
+      tColor: input('tColor'), uRes: uniform(new THREE.Vector2(1, 1)), uMix: uniform(1),
+      // The GLSL writer fills `.value` in place; here that is the node's own array.
+      uSeg: { node: seg, get value() { return seg.array; } },
+      uCor: { node: cor, get value() { return cor.array; } },
+      uCenterPx: uniform(new THREE.Vector2()),
+      uLw: uniform(1.5), uExt: uniform(1e6), uDash: uniform(0), uShape: uniform(0), uMarkR: uniform(1), uMarkT: uniform(2.5),
+      uMid: uniform(0), uLineOp: uniform(0.9), uCorners: uniform(8), uMarkHs: uniform(new THREE.Vector2(7.5, 7.5)),
+      uLineC: uniform(new THREE.Color()), uMarkC: uniform(new THREE.Color()),
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const px = glUv().mul(u.uRes).toVar();
+      const src = u.tColor.sample(screenUV).toVar();
+      const front = float(0.0).toVar();
+      const back = float(0.0).toVar();
+      const mark = float(0.0).toVar();
+      const marks = u.uShape.lessThan(6.5);
+      Loop({ start: int(0), end: int(12), type: 'int', condition: '<' }, ({ i }) => {
+        const o = i.mul(5);
+        const a = vec2(seg.element(o), seg.element(o.add(1))).toVar();
+        const b = vec2(seg.element(o.add(2)), seg.element(o.add(3))).toVar();
+        const vis = seg.element(o.add(4));
+        const ab = b.sub(a);
+        const L = length(ab).toVar();
+        const t = ab.div(max(L, 1e-4)).toVar();
+        const mid = a.add(b).mul(0.5);
+        const rel = px.sub(mid).toVar();
+        const along = dot(rel, t);
+        const acrossS = dot(rel, vec2(t.y.negate(), t.x));
+        const live = step(0.5, L);
+        const g = srGuide(abs(acrossS), along, L.mul(0.5), u.uLw, u.uExt, u.uDash).mul(live);
+        front.assign(select(vis.greaterThan(0.5), max(front, g), front));
+        back.assign(select(vis.greaterThan(0.5), back, max(back, g)));
+        const mm = clamp(float(0.5).sub(srMark(vec2(acrossS, along), u.uMarkHs, float(1.0), u.uShape, u.uMarkR, u.uMarkT)), 0.0, 1.0);
+        mark.assign(select(u.uMid.greaterThan(0.5).and(marks), max(mark, mm.mul(live)), mark));
+      });
+      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
+        const c = vec2(cor.element(i.mul(2)), cor.element(i.mul(2).add(1))).toVar();
+        const sgn = vec2(select(c.x.greaterThanEqual(u.uCenterPx.x), float(1.0), float(-1.0)), select(c.y.greaterThanEqual(u.uCenterPx.y), float(1.0), float(-1.0)));
+        const mk = clamp(float(0.5).sub(srMark(px.sub(c).mul(sgn), u.uMarkHs, float(0.0), u.uShape, u.uMarkR, u.uMarkT)), 0.0, 1.0);
+        const on = step(float(i).add(0.5), u.uCorners);
+        mark.assign(select(marks, max(mark, mk.mul(on)), mark));
+      });
+      const lines = max(front, back.mul(0.45).mul(float(1.0).sub(src.a))).mul(u.uLineOp).toVar();
+      const o1 = src.mul(float(1.0).sub(lines)).add(vec4(u.uLineC.mul(lines), lines));
+      const o2 = o1.mul(float(1.0).sub(mark)).add(vec4(u.uMarkC.mul(mark), mark));
+      return mix(src, o2, u.uMix);
+    })();
+    return finish(m, u);
+  },
+
+  voxel3d() {
+    const u = {
+      ...surfUniforms(), uInvProj: uniform(new THREE.Matrix4()), uViewToModel4: uniform(new THREE.Matrix4()),
+      uBoxH: uniform(new THREE.Vector3(0.5, 0.5, 0.5)), uVox: uniform(0.05), uEdge: uniform(0.35), uLightM: uniform(new THREE.Vector3(0, 0, 1)),
+    };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const uvn = screenUV;
+      const own = u.tColor.sample(uvn).toVar();
+      const dv = viewRay(uvn, u.uInvProj);
+      const O = u.uViewToModel4.mul(vec4(0.0, 0.0, 0.0, 1.0)).xyz.toVar();
+      const D = normalize(u.uViewToModel4.mul(vec4(dv, 0.0)).xyz).toVar();
+      const bmin = u.uBoxH.negate().sub(u.uVox);
+      const bmax = u.uBoxH.add(u.uVox);
+      const inv = vec3(1.0).div(mix(vec3(1e-6), D, step(vec3(1e-6), abs(D)))).toVar();
+      const t0 = bmin.sub(O).mul(inv);
+      const t1 = bmax.sub(O).mul(inv);
+      const tn = min(t0, t1).toVar();
+      const tf = max(t0, t1).toVar();
+      const tEnter = max(max(tn.x, tn.y), max(tn.z, 0.0)).toVar();
+      const tExit = min(tf.x, min(tf.y, tf.z)).toVar();
+      const P = O.add(D.mul(tEnter.add(1e-4)));
+      const cell = floor(P.div(u.uVox)).toVar();
+      const st = sign(D).toVar();
+      const tMax = cell.add(max(st, 0.0)).mul(u.uVox).sub(O).mul(inv).toVar();
+      const tDel = abs(inv.mul(u.uVox)).toVar();
+      const face = select(tn.x.greaterThan(tn.y).and(tn.x.greaterThan(tn.z)), float(0.0), select(tn.y.greaterThan(tn.z), float(1.0), float(2.0))).toVar();
+      const hit = float(0.0).toVar();
+      const tHit = tEnter.toVar();
+      Loop({ start: int(0), end: int(64), type: 'int', condition: '<' }, () => {
+        // Solid test every step (uniform control flow), the DDA advance only until a hit.
+        const c = cell.add(0.5).mul(u.uVox);
+        const clip = u.uPosToClip.mul(vec4(c, 1.0));
+        const suv = ndcToUv(clip.xy.div(clip.w)).toVar();
+        const q = u.tP.sample(suv).xyz;
+        const cov = u.tN.sample(suv).a;
+        const dd = abs(q.sub(c));
+        const inFrame = suv.x.greaterThanEqual(0.0).and(suv.y.greaterThanEqual(0.0)).and(suv.x.lessThanEqual(1.0)).and(suv.y.lessThanEqual(1.0));
+        const solid = inFrame.and(cov.greaterThan(0.5)).and(max(dd.x, max(dd.y, dd.z)).lessThanEqual(u.uVox.mul(0.75)));
+        If(hit.lessThan(0.5).and(solid), () => { hit.assign(1.0); });
+        If(hit.lessThan(0.5), () => {
+          If(tMax.x.lessThan(tMax.y).and(tMax.x.lessThan(tMax.z)), () => {
+            tHit.assign(tMax.x); cell.x.addAssign(st.x); tMax.x.addAssign(tDel.x); face.assign(0.0);
+          }).ElseIf(tMax.y.lessThan(tMax.z), () => {
+            tHit.assign(tMax.y); cell.y.addAssign(st.y); tMax.y.addAssign(tDel.y); face.assign(1.0);
+          }).Else(() => {
+            tHit.assign(tMax.z); cell.z.addAssign(st.z); tMax.z.addAssign(tDel.z); face.assign(2.0);
+          });
+        });
+      });
+      const c = cell.add(0.5).mul(u.uVox);
+      const clip = u.uPosToClip.mul(vec4(c, 1.0));
+      const sc = u.tColor.sample(ndcToUv(clip.xy.div(clip.w)));
+      const col = fxUnpre(sc);
+      const nrm = select(face.lessThan(0.5), vec3(st.x.negate(), 0.0, 0.0), select(face.lessThan(1.5), vec3(0.0, st.y.negate(), 0.0), vec3(0.0, 0.0, st.z.negate())));
+      const shade = dot(nrm, u.uLightM).max(0.0).mul(0.45).add(0.55);
+      const hp = O.add(D.mul(tHit)).div(u.uVox).sub(cell).toVar();
+      const f2 = select(face.lessThan(0.5), hp.yz, select(face.lessThan(1.5), hp.xz, hp.xy)).toVar();
+      const e2 = min(f2, vec2(1.0).sub(f2));
+      const edge = float(1.0).sub(u.uEdge.mul(float(1.0).sub(smoothstep(0.02, 0.09, min(e2.x, e2.y)))));
+      const hitOut = vec4(col.mul(shade).mul(edge), 1.0);
+      const outc = select(tExit.greaterThan(tEnter).and(hit.greaterThan(0.5)), hitOut, vec4(0.0));
+      return mix(own, outc, u.uMix);
+    })();
+    return finish(m, u);
+  },
+
+  down() {
+    const u = { tSrc: sampler(), uRes: uniform(new THREE.Vector2(1, 1)), uSrcTexel: uniform(new THREE.Vector2(1, 1)) };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const uvn = screenUV;
+      const o = u.uSrcTexel;
+      const s = u.tSrc.sample(uvn).mul(4.0)
+        .add(u.tSrc.sample(uvn.add(vec2(o.x.negate(), o.y.negate()))))
+        .add(u.tSrc.sample(uvn.add(vec2(o.x, o.y.negate()))))
+        .add(u.tSrc.sample(uvn.add(vec2(o.x.negate(), o.y))))
+        .add(u.tSrc.sample(uvn.add(vec2(o.x, o.y))));
+      return s.div(8.0);
+    })();
+    return finish(m, u);
+  },
+
+  up() {
+    const u = { tSrc: sampler(), uRes: uniform(new THREE.Vector2(1, 1)), uSrcTexel: uniform(new THREE.Vector2(1, 1)) };
+    const m = new THREE.MeshBasicNodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const uvn = screenUV;
+      const o = u.uSrcTexel;
+      const s = u.tSrc.sample(uvn.add(vec2(o.x.mul(-2.0), 0.0)))
+        .add(u.tSrc.sample(uvn.add(vec2(o.x.mul(2.0), 0.0))))
+        .add(u.tSrc.sample(uvn.add(vec2(0.0, o.y.mul(-2.0)))))
+        .add(u.tSrc.sample(uvn.add(vec2(0.0, o.y.mul(2.0)))))
+        .add(u.tSrc.sample(uvn.add(vec2(o.x.negate(), o.y.negate()))).mul(2.0))
+        .add(u.tSrc.sample(uvn.add(vec2(o.x, o.y.negate()))).mul(2.0))
+        .add(u.tSrc.sample(uvn.add(vec2(o.x.negate(), o.y))).mul(2.0))
+        .add(u.tSrc.sample(uvn.add(vec2(o.x, o.y))).mul(2.0));
+      return s.div(12.0);
+    })();
+    return finish(m, u);
+  },
+};
 
 const PASSES = {
   halftone3d() {
@@ -298,59 +857,6 @@ const PASSES = {
     return finish(m, u);
   },
 
-  fractal3d() {
-    const u = {
-      ...surfUniforms(), uType: uniform(0), uOctaves: uniform(4), uGain: uniform(0.55), uRidge: uniform(2.5),
-      uContrast: uniform(1), uBright: uniform(0), uFloor: uniform(0.35), uLightAmt: uniform(0), uBlendMode: uniform(0),
-      uInvertF: uniform(0), uDrift: uniform(new THREE.Vector3()), uShadow: uniform(new THREE.Color()),
-      uLightC: uniform(new THREE.Color()), uLightDir: uniform(new THREE.Vector3(0, 0, 1)),
-    };
-    const h3 = (pp) => fract(sin(dot(pp, vec3(127.1, 311.7, 74.7))).mul(43758.5453123));
-    const vn3 = (x) => {
-      const i = floor(x).toVar();
-      const f0 = x.sub(i);
-      const f = f0.mul(f0).mul(float(3.0).sub(f0.mul(2.0))).toVar();
-      const a = mix(mix(h3(i), h3(i.add(vec3(1, 0, 0))), f.x), mix(h3(i.add(vec3(0, 1, 0))), h3(i.add(vec3(1, 1, 0))), f.x), f.y);
-      const b = mix(mix(h3(i.add(vec3(0, 0, 1))), h3(i.add(vec3(1, 0, 1))), f.x), mix(h3(i.add(vec3(0, 1, 1))), h3(i.add(vec3(1, 1, 1))), f.x), f.y);
-      return mix(a, b, f.z);
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const uvn = screenUV;
-      const own = u.tColor.sample(uvn).toVar();
-      const p = u.tP.sample(uvn).xyz.div(u.uCell).add(u.uDrift).toVar();
-      const sum = float(0.0).toVar();
-      const amp = float(0.5).toVar();
-      const norm = float(0.0).toVar();
-      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
-        If(float(i).lessThan(u.uOctaves), () => {
-          const n0 = vn3(p).toVar();
-          const n = select(u.uType.greaterThan(1.5), pow(float(1.0).sub(abs(n0.mul(2.0).sub(1.0))), u.uRidge),
-            select(u.uType.greaterThan(0.5), abs(n0.mul(2.0).sub(1.0)), n0));
-          sum.addAssign(n.mul(amp));
-          norm.addAssign(amp);
-          amp.mulAssign(u.uGain);
-          p.assign(p.mul(2.03).add(vec3(17.1, 5.3, 11.7)));
-        });
-      });
-      const v0 = clamp(sum.div(max(norm, 1e-4)).sub(0.5).mul(u.uContrast).add(0.5).add(u.uBright), 0.0, 1.0);
-      const v1 = smoothstep(u.uFloor.mul(0.5), 1.0, v0);
-      const v2 = select(u.uInvertF.greaterThan(0.5), float(1.0).sub(v1), v1);
-      const nv = normalize(u.tN.sample(uvn).rgb.mul(2.0).sub(1.0));
-      const v = v2.mul(mix(float(1.0), clamp(dot(nv, u.uLightDir).mul(0.5).add(0.5), 0.0, 1.0), u.uLightAmt)).toVar();
-      const field = mix(u.uShadow, u.uLightC, v);
-      const base = clamp(fxUnpre(own), 0.0, 1.0);
-      const bm = u.uBlendMode;
-      const mixed = select(bm.lessThan(0.5), fxBlend(base, field, float(2.0)),
-        select(bm.lessThan(1.5), fxBlend(base, field, float(5.0)),
-          select(bm.lessThan(2.5), fxBlend(base, field, float(1.0)),
-            select(bm.lessThan(3.5), fxBlend(base, field, float(3.0)),
-              select(bm.lessThan(4.5), fxBlend(base, field, float(4.0)), mix(base, field, v))))));
-      return outMix(u, own, mixed);
-    })();
-    return finish(m, u);
-  },
-
   fill3d() {
     const u = { ...surfUniforms(), uFill: uniform(new THREE.Color()), uBlendMode: uniform(0) };
     const m = new THREE.MeshBasicNodeMaterial();
@@ -443,18 +949,6 @@ const PASSES = {
     return finish(m, u);
   },
 
-  pixelate3d() {
-    const u = { ...cellUniforms(), uMix: uniform(1) };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const c = cellAt(u, screenUV);
-      const own = c.own;
-      const fx = vec4(c.color.rgb.div(max(c.color.a, 1e-4)).mul(own.a), own.a);
-      return select(own.a.lessThan(0.001), own, mix(own, fx, u.uMix));
-    })();
-    return finish(m, u);
-  },
-
   crtMatrix3d() {
     const u = {
       ...cellUniforms(), uMix: uniform(1), uDisplay: uniform(0), uScan: uniform(0.3), uSub: uniform(0.5),
@@ -488,105 +982,6 @@ const PASSES = {
       const lit = col.mul(mask).mul(scan).mul(flick).mul(bar);
       const fx = vec4(lit.mul(own.a), own.a);
       return select(own.a.lessThan(0.001), own, mix(own, fx, u.uMix));
-    })();
-    return finish(m, u);
-  },
-
-  beam3d() {
-    const u = {
-      ...surfUniforms(), uC1: uniform(new THREE.Color()), uC2: uniform(new THREE.Color()), uC3: uniform(new THREE.Color()),
-      uSpeed: uniform(1), uAngle: uniform(0), uBlur: uniform(0.6), uWidth: uniform(0.5), uHold: uniform(1.4),
-      uOpacity: uniform(0.75), uBlendMode: uniform(0), uType: uniform(0), uKeepLayer: uniform(1),
-    };
-    const ramp = (t0) => {
-      const t = clamp(t0, 0.0, 1.0);
-      const a = smoothstep(0.0, 1.0, clamp(t.mul(2.0), 0.0, 1.0));
-      const b = smoothstep(0.0, 1.0, clamp(t.mul(2.0).sub(1.0), 0.0, 1.0));
-      return mix(mix(u.uC1, u.uC2, a), u.uC3, b);
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const own = u.tColor.sample(screenUV).toVar();
-      const p = u.tP.sample(screenUV).xyz.toVar();
-      const dir = vec3(cos(u.uAngle), sin(u.uAngle), 0.0);
-      const nrm = vec3(sin(u.uAngle).negate(), cos(u.uAngle), 0.0);
-      const halfDiag = float(0.7071);
-      const travel = float(2.6).div(max(u.uSpeed, 0.05));
-      const cycle = travel.add(u.uHold);
-      const prog = clamp(mod(u.uTime, cycle).div(travel), 0.0, 1.0).toVar();
-      const glide = mix(prog, prog.mul(prog).mul(float(3.0).sub(prog.mul(2.0))), 0.65);
-      // Directional
-      const hwD = u.uWidth.mul(halfDiag).mul(1.6);
-      const cD = hwD.add(halfDiag).negate().add(halfDiag.add(hwD).mul(2.0).mul(glide));
-      const q = dot(p, nrm).add(p.z.mul(0.6)).toVar();
-      const wob = sin(q.mul(2.3).add(u.uTime.mul(0.5))).mul(0.5).add(sin(q.mul(4.1).sub(u.uTime.mul(0.31))).mul(0.5));
-      const dD = dot(p, dir).sub(cD).add(wob.mul(hwD).mul(0.22)).div(hwD);
-      const rD = q.div(halfDiag).mul(0.52).add(0.5).add(dD.mul(0.26)).add(wob.mul(0.1));
-      // From Center
-      const hwC = u.uWidth.mul(halfDiag).mul(0.9);
-      const cC = hwC.mul(-0.72).add(halfDiag.add(hwC.mul(1.35)).mul(glide));
-      const dC = length(p).sub(cC).div(max(hwC, 1e-4));
-      const rC = dC.mul(0.55).add(0.5);
-      const isC = u.uType.greaterThan(0.5);
-      const d = select(isC, dC, dD).toVar();
-      const rampPos = select(isC, rC, rD);
-      const shape = mix(7.0, 1.6, u.uBlur);
-      const env = exp(pow(max(abs(d), 1e-4), shape).mul(-2.2)).mul(float(1.0).sub(smoothstep(1.7, 3.1, abs(d))));
-      const fade = smoothstep(0.0, 0.16, prog).mul(float(1.0).sub(smoothstep(0.66, 1.0, prog)));
-      const k = clamp(env.mul(fade).mul(u.uOpacity), 0.0, 1.0).toVar();
-      const keep = mix(clamp(env.mul(fade), 0.0, 1.0), 1.0, u.uKeepLayer);
-      const beam = ramp(rampPos).toVar();
-      const b = fxUnpre(own).toVar();
-      const bm = u.uBlendMode;
-      const outCol = select(bm.lessThan(0.5), b.add(beam.mul(k).mul(float(1.0).sub(clamp(b, 0.0, 1.0)))),
-        select(bm.lessThan(1.5), b.add(beam.mul(k)),
-          select(bm.lessThan(2.5), mix(b, max(b, beam), k),
-            select(bm.lessThan(3.5), mix(b, fxBlend(clamp(b, 0.0, 1.0), beam, float(4.0)), k), mix(b, beam, k)))));
-      const a = own.a.mul(keep);
-      return select(own.a.lessThan(0.001), own, mix(own, vec4(outCol.mul(a), a), u.uMix));
-    })();
-    return finish(m, u);
-  },
-
-  sweep3d() {
-    const u = {
-      ...surfUniforms(), tLight: sampler(), tHalo: sampler(), uInvProj: uniform(new THREE.Matrix4()),
-      uCore: uniform(new THREE.Color()), uWarm: uniform(new THREE.Color()), uHot: uniform(new THREE.Color()),
-      uCool: uniform(new THREE.Color()), uDeep: uniform(new THREE.Color()), uStroke: uniform(new THREE.Color()),
-      uStage: uniform(1), uMode: uniform(0), uAngle: uniform(0), uBand: uniform(0.2), uCoreW: uniform(1), uFront: uniform(0),
-      uStrength: uniform(1), uBlendMode: uniform(0), uCoolFill: uniform(0.34), uDim: uniform(0.45), uSheenFade: uniform(0.5),
-      uGlow: uniform(0), uStrokeOp: uniform(0.9), uStrokeW: uniform(0.1),
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const uvn = screenUV;
-      const own = u.tColor.sample(uvn).toVar();
-      const p = u.tP.sample(uvn).xyz;
-      const s01 = dot(p, vec3(cos(u.uAngle), sin(u.uAngle), 0.0)).div(1.4142).add(0.5);
-      const x = u.uFront.sub(s01).div(max(u.uBand, 1e-3)).toVar();
-      const bandEnv = exp(x.mul(x).mul(-3.0)).toVar();
-      const core = float(1.0).sub(smoothstep(u.uCoreW.mul(0.5), u.uCoreW.mul(0.5).add(0.15), abs(x)));
-      const bandCol = mix(mix(u.uHot, u.uWarm, smoothstep(-0.4, 0.6, x)), u.uCore, core).toVar();
-      const facing = facingAt(u, uvn, u.uInvProj).toVar();
-      const lightA = bandCol.mul(bandEnv).mul(u.uStrength);
-      const edge = float(1.0).sub(smoothstep(0.0, max(u.uStrokeW, 0.02), facing));
-      const lightB = lightA.add(u.uStroke.mul(u.uStrokeOp).mul(step(0.0, x))).mul(edge);
-      const graze = pow(float(1.0).sub(facing), u.uSheenFade.mul(2.0).add(0.5));
-      const lightC = lightA.mul(graze.add(0.25));
-      const light = select(u.uMode.lessThan(0.5), lightA, select(u.uMode.lessThan(1.5), lightB, lightC)).toVar();
-      const b = fxUnpre(own).toVar();
-      const ahead = select(u.uMode.lessThan(0.5), smoothstep(0.0, -1.0, x), float(0.0));
-      const waiting = mix(b.mul(float(1.0).sub(u.uDim)), mix(u.uDeep, u.uCool, fxTone(b)), u.uCoolFill);
-      const base = mix(b, waiting, ahead).toVar();
-      const c = select(u.uBlendMode.lessThan(0.5), base.add(light),
-        select(u.uBlendMode.lessThan(1.5), base.add(light.mul(float(1.0).sub(clamp(base, 0.0, 1.0)))),
-          mix(base, bandCol, clamp(bandEnv.mul(u.uStrength), 0.0, 1.0))));
-      const halo = u.tHalo.sample(uvn).rgb.mul(u.uGlow);
-      // Past the silhouette the glow is the only light: its strength is its coverage.
-      const haloOut = mix(own, vec4(halo, clamp(max(halo.r, max(halo.g, halo.b)), 0.0, 1.0)), u.uMix);
-      const composite = select(own.a.lessThan(0.001), haloOut, mix(own, vec4(c.add(halo).mul(own.a), own.a), u.uMix));
-      const stage0 = select(own.a.lessThan(0.001), vec4(0.0), vec4(light, 1.0));
-      return select(u.uStage.lessThan(0.5), stage0, composite);
     })();
     return finish(m, u);
   },
@@ -666,66 +1061,6 @@ const PASSES = {
         clamp(float(1.0).sub(h.x.div(u.uLength)).mul(clamp(h.y, 0.0, 1.0)), 0.0, 1.0), float(0.0)).toVar();
       const outc = own.mul(float(1.0).sub(a)).add(vec4(band.mul(a), a));
       return mix(own, outc, u.uMix);
-    })();
-    return finish(m, u);
-  },
-
-  bloomBright3d() {
-    const u = { tColor: sampler(), uRes: uniform(new THREE.Vector2(1, 1)), uThr: uniform(0.62), uKnee: uniform(0.5), uExposure: uniform(1) };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const s = u.tColor.sample(screenUV).toVar();
-      const c = fxUnpre(s).toVar();
-      const shown = veDisplayTransform(c, u.uExposure).toVar();
-      const br = max(shown.r, max(shown.g, shown.b));
-      const knee = max(u.uThr.mul(u.uKnee), 1e-4).toVar();
-      const soft0 = clamp(br.sub(u.uThr).add(knee), 0.0, knee.mul(2.0));
-      const soft = soft0.mul(soft0).div(knee.mul(4.0));
-      const w = max(max(soft, br.sub(u.uThr)).div(max(br, 1e-4)), 0.0).toVar();
-      return vec4(c.mul(w).mul(s.a), w.mul(s.a));
-    })();
-    return finish(m, u);
-  },
-
-  bloom3d() {
-    const u = {
-      tColor: sampler(), tBloom: sampler(), tStreak: sampler(), uRes: uniform(new THREE.Vector2(1, 1)),
-      uMix: uniform(1), uGain: uniform(1), uSat: uniform(1), uTintAmt: uniform(0), uAnamorph: uniform(0), uBlendMode: uniform(0),
-      uTint: uniform(new THREE.Color()),
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const uvn = screenUV;
-      const src = u.tColor.sample(uvn).toVar();
-      const bl = u.tBloom.sample(uvn).rgb.toVar();
-      const an = abs(u.uAnamorph).toVar();
-      // The streak's taps run every frame (uniform control flow); Anamorphic 0 weighs them out.
-      const dir = select(u.uAnamorph.greaterThanEqual(0.0), vec2(1.0, 0.0), vec2(0.0, 1.0)).toVar();
-      const len = an.mul(0.35).add(0.10).toVar();
-      const jit = fxHash(screenCoordinate.xy).sub(0.5).toVar();
-      const acc = vec3(0.0).toVar();
-      const ws = float(0.0).toVar();
-      const w = float(1.0).toVar();
-      Loop({ start: int(1), end: int(17), type: 'int', condition: '<' }, ({ i }) => {
-        w.mulAssign(0.91);
-        const o = dir.mul(len).mul(float(i).add(jit).div(16.0));
-        acc.addAssign(u.tStreak.sample(uvn.add(o)).rgb.add(u.tStreak.sample(uvn.sub(o)).rgb).mul(w));
-        ws.addAssign(w.mul(2.0));
-      });
-      bl.addAssign(select(an.greaterThan(0.01), acc.div(max(ws, 1.0)).mul(2.0).mul(an).mul(1.2), vec3(0.0)));
-      const b0 = bl.mul(u.uGain);
-      const l = fxLuma(b0).toVar();
-      const b1 = max(mix(vec3(l), b0, u.uSat), 0.0);
-      const b = mix(b1, vec3(l).mul(u.uTint).mul(1.6), u.uTintAmt).toVar();
-      const ba = clamp(max(b.r, max(b.g, b.b)), 0.0, 1.0).toVar();
-      const sc = src.rgb;
-      const bm = u.uBlendMode;
-      const col = select(bm.lessThan(0.5), sc.add(b),
-        select(bm.lessThan(1.5), sc.add(b.mul(float(1.0).sub(clamp(sc, 0.0, 1.0)))),
-          select(bm.lessThan(2.5), max(sc, b),
-            select(bm.lessThan(3.5), mix(sc.add(b), sc.div(max(vec3(1.0).sub(min(b, vec3(0.96))), vec3(0.04))), src.a), b))));
-      const outA = select(bm.lessThan(3.5), max(src.a, ba), ba);
-      return mix(src, vec4(col, outA), u.uMix);
     })();
     return finish(m, u);
   },
@@ -844,168 +1179,6 @@ const PASSES = {
       const ca = cos(u.uHue);
       const hued = u.uGlow.mul(ca).add(cross(k, u.uGlow).mul(sin(u.uHue))).add(k.mul(dot(k, u.uGlow)).mul(float(1.0).sub(ca)));
       return vec4(max(hued, 0.0).mul(edge).mul(lit).mul(u.uIntensity), 1.0);
-    })();
-    return finish(m, u);
-  },
-
-  lines3d() {
-    const u = {
-      ...surfUniforms(), uCenter: uniform(new THREE.Vector2(0.5, 0.5)), uLines: uniform(4), uHead: uniform(0), uTrail: uniform(0.35),
-      uWidthPx: uniform(7), uMinW: uniform(0.06), uWf: uniform(1), uTaper: uniform(0.12), uSpreadPx: uniform(8), uLag: uniform(0),
-      uHeadBright: uniform(0.3), uIntensity: uniform(1), uDirSign: uniform(1),
-      uC1: uniform(new THREE.Color()), uC2: uniform(new THREE.Color()), uC3: uniform(new THREE.Color()),
-    };
-    // Dilated coverage: the most coverage within r px.
-    const cov = (q, r) => {
-      const mx = atGl(u.tN, q).a.toVar();
-      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
-        const ang = float(i).mul(RING);
-        mx.assign(max(mx, atGl(u.tN, q.add(vec2(cos(ang), sin(ang)).mul(r).div(u.uRes))).a));
-      });
-      return mx;
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const q = glUv().toVar();
-      const d = q.sub(u.uCenter).mul(u.uRes);
-      const s = atan(d.y, d.x).div(6.2831853).add(0.5).toVar();
-      const L = vec3(0.0).toVar();
-      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
-        const fi = float(i).toVar();
-        const on = step(fi.add(0.5), u.uLines);
-        const dist = fract(u.uHead.sub(fi.mul(u.uLag)).sub(s).mul(u.uDirSign));
-        const tr = clamp(float(1.0).sub(dist.div(max(u.uTrail, 1e-3))), 0.0, 1.0).toVar();
-        const w = max(u.uWidthPx.mul(max(u.uWf, u.uMinW)).mul(smoothstep(0.0, max(u.uTaper, 1e-3), tr)), 0.75).toVar();
-        const off = fi.mul(u.uSpreadPx).toVar();
-        const ring = clamp(cov(q, off.add(w)).sub(cov(q, off)), 0.0, 1.0);
-        const headGlow = float(1.0).add(u.uHeadBright.mul(3.0).mul(smoothstep(0.94, 1.0, tr)));
-        const slot = mod(fi, 3.0);
-        const c = select(slot.lessThan(0.5), u.uC1, select(slot.lessThan(1.5), u.uC2, u.uC3));
-        L.addAssign(c.mul(ring).mul(step(1e-4, tr)).mul(mix(0.35, 1.0, tr)).mul(headGlow).mul(on));
-      });
-      return vec4(L.mul(u.uIntensity), 1.0);
-    })();
-    return finish(m, u);
-  },
-
-  glowComp3d() {
-    const u = {
-      tColor: sampler(), tLight: sampler(), tHalo: sampler(), uRes: uniform(new THREE.Vector2(1, 1)),
-      uMix: uniform(1), uCore: uniform(1), uHalo: uniform(0), uSrcLevel: uniform(1),
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const c = u.tColor.sample(screenUV).toVar();
-      const L = u.tLight.sample(screenUV).rgb.mul(u.uCore).add(u.tHalo.sample(screenUV).rgb.mul(u.uHalo)).toVar();
-      const la = clamp(max(L.r, max(L.g, L.b)), 0.0, 1.0);
-      return mix(c, vec4(c.rgb.mul(u.uSrcLevel).add(L), max(c.a.mul(u.uSrcLevel), la)), u.uMix);
-    })();
-    return finish(m, u);
-  },
-
-  edge3d() {
-    const u = {
-      ...surfUniforms(), ...edgeUniforms(), uCenter: uniform(new THREE.Vector2(0.5, 0.5)), uHalf: uniform(new THREE.Vector2(0.25, 0.25)),
-      uMethod: uniform(0), uThr: uniform(0.12), uKnee: uniform(0.35), uLow: uniform(0.4), uThick: uniform(0), uGain: uniform(1),
-      uColorMode: uniform(0), uInvert: uniform(0), uBands: uniform(8), uSigma: uniform(2), uK: uniform(1.6), uTau: uniform(15),
-      uPhi: uniform(25), uEps: uniform(0), uAnim: uniform(0), uSpd: uniform(1), uProgress: uniform(0), uSweepAngle: uniform(0),
-      uSweepSoft: uniform(0.1), uEdgeA: uniform(new THREE.Color()), uEdgeB: uniform(new THREE.Color()),
-    };
-    const ring = (q, r) => {
-      const acc = fxTone(fxUnpre(atGl(u.tColor, q))).mul(2.0).toVar();
-      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
-        const ang = float(i).mul(RING);
-        acc.addAssign(fxTone(fxUnpre(atGl(u.tColor, q.add(vec2(cos(ang), sin(ang)).mul(r).div(u.uRes))))));
-      });
-      return acc.div(10.0);
-    };
-    const vn = (p) => {
-      const i = floor(p).toVar();
-      const f = fract(p);
-      const w = f.mul(f).mul(vec2(3.0).sub(f.mul(2.0))).toVar();
-      return mix(mix(fxHash(i), fxHash(i.add(vec2(1.0, 0.0))), w.x), mix(fxHash(i.add(vec2(0.0, 1.0))), fxHash(i.add(vec2(1.0, 1.0))), w.x), w.y);
-    };
-    const level = (q, bands) => floor(clamp(e3Z(u, q).sub(u.uZRange.x).div(max(u.uZRange.y.sub(u.uZRange.x), 1e-4)), 0.0, 0.9999).mul(bands));
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const uv = glUv().toVar();
-      const q = uv.sub(u.uCenter).div(max(u.uHalf.mul(2.0), vec2(1e-4))).toVar();
-      const axis = vec2(cos(u.uSweepAngle), sin(u.uSweepAngle));
-      const asp = u.uHalf.x.mul(u.uRes.x).div(max(u.uHalf.y.mul(u.uRes.y), 1e-4));
-      const span = abs(axis.x).mul(asp).add(abs(axis.y)).mul(0.5).add(1e-5);
-      const sweep = dot(q.mul(vec2(asp, 1.0)), axis).div(span.mul(2.0)).add(0.5).toVar();
-      const bt = floor(u.uTime.mul(8.0).mul(u.uSpd));
-      const boil = vec2(vn(q.mul(14.0).add(bt.mul(7.13))), vn(q.mul(14.0).add(91.7).sub(bt.mul(3.31)))).sub(0.5).mul(vec2(3.5).div(u.uRes));
-      const euv = uv.add(select(u.uAnim.greaterThan(4.5), boil, vec2(0.0))).toVar();
-      const { e: g, col: near } = e3Edges(u, euv, u.uThick.add(1.0));
-      const cov = atGl(u.tN, euv).a.toVar();
-      const geo = max(g.x, max(g.y.mul(1.2), g.z.mul(6.0))).toVar();
-      const th = u.uThr.mul(0.7).toVar();
-      const eGrad = smoothstep(th.mul(float(1.0).sub(u.uKnee)), th.mul(float(1.0).add(u.uKnee)).add(0.003), geo);
-      const eThin = select(geo.greaterThanEqual(th), float(1.0), select(geo.greaterThanEqual(th.mul(u.uLow)), float(0.5), float(0.0)));
-      const a = ring(euv, u.uSigma);
-      const b = ring(euv, u.uSigma.mul(u.uK));
-      const S = float(1.0).add(u.uTau).mul(a).sub(u.uTau.mul(b)).toVar();
-      const t2 = exp(clamp(u.uPhi.mul(S.sub(u.uEps)), -8.0, 8.0).mul(2.0));
-      const T = select(S.greaterThanEqual(u.uEps), float(1.0), float(1.0).add(t2.sub(1.0).div(t2.add(1.0))));
-      const eInk = max(clamp(float(1.0).sub(T), 0.0, 1.0).mul(cov), g.x);
-      const bands = max(floor(u.uBands.add(0.5)), 2.0).toVar();
-      const px = vec2(1.0).div(u.uRes);
-      const l0 = level(euv, bands);
-      const lr = level(euv.add(vec2(px.x, 0.0)), bands);
-      const lu = level(euv.add(vec2(0.0, px.y)), bands);
-      const c3 = cov.mul(atGl(u.tN, euv.add(vec2(px.x, 0.0))).a).mul(atGl(u.tN, euv.add(vec2(0.0, px.y))).a);
-      const stepped = abs(lr.sub(l0)).greaterThan(0.5).or(abs(lu.sub(l0)).greaterThan(0.5));
-      const eBands = max(select(stepped, c3, float(0.0)), g.x);
-      const meth = u.uMethod;
-      const e0 = select(meth.lessThan(0.5), eGrad, select(meth.lessThan(1.5), eThin, select(meth.lessThan(2.5), eInk, eBands)));
-      const e1 = select(u.uInvert.greaterThan(0.5), float(1.0).sub(e0).mul(max(cov, g.x)), e0);
-      const e = clamp(e1.mul(u.uGain), 0.0, 1.0).toVar();
-      const prog = clamp(u.uProgress.mul(u.uSpd), 0.0, 1.0);
-      const s2 = u.uSweepSoft.add(0.02);
-      const pp = mix(s2.negate(), s2.add(1.0), prog);
-      const showDraw = float(1.0).sub(smoothstep(pp.sub(s2), pp.add(s2), sweep));
-      const sd = sweep.sub(prog.mul(1.1).sub(0.05)).toVar();
-      const showScan = select(sd.lessThan(0.0), float(1.0), float(0.0));
-      const fl = fxHash(vec2(floor(u.uTime.mul(24.0).mul(u.uSpd)), 7.0));
-      const an = u.uAnim;
-      const show = select(an.greaterThan(0.5).and(an.lessThan(1.5)), showDraw,
-        select(an.greaterThan(1.5).and(an.lessThan(2.5)), showScan,
-          select(an.greaterThan(2.5).and(an.lessThan(3.5)), fl.mul(fl).mul(0.55).add(0.45), float(1.0))));
-      const scan = select(an.greaterThan(1.5).and(an.lessThan(2.5)), exp(abs(sd).mul(-90.0)).mul(max(cov, g.x)), float(0.0)).toVar();
-      e.mulAssign(show);
-      const n = atGl(u.tN, euv).rgb.mul(2.0).sub(1.0);
-      const hp = abs(mod(fract(atan(n.y, n.x).div(6.2831853).add(0.5)).mul(6.0).add(vec3(0.0, 4.0, 2.0)), 6.0).sub(3.0));
-      const hue = clamp(hp.sub(1.0), 0.0, 1.0);
-      const z01 = clamp(e3Z(u, euv).sub(u.uZRange.x).div(max(u.uZRange.y.sub(u.uZRange.x), 1e-4)), 0.0, 1.0);
-      const cm = u.uColorMode;
-      const col = select(cm.lessThan(0.5), u.uEdgeA,
-        select(cm.lessThan(1.5), clamp(pow(clamp(near, 0.0, 1.0), vec3(0.6)).mul(1.25), 0.0, 1.0),
-          select(cm.lessThan(2.5), hue, mix(u.uEdgeA, u.uEdgeB, z01)))).toVar();
-      return vec4(col.mul(e).add(col.mul(0.85).add(0.15).mul(scan)), clamp(e.add(scan.mul(0.5)), 0.0, 1.0));
-    })();
-    return finish(m, u);
-  },
-
-  edgeComp3d() {
-    const u = {
-      tColor: sampler(), tLight: sampler(), tHalo: sampler(), uRes: uniform(new THREE.Vector2(1, 1)),
-      uMix: uniform(1), uSrcLevel: uniform(0), uGlow: uniform(0), uBlendMode: uniform(0),
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const src = u.tColor.sample(screenUV).toVar();
-      const ed = u.tLight.sample(screenUV).toVar();
-      const e = clamp(ed.a, 0.0, 1.0).toVar();
-      const base = src.mul(u.uSrcLevel).toVar();
-      const bm = u.uBlendMode;
-      const rgb = select(bm.lessThan(0.5), ed.rgb.add(base.rgb.mul(float(1.0).sub(e))),
-        select(bm.lessThan(1.5), base.rgb.add(ed.rgb), base.rgb.add(ed.rgb.mul(float(1.0).sub(clamp(base.rgb, 0.0, 1.0))))));
-      const a = select(bm.lessThan(0.5), e.add(base.a.mul(float(1.0).sub(e))),
-        select(bm.lessThan(1.5), base.a.add(e), base.a.add(e.mul(float(1.0).sub(base.a)))));
-      const h = u.tHalo.sample(screenUV).rgb.mul(u.uGlow).toVar();
-      const outA = clamp(a.add(clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0).mul(0.8)), 0.0, 1.0);
-      return mix(src, vec4(rgb.add(h), outA), u.uMix);
     })();
     return finish(m, u);
   },
@@ -1175,61 +1348,6 @@ const PASSES = {
     return finish(m, u);
   },
 
-  rulers3d() {
-    const seg = uniformArray(new Float32Array(60), 'float');
-    const cor = uniformArray(new Float32Array(16), 'float');
-    const u = {
-      tColor: sampler(), uRes: uniform(new THREE.Vector2(1, 1)), uMix: uniform(1),
-      // The GLSL writer fills `.value` in place; here that is the node's own array.
-      uSeg: { node: seg, get value() { return seg.array; } },
-      uCor: { node: cor, get value() { return cor.array; } },
-      uCenterPx: uniform(new THREE.Vector2()),
-      uLw: uniform(1.5), uExt: uniform(1e6), uDash: uniform(0), uShape: uniform(0), uMarkR: uniform(1), uMarkT: uniform(2.5),
-      uMid: uniform(0), uLineOp: uniform(0.9), uCorners: uniform(8), uMarkHs: uniform(new THREE.Vector2(7.5, 7.5)),
-      uLineC: uniform(new THREE.Color()), uMarkC: uniform(new THREE.Color()),
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const px = glUv().mul(u.uRes).toVar();
-      const src = u.tColor.sample(screenUV).toVar();
-      const front = float(0.0).toVar();
-      const back = float(0.0).toVar();
-      const mark = float(0.0).toVar();
-      const marks = u.uShape.lessThan(6.5);
-      Loop({ start: int(0), end: int(12), type: 'int', condition: '<' }, ({ i }) => {
-        const o = i.mul(5);
-        const a = vec2(seg.element(o), seg.element(o.add(1))).toVar();
-        const b = vec2(seg.element(o.add(2)), seg.element(o.add(3))).toVar();
-        const vis = seg.element(o.add(4));
-        const ab = b.sub(a);
-        const L = length(ab).toVar();
-        const t = ab.div(max(L, 1e-4)).toVar();
-        const mid = a.add(b).mul(0.5);
-        const rel = px.sub(mid).toVar();
-        const along = dot(rel, t);
-        const acrossS = dot(rel, vec2(t.y.negate(), t.x));
-        const live = step(0.5, L);
-        const g = srGuide(abs(acrossS), along, L.mul(0.5), u.uLw, u.uExt, u.uDash).mul(live);
-        front.assign(select(vis.greaterThan(0.5), max(front, g), front));
-        back.assign(select(vis.greaterThan(0.5), back, max(back, g)));
-        const mm = clamp(float(0.5).sub(srMark(vec2(acrossS, along), u.uMarkHs, float(1.0), u.uShape, u.uMarkR, u.uMarkT)), 0.0, 1.0);
-        mark.assign(select(u.uMid.greaterThan(0.5).and(marks), max(mark, mm.mul(live)), mark));
-      });
-      Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
-        const c = vec2(cor.element(i.mul(2)), cor.element(i.mul(2).add(1))).toVar();
-        const sgn = vec2(select(c.x.greaterThanEqual(u.uCenterPx.x), float(1.0), float(-1.0)), select(c.y.greaterThanEqual(u.uCenterPx.y), float(1.0), float(-1.0)));
-        const mk = clamp(float(0.5).sub(srMark(px.sub(c).mul(sgn), u.uMarkHs, float(0.0), u.uShape, u.uMarkR, u.uMarkT)), 0.0, 1.0);
-        const on = step(float(i).add(0.5), u.uCorners);
-        mark.assign(select(marks, max(mark, mk.mul(on)), mark));
-      });
-      const lines = max(front, back.mul(0.45).mul(float(1.0).sub(src.a))).mul(u.uLineOp).toVar();
-      const o1 = src.mul(float(1.0).sub(lines)).add(vec4(u.uLineC.mul(lines), lines));
-      const o2 = o1.mul(float(1.0).sub(mark)).add(vec4(u.uMarkC.mul(mark), mark));
-      return mix(src, o2, u.uMix);
-    })();
-    return finish(m, u);
-  },
-
   curves3d() {
     const u = {
       tColor: sampler(), tLUT: makeTslSampler({ rgba: [255, 255, 255, 255] }), uRes: uniform(new THREE.Vector2(1, 1)), uMix: uniform(1),
@@ -1243,73 +1361,6 @@ const PASSES = {
       const t2 = vec3(lut(t.r).r, lut(t.g).g, lut(t.b).b);
       const c2 = log(max(float(1.0).sub(min(t2, vec3(0.9985))), 1e-4)).negate().div(1.6);
       return select(s0.a.lessThan(0.001), s0, mix(s0, vec4(c2.mul(s0.a), s0.a), u.uMix));
-    })();
-    return finish(m, u);
-  },
-
-  voxel3d() {
-    const u = {
-      ...surfUniforms(), uInvProj: uniform(new THREE.Matrix4()), uViewToModel4: uniform(new THREE.Matrix4()),
-      uBoxH: uniform(new THREE.Vector3(0.5, 0.5, 0.5)), uVox: uniform(0.05), uEdge: uniform(0.35), uLightM: uniform(new THREE.Vector3(0, 0, 1)),
-    };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const uvn = screenUV;
-      const own = u.tColor.sample(uvn).toVar();
-      const dv = viewRay(uvn, u.uInvProj);
-      const O = u.uViewToModel4.mul(vec4(0.0, 0.0, 0.0, 1.0)).xyz.toVar();
-      const D = normalize(u.uViewToModel4.mul(vec4(dv, 0.0)).xyz).toVar();
-      const bmin = u.uBoxH.negate().sub(u.uVox);
-      const bmax = u.uBoxH.add(u.uVox);
-      const inv = vec3(1.0).div(mix(vec3(1e-6), D, step(vec3(1e-6), abs(D)))).toVar();
-      const t0 = bmin.sub(O).mul(inv);
-      const t1 = bmax.sub(O).mul(inv);
-      const tn = min(t0, t1).toVar();
-      const tf = max(t0, t1).toVar();
-      const tEnter = max(max(tn.x, tn.y), max(tn.z, 0.0)).toVar();
-      const tExit = min(tf.x, min(tf.y, tf.z)).toVar();
-      const P = O.add(D.mul(tEnter.add(1e-4)));
-      const cell = floor(P.div(u.uVox)).toVar();
-      const st = sign(D).toVar();
-      const tMax = cell.add(max(st, 0.0)).mul(u.uVox).sub(O).mul(inv).toVar();
-      const tDel = abs(inv.mul(u.uVox)).toVar();
-      const face = select(tn.x.greaterThan(tn.y).and(tn.x.greaterThan(tn.z)), float(0.0), select(tn.y.greaterThan(tn.z), float(1.0), float(2.0))).toVar();
-      const hit = float(0.0).toVar();
-      const tHit = tEnter.toVar();
-      Loop({ start: int(0), end: int(64), type: 'int', condition: '<' }, () => {
-        // Solid test every step (uniform control flow), the DDA advance only until a hit.
-        const c = cell.add(0.5).mul(u.uVox);
-        const clip = u.uPosToClip.mul(vec4(c, 1.0));
-        const suv = ndcToUv(clip.xy.div(clip.w)).toVar();
-        const q = u.tP.sample(suv).xyz;
-        const cov = u.tN.sample(suv).a;
-        const dd = abs(q.sub(c));
-        const inFrame = suv.x.greaterThanEqual(0.0).and(suv.y.greaterThanEqual(0.0)).and(suv.x.lessThanEqual(1.0)).and(suv.y.lessThanEqual(1.0));
-        const solid = inFrame.and(cov.greaterThan(0.5)).and(max(dd.x, max(dd.y, dd.z)).lessThanEqual(u.uVox.mul(0.75)));
-        If(hit.lessThan(0.5).and(solid), () => { hit.assign(1.0); });
-        If(hit.lessThan(0.5), () => {
-          If(tMax.x.lessThan(tMax.y).and(tMax.x.lessThan(tMax.z)), () => {
-            tHit.assign(tMax.x); cell.x.addAssign(st.x); tMax.x.addAssign(tDel.x); face.assign(0.0);
-          }).ElseIf(tMax.y.lessThan(tMax.z), () => {
-            tHit.assign(tMax.y); cell.y.addAssign(st.y); tMax.y.addAssign(tDel.y); face.assign(1.0);
-          }).Else(() => {
-            tHit.assign(tMax.z); cell.z.addAssign(st.z); tMax.z.addAssign(tDel.z); face.assign(2.0);
-          });
-        });
-      });
-      const c = cell.add(0.5).mul(u.uVox);
-      const clip = u.uPosToClip.mul(vec4(c, 1.0));
-      const sc = u.tColor.sample(ndcToUv(clip.xy.div(clip.w)));
-      const col = fxUnpre(sc);
-      const nrm = select(face.lessThan(0.5), vec3(st.x.negate(), 0.0, 0.0), select(face.lessThan(1.5), vec3(0.0, st.y.negate(), 0.0), vec3(0.0, 0.0, st.z.negate())));
-      const shade = dot(nrm, u.uLightM).max(0.0).mul(0.45).add(0.55);
-      const hp = O.add(D.mul(tHit)).div(u.uVox).sub(cell).toVar();
-      const f2 = select(face.lessThan(0.5), hp.yz, select(face.lessThan(1.5), hp.xz, hp.xy)).toVar();
-      const e2 = min(f2, vec2(1.0).sub(f2));
-      const edge = float(1.0).sub(u.uEdge.mul(float(1.0).sub(smoothstep(0.02, 0.09, min(e2.x, e2.y)))));
-      const hitOut = vec4(col.mul(shade).mul(edge), 1.0);
-      const outc = select(tExit.greaterThan(tEnter).and(hit.greaterThan(0.5)), hitOut, vec4(0.0));
-      return mix(own, outc, u.uMix);
     })();
     return finish(m, u);
   },
@@ -1385,41 +1436,6 @@ const PASSES = {
     return finish(m, u);
   },
 
-  down() {
-    const u = { tSrc: sampler(), uRes: uniform(new THREE.Vector2(1, 1)), uSrcTexel: uniform(new THREE.Vector2(1, 1)) };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const uvn = screenUV;
-      const o = u.uSrcTexel;
-      const s = u.tSrc.sample(uvn).mul(4.0)
-        .add(u.tSrc.sample(uvn.add(vec2(o.x.negate(), o.y.negate()))))
-        .add(u.tSrc.sample(uvn.add(vec2(o.x, o.y.negate()))))
-        .add(u.tSrc.sample(uvn.add(vec2(o.x.negate(), o.y))))
-        .add(u.tSrc.sample(uvn.add(vec2(o.x, o.y))));
-      return s.div(8.0);
-    })();
-    return finish(m, u);
-  },
-
-  up() {
-    const u = { tSrc: sampler(), uRes: uniform(new THREE.Vector2(1, 1)), uSrcTexel: uniform(new THREE.Vector2(1, 1)) };
-    const m = new THREE.MeshBasicNodeMaterial();
-    m.fragmentNode = Fn(() => {
-      const uvn = screenUV;
-      const o = u.uSrcTexel;
-      const s = u.tSrc.sample(uvn.add(vec2(o.x.mul(-2.0), 0.0)))
-        .add(u.tSrc.sample(uvn.add(vec2(o.x.mul(2.0), 0.0))))
-        .add(u.tSrc.sample(uvn.add(vec2(0.0, o.y.mul(-2.0)))))
-        .add(u.tSrc.sample(uvn.add(vec2(0.0, o.y.mul(2.0)))))
-        .add(u.tSrc.sample(uvn.add(vec2(o.x.negate(), o.y.negate()))).mul(2.0))
-        .add(u.tSrc.sample(uvn.add(vec2(o.x, o.y.negate()))).mul(2.0))
-        .add(u.tSrc.sample(uvn.add(vec2(o.x.negate(), o.y))).mul(2.0))
-        .add(u.tSrc.sample(uvn.add(vec2(o.x, o.y))).mul(2.0));
-      return s.div(12.0);
-    })();
-    return finish(m, u);
-  },
-
   addLight() {
     const u = {
       tColor: sampler(), tLight: sampler(), tHalo: sampler(),
@@ -1491,9 +1507,21 @@ const PASSES = {
 
 /** The full-screen pass `name` (model3dFx.js GLSL key), with its uniform surface. */
 export function createPassNodeMaterial(name) {
-  const make = PASSES[name];
+  const make = PASSES[name] || WORLD_PASSES[name];
   if (!make) throw new Error(`model3dFxNodes: no pass "${name}"`);
   return make();
+}
+
+/** One of WORLD_PASSES for a world Scene: `inputs` (the world's tColor / tN / tP factories) replace those samplers. */
+export function createWorldPassNodeMaterial(name, inputs) {
+  const make = WORLD_PASSES[name];
+  if (!make) throw new Error(`model3dFxNodes: no world pass "${name}"`);
+  worldInputs = inputs;
+  try {
+    return make();
+  } finally {
+    worldInputs = null;
+  }
 }
 
 /**

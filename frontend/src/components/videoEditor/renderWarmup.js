@@ -14,6 +14,8 @@ import { RIG_MEDIA_TYPE } from "./rig3d";
 import { deriveTextFontLoadRequest } from "./engine/projectDerive";
 import { ensureFontsLoaded } from "../../render-shims/FontFamilySelect";
 import { loadRecordingCursorTrack } from "./recordingCursor";
+import { primeRounds } from "./renderPrime";
+import { settleBeforeCapture, settleBeforeWarmups } from "./renderSettle";
 
 export function nextPaint() {
   return new Promise((resolve) => {
@@ -123,15 +125,20 @@ export function warmMediaUrl(url, mediaType, timeoutMs = 15000) {
   });
 }
 
+// The loads and builds started when this page's last prime of 3D layers ended (renderPrime.js `primed`); null until one has.
+let primedStamp = null;
+
 // Block until every clip's media is warmed (decoded) and fonts are ready, so the
 // first encoded frames aren't blank and text clips use their real font. This is
 // the /video-render analog of the mockup page's waitForScene gate.
 // `range` = the timeline window about to be rendered ({ start, end }), so the 3D
 // layers are primed where that window shows them.
 // `getPlayer()` returns the mounted Player (its imperative handle).
-export async function waitForMediaReady({ channels, clips, getPlayer, range = null }) {
-  await nextPaint();
-  await nextPaint();
+// `settle()` (the headless render page): resolves once React has committed every update scheduled so far and run that commit's
+// effects; with it the waits before and after the warm-ups are for what a capture needs, not fixed screen refreshes
+// (renderSettle.js; four paints were ~130 ms of every still).
+export async function waitForMediaReady({ channels, clips, getPlayer, range = null, settle = null }) {
+  await settleBeforeWarmups({ settle, paint: nextPaint });
   const seen = new Set();
   const seenPlates = new Set();
   const warmups = [];
@@ -234,33 +241,32 @@ export async function waitForMediaReady({ channels, clips, getPlayer, range = nu
   } catch {
     /* fonts.ready unsupported — ignore */
   }
-  // A couple more paints so Three.js has initialized its renderer/canvas.
-  await nextPaint();
-  await nextPaint();
-  // Model layers load a second wave of resources LAZILY on their first real
-  // render (the Player's own model module import, per-entry environment PMREM,
-  // screen artwork, first-use GPU texture uploads) — and each of those only
-  // STARTS once the previous one landed. A single prime+settle pass therefore
-  // "settles" before anything is pending (the first prime merely kicks the
-  // module import), which is why range renders still opened on empty frames.
-  // Prime and settle ITERATIVELY until a whole round finds nothing pending.
+  // The renderer up and what the warm-ups set inside the Player committed (without `settle`: a couple more paints so Three.js
+  // has initialized its renderer/canvas).
+  await settleBeforeCapture({ settle, paint: nextPaint, getPlayer });
+  // Model layers load a second wave of resources LAZILY on their first real render: prime and settle ITERATIVELY until a whole round
+  // finds nothing pending; on a warm page whose first round asked for nothing new, that round is enough (renderPrime.js).
   if (hasModel) {
     try {
-      const { modelResourcesSettled, modelResourcesPending } = await import("./model3dLayer");
-      const { worldSettled } = await import("./world3dLayer");
+      const { modelResourcesSettled, modelResourcesPending, modelResourceStarts } = await import("./model3dLayer");
+      const { worldSettled, worldBusy, worldBuildsStarted } = await import("./world3dLayer");
       const primeAt = model3dPrimeTimes(channels, clips, Math.max(0, Number(range?.start) || 0),
         Number(range?.end) > 0 ? Number(range.end) : Infinity);
-      for (let round = 0; round < 6; round += 1) {
-        for (const t of primeAt) await getPlayer()?.captureFrameAtTime?.(t);
-        // Give freshly-kicked dynamic imports / loaders a beat to register.
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        const hadPending = modelResourcesPending();
-        await modelResourcesSettled();
-        await worldSettled();
-        if (!hadPending && round > 0) break;
-      }
-      await getPlayer()?.captureFrameAtTime?.(primeAt[0]);
+      // `prime`: these captures load and draw, nothing more. A Final Scene is not traced for them (world3dLayer.settleWorldFrame):
+      // each was a whole Final trace of a frame nobody keeps, three of them before every still and every video (tests/world3d-speed).
+      const { stamp } = await primeRounds({
+        capture: (t) => getPlayer()?.captureFrameAtTime?.(t, { prime: true }),
+        times: primeAt,
+        pending: modelResourcesPending,
+        settled: modelResourcesSettled,
+        worldSettled,
+        worldBusy,
+        stamp: () => `${modelResourceStarts()}/${worldBuildsStarted()}`,
+        primed: primedStamp,
+      });
+      primedStamp = stamp;
     } catch (err) {
+      primedStamp = null;
       console.warn("[render] model priming failed", err);
     }
   }
