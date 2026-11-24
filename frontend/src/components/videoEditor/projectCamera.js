@@ -823,19 +823,35 @@ function applyZoomLens(item, values, frame) {
   if (!posed) return applySmartZoom(item, values, frame);
   const W = frame.width, H = frame.height;
   const base = cameraProxyFromPose(values, W, H);
-  let dir = null;
-  let share = 1;
-  let point = null;
-  if (st.target && typeof frame.zoomTarget === 'function') point = frame.zoomTarget(st.target);
-  if (point) {
-    dir = point.clone().sub(base.position).applyQuaternion(base.quaternion.clone().invert());
-    share = st.share;
-  } else {
+  const unit = (v) => Math.max(0, Math.min(1, v));
+  const lookAlong = (dir) => (dir.lengthSq() > 1e-12 ? new THREE.Quaternion().setFromUnitVectors(LOOK_AHEAD, dir.normalize()) : new THREE.Quaternion());
+  // Turned `share` of the way to a world point.
+  const toward = (p, s) => new THREE.Quaternion().slerp(
+    lookAlong(p.clone().sub(base.position).applyQuaternion(base.quaternion.clone().invert())), unit(s));
+  // Turned to the zoom's own point of the frame (a range without a target: the point its preview drag sets).
+  const screenAim = () => {
     const tan = Math.tan((base.fov * D2R) / 2);
-    dir = new THREE.Vector3((2 * st.cx - 1) * tan * (W / H), -(2 * st.cy - 1) * tan, -1);
+    return lookAlong(new THREE.Vector3((2 * st.cx - 1) * tan * (W / H), -(2 * st.cy - 1) * tan, -1));
+  };
+  const lookup = (t) => (t && typeof frame.zoomTarget === 'function' ? frame.zoomTarget(t) : null);
+  // Between two zooms the lens state hands over from one aim to the next (smartZoomLensState `mix`), so the turn never
+  // steps. Two targets: the point and the share are blended. A target and a range aimed by its point: the two turns are.
+  const m = st.target2 !== undefined ? unit(num(st.mix, 0)) : 0;
+  const pA = lookup(st.target);
+  const pB = m > 0 ? lookup(st.target2) : null;
+  let point = null;
+  let share = 0;
+  let turn;
+  if (pA && pB) {
+    point = pA.clone().lerp(pB, m);
+    share = st.share * (1 - m) + num(st.share2, 0) * m;
+    turn = toward(point, share);
+  } else {
+    turn = pA ? toward(pA, st.share) : screenAim();
+    if (m > 0) turn.slerp(pB ? toward(pB, num(st.share2, 0)) : screenAim(), m);
+    if (pA) { point = pA; share = st.share * (1 - m); } else if (pB) { point = pB; share = num(st.share2, 0) * m; }
   }
-  const turn = dir.lengthSq() > 1e-12 ? new THREE.Quaternion().setFromUnitVectors(LOOK_AHEAD, dir.normalize()) : new THREE.Quaternion();
-  const camQuat = base.quaternion.clone().multiply(new THREE.Quaternion().slerp(turn, Math.max(0, Math.min(1, share))));
+  const camQuat = base.quaternion.clone().multiply(turn);
   const baseZoom = num(values.camZoom, 1) > 0 ? num(values.camZoom, 1) : 1;
   values.camZoom = baseZoom * st.zoom;
   Object.assign(values, cameraPropsForWorldPoint(base.position, camQuat, values, W, H));
@@ -908,7 +924,7 @@ export function getCameraPose(item, progress, frame = null) {
 // `frame` is { width, height } — the project's video size. It is only needed by a
 // live camera path (which is authored in world pixels and has to be converted back
 // into camera props), so callers without one simply get path-free behaviour.
-export function resolveCameraPose(channels, clipsMap, layoutFor, time, frame = null) {
+export function resolveCameraPose(channels, clipsMap, layoutFor, time, frame = null, opts = null) {
   const channel = findCameraChannel(channels);
   if (!channel || channel.visible === false) return null;
   const layout = layoutFor(channel);
@@ -924,6 +940,20 @@ export function resolveCameraPose(channels, clipsMap, layoutFor, time, frame = n
     if (!isCameraClip(clipsMap.get(item?.clipId))) continue;
     const duration = entry.endTime - entry.startTime;
     const progress = duration > 0 ? (time - entry.startTime) / duration : 0;
+    if (!opts?.ignoreSolveOverride && item?.cameraSolveOverride?.enabled && item.cameraSolveOverride.keyframes) {
+      return getCameraPose(
+        {
+          ...item,
+          cameraMoveMode: 'keys',
+          cameraRig: null,
+          cameraPath: null,
+          propertyKeyframes: item.cameraSolveOverride.keyframes,
+          camLensK1: item.cameraSolveOverride.camLensK1 ?? item.camLensK1,
+        },
+        Math.max(0, Math.min(1, progress)),
+        frame,
+      );
+    }
     let poseFrame = frame;
     // (camlayer) anything the camera names as a target: a 3D Scene object ("@<id>", where it stands at this instant on the Scene's own
     // clock), a layer (its item id, through the machinery that places its mesh) or a point { x, y, z } (world px)
@@ -983,6 +1013,84 @@ export function layerWorldPoint(channels, clipsMap, layoutFor, time, itemId, fra
     evalKeyframes: (item, progress) => getItemKeyframeValues(item, progress),
   });
   return prs ? new THREE.Vector3(prs.px, prs.py, prs.pz) : null;
+}
+
+/**
+ * Sample the authored 3D camera trajectory (bypassing any `cameraSolveOverride`)
+ * and 2D bounding boxes of moving 3D stand-in layers over [startTime, startTime + duration]
+ * so `vfxSolve` / `solveFootage` can mask foreground stand-ins, seed focal length,
+ * and Sim(3)-align optical tracks back into the exact authored 3D coordinate space.
+ */
+export function sampleAuthoredCameraPrior({
+  channels, clipsMap, layoutFor, frame, startTime = 0, duration = 5, fps = 30, frameCount = null,
+} = {}) {
+  const W = frame?.width || 1920;
+  const H = frame?.height || 1080;
+  const F = Math.max(2, frameCount || Math.round(Math.max(0.1, duration) * Math.max(1, fps)));
+  const parentIndex = buildParentIndex(channels || [], layoutFor);
+  const cameras = new Array(F);
+  const dynamicBoxes2d = new Array(F);
+  const m4 = new THREE.Matrix4();
+  const invR = new THREE.Matrix3();
+  const modelItems = [];
+  for (const ch of channels || []) {
+    if (!ch || ch.visible === false || ch.cameraLocked) continue;
+    const layout = layoutFor(ch);
+    if (!layout) continue;
+    for (let i = 0; i < (ch.items || []).length; i += 1) {
+      const it = ch.items[i];
+      const clip = clipsMap?.get(it?.clipId);
+      if (clip?.mediaType === 'model3d' && it.aiRole !== 'composite' && layout[i]) {
+        modelItems.push({ item: it, entry: layout[i] });
+      }
+    }
+  }
+
+  for (let f = 0; f < F; f += 1) {
+    const t = startTime + (F > 1 ? (f / (F - 1)) * duration : 0);
+    const pose = resolveCameraPose(channels || [], clipsMap, layoutFor, t, { width: W, height: H }, { ignoreSolveOverride: true });
+    const proxy = cameraProxyFromPose(pose, W, H);
+    m4.makeRotationFromQuaternion(proxy.quaternion);
+    const e = m4.elements;
+    // Matrix4 column-major -> row-major 3x3 camera-to-world
+    const R = [e[0], e[4], e[8], e[1], e[5], e[9], e[2], e[6], e[10]];
+    const focalCompPx = (H * 0.5) / Math.tan((proxy.fov * D2R) * 0.5);
+    const camPos = [proxy.position.x, proxy.position.y, proxy.position.z];
+    cameras[f] = { position: camPos, R, f: focalCompPx };
+
+    const boxes = [];
+    if (modelItems.length) {
+      invR.set(R[0], R[3], R[6], R[1], R[4], R[7], R[2], R[5], R[8]);
+      for (const { item, entry } of modelItems) {
+        if (t < entry.startTime - 1e-5 || t > entry.endTime + 1e-5) continue;
+        const p = layerWorldPoint(channels || [], clipsMap, layoutFor, t, item.id, { width: W, height: H }, parentIndex);
+        if (!p) continue;
+        const rel = p.clone().sub(proxy.position).applyMatrix3(invR);
+        if (rel.z >= -10) continue;
+        const dist = -rel.z;
+        const sx = (Math.abs(item.scaleX ?? item.scale ?? 100) / 100) * Math.min(W, H) * 0.22;
+        const sy = (Math.abs(item.scaleY ?? item.scale ?? 100) / 100) * Math.min(W, H) * 0.28;
+        const cx = W * 0.5 + (focalCompPx * rel.x) / dist;
+        const cy = H * 0.5 - (focalCompPx * rel.y) / dist;
+        const hw = (focalCompPx * sx) / dist;
+        const hh = (focalCompPx * sy) / dist;
+        const x0 = Math.max(0, Math.min(1, (cx - hw) / W));
+        const y0 = Math.max(0, Math.min(1, (cy - hh) / H));
+        const x1 = Math.max(0, Math.min(1, (cx + hw) / W));
+        const y1 = Math.max(0, Math.min(1, (cy + hh) / H));
+        if (x1 > x0 && y1 > y0) boxes.push([x0, y0, x1, y1]);
+      }
+    }
+    dynamicBoxes2d[f] = boxes;
+  }
+  return {
+    compWidth: W,
+    compHeight: H,
+    focalCompPx: cameras[0]?.f || perspectiveDistance(H),
+    focalTolerance: 0.25,
+    cameras,
+    dynamicBoxes2d,
+  };
 }
 
 export function isCameraIdentity(values) {

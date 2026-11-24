@@ -343,6 +343,10 @@ export function activeLayers(channels, clipsMap, time, width, height, fps = 30, 
       }
       layers.push({
         item, clip, channelId: channel.id, channelIndex,
+        // A camera-locked channel is filmed by the neutral camera (engine/camera.js
+        // cameraForChannel): its layers stand still on screen whatever the project
+        // camera does, so every overlay hits, draws and drags them with no camera.
+        cameraLocked: !!channel.cameraLocked,
         // On-timeline span. MaskOverlay needs it to reproduce the renderer's
         // clip-local clock: Layer Mask's Grow is a rate integrated over the
         // clip, so without the duration the gizmo would draw the un-grown edge.
@@ -657,7 +661,16 @@ export default function PreviewTransformOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- vectorVersion is a recompute trigger, not an input
     [channels, clipsMap, currentTime, videoWidth, videoHeight, fps, vectorVersion, selectedItemId]
   );
-  const cam = useMemo(() => cameraAffine(cameraPose, videoWidth, videoHeight), [cameraPose, videoWidth, videoHeight]);
+  // The camera that films a layer: none on a camera-locked channel (cameraForChannel).
+  const poseOf = useCallback((layer) => (layer?.cameraLocked ? null : cameraPose), [cameraPose]);
+  // The gizmo (and every edit mode below, all of which work on the selected layer)
+  // sits in the selected layer's camera — a text locked to the screen under a dollied
+  // camera still gets its plain handles.
+  const selectedLocked = !!layers.find((layer) => layer.item.id === selectedItemId)?.cameraLocked;
+  const cam = useMemo(
+    () => cameraAffine(selectedLocked ? null : cameraPose, videoWidth, videoHeight),
+    [selectedLocked, cameraPose, videoWidth, videoHeight]
+  );
   // Under dolly/tilt the on-screen shape of a layer is a true perspective quad, so
   // the gizmo would lie about where the layer is — hide it rather than mislead.
   const camBlocked = cam.perspective;
@@ -1131,7 +1144,10 @@ export default function PreviewTransformOverlay({
   // the editor.
   const textClickRef = useRef(null);
   const maybeOpenTextEdit = (layer, point) => {
-    if (!layer || layer.clip.mediaType !== 'text' || disabled || camBlocked || pathActive) return false;
+    // The layer's OWN camera: the click that selects a camera-locked title may come
+    // while another layer (under a dollied camera) still holds the gizmo.
+    if (!layer || layer.clip.mediaType !== 'text' || disabled || pathActive
+      || cameraAffine(poseOf(layer), videoWidth, videoHeight).perspective) return false;
     // Path text has no resting block to type into — its glyphs ride the curve
     // (it publishes no footprint for the same reason).
     if (layer.item.textPathEnabled && Array.isArray(layer.item.motionPath?.points) && layer.item.motionPath.points.length >= 2) return false;
@@ -1559,7 +1575,10 @@ export default function PreviewTransformOverlay({
         const ownCentre = selectionBox(base, dx, dy);
         const xTargets = [0, videoWidth / 2, videoWidth];
         const yTargets = [0, videoHeight / 2, videoHeight];
-        layers.filter((l) => l.item.id !== base.item.id).forEach((l) => {
+        // Only layers filmed by the same camera: frame-space edges of a layer the
+        // project camera moves are not where it shows next to a camera-locked one.
+        const posedStill = cameraAffine(cameraPose, videoWidth, videoHeight).identity;
+        layers.filter((l) => l.item.id !== base.item.id && (posedStill || l.cameraLocked === base.cameraLocked)).forEach((l) => {
           const g = geometry(l); const c = selectionBox(l);
           xTargets.push(g.left, c.cx, g.right); yTargets.push(g.top, c.cy, g.bottom);
         });
@@ -2318,23 +2337,30 @@ export default function PreviewTransformOverlay({
         className="ve-preview-frame-hit" x="0" y="0" width={videoWidth} height={videoHeight}
         onPointerDown={(event) => {
           if (pathActive) { startMarquee(event); return; }
-          // Under dolly/tilt a layer is a perspective quad, so test the raw pointer
-          // against forward-projected corners. Without this the whole hit rect used
-          // to be removed and nothing in the preview could be selected at all.
-          let hit;
-          if (camBlocked) {
-            const p = eventPointRaw(event);
-            hit = [...layers].reverse().find((layer) => {
+          // Each layer is hit through the camera that films it: the project camera,
+          // or none for a camera-locked channel (a title over a 3D Scene stays where
+          // it is drawn while the camera dollies). Under dolly/tilt a layer is a
+          // perspective quad, so the raw pointer is tested against forward-projected
+          // corners. Without this the whole hit rect used to be removed and nothing
+          // in the preview could be selected at all.
+          const raw = eventPointRaw(event);
+          const rect = rootRef.current.getBoundingClientRect();
+          const posed = cameraAffine(cameraPose, videoWidth, videoHeight);
+          let hitPoint = null;
+          const hit = [...layers].reverse().find((layer) => {
+            if (!layer.cameraLocked && posed.perspective) {
               const quad = projectedQuad(layer, cameraPose, videoWidth, videoHeight);
-              return quad ? pointInQuad(quad, p.x, p.y) : false;
-            });
-          } else {
-            const p = eventPoint(event);
-            hit = [...layers].reverse().find((layer) => hitLayer(layer, p.x, p.y));
-            // preventDefault, as in start(): the compat mousedown would focus
-            // the SVG root and blur the editor the moment it opened.
-            if (hit && maybeOpenTextEdit(hit, p)) { event.preventDefault(); return; }
-          }
+              return quad ? pointInQuad(quad, raw.x, raw.y) : false;
+            }
+            const zoom = layer.cameraLocked ? 1 : posed.zoom;
+            const p = layer.cameraLocked ? raw : posed.inverse(raw.x, raw.y);
+            if (!hitLayer(layer, p.x, p.y)) return false;
+            hitPoint = { x: p.x, y: p.y, threshold: (SNAP_PX * vbRef.current.w / rect.width) / zoom };
+            return true;
+          });
+          // preventDefault, as in start(): the compat mousedown would focus
+          // the SVG root and blur the editor the moment it opened.
+          if (hit && hitPoint && maybeOpenTextEdit(hit, hitPoint)) { event.preventDefault(); return; }
           setPreviewClickId(hit ? hit.item.id : null);
           if (hit) onSelectItem(hit.item.id, hit.channelId); else onSelectItem(null, null);
         }}
@@ -2344,7 +2370,7 @@ export default function PreviewTransformOverlay({
         projected outline instead — the selection still needs to be visible, it just
         cannot offer drag handles (that would need an inverse this camera has none of). */}
     {!disabled && camBlocked && selected && (() => {
-      const quad = projectedQuad(selected, cameraPose, videoWidth, videoHeight);
+      const quad = projectedQuad(selected, poseOf(selected), videoWidth, videoHeight);
       if (!quad) return null;
       return (
         <polyline

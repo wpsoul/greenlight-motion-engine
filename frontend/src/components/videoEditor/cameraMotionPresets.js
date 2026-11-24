@@ -17,7 +17,7 @@
 // there: Quiet Push / Fast Orbit / Step Zoom / Handheld Breath / Figure Eight are
 // approved; preview scene must stay ONE white rounded object on a flat ground.
 
-import { TransitionEasing } from './types';
+import { TransitionEasing } from './types.js';
 
 // Neutral pose — also what the preview evaluator falls back to for missing props.
 export const CAMERA_MOTION_NEUTRAL = {
@@ -41,9 +41,10 @@ const E = TransitionEasing;
 // bezier, read only when `e` is CUSTOM (the graph editor's own key shape).
 const RAW = [
   // ── Cinematic ──
-  { id: 'cm-quiet-push', category: 'Cinematic', name: 'Quiet Push', easeLabel: 'AE Smooth', duration: 6,
+  // (owner, 2026-11-23) on Smooth: AE Smooth read as a lurch on a camera
+  { id: 'cm-quiet-push', category: 'Cinematic', name: 'Quiet Push', easeLabel: 'Smooth', duration: 6,
     description: 'A restrained forward creep — attention without announcing itself',
-    k: [ { p: 0, e: E.AE_SMOOTH, v: { camZoom: 1.02, camY: 1 } },
+    k: [ { p: 0, e: E.EASE_IN_OUT, v: { camZoom: 1.02, camY: 1 } },
          { p: 100, v: { camZoom: 1.16, camDolly: 80, camY: 0 } } ] },
 
   { id: 'cm-swoop-dive', category: 'Cinematic', name: 'Swoop Dive', easeLabel: 'Expo Out', duration: 4.5,
@@ -51,9 +52,9 @@ const RAW = [
     k: [ { p: 0, e: E.EXPO_OUT, v: { camY: 9, camTiltX: -14, camZoom: 1.35, camDolly: -120, camRoll: -3 } },
          { p: 100, v: { camY: -3, camTiltX: 3, camZoom: 1.1, camDolly: 160, camRoll: 0 } } ] },
 
-  { id: 'cm-corkscrew', category: 'Cinematic', name: 'Corkscrew', easeLabel: 'AE Smooth', duration: 5,
+  { id: 'cm-corkscrew', category: 'Cinematic', name: 'Corkscrew', easeLabel: 'Smooth', duration: 5,
     description: 'Screws in from a canted wide — roll, yaw and zoom resolve together',
-    k: [ { p: 0, e: E.AE_SMOOTH, v: { camRoll: -22, camTiltY: -10, camZoom: 1.6, camX: -5, camY: -3 } },
+    k: [ { p: 0, e: E.EASE_IN_OUT, v: { camRoll: -22, camTiltY: -10, camZoom: 1.6, camX: -5, camY: -3 } },
          { p: 100, v: { camRoll: 0, camTiltY: 4, camZoom: 1.08, camX: 1, camY: 0 } } ] },
 
   { id: 'cm-fast-orbit', category: 'Cinematic', name: 'Fast Orbit', easeLabel: 'Linear', duration: 3,
@@ -82,6 +83,24 @@ const RAW = [
          { p: 30, e: E.EASE_IN_OUT, v: { camX: -4, camY: 1, camTiltY: -4, camDolly: 40, camZoom: 1.06 } },
          { p: 65, e: E.EASE_IN_OUT, v: { camX: 5, camY: -1, camTiltY: 2, camDolly: 230, camZoom: 1.26 } },
          { p: 100, v: { camX: 1.5, camY: 0, camTiltY: 3, camDolly: 160, camZoom: 1.16 } } ] },
+
+  // The owner's picks of 2026-11-23 from the five signature drafts (camera_move_library.json): shown to him on a 3D Scene with each
+  // easing side by side. Push In and Rise & Reveal on Smooth, Orbit Hold on Sine (AE Smooth read as a lurch on a camera).
+  { id: 'cm-push-in', category: 'Cinematic', name: 'Push In', easeLabel: 'Smooth', duration: 4,
+    description: 'Smooth dolly forward with a gentle lens zoom creep onto the subject',
+    k: [ { p: 0, e: E.EASE_IN_OUT, v: {} },
+         { p: 100, v: { camZoom: 1.16, camDolly: 150 } } ] },
+
+  { id: 'cm-orbit-hold', category: 'Cinematic', name: 'Orbit Hold', easeLabel: 'Sine', duration: 3.6,
+    description: 'Smooth yaw orbit with counter-pan that lands into a brief breathing settle',
+    k: [ { p: 0, e: E.SINE_IN_OUT, v: { camZoom: 1.04, camX: -3, camDolly: 20, camTiltY: -8 } },
+         { p: 75, e: E.SINE_IN_OUT, v: { camZoom: 1.08, camX: 3, camDolly: 50, camTiltY: 8 } },
+         { p: 100, v: { camZoom: 1.092, camDolly: 62 } } ] },
+
+  { id: 'cm-rise-and-reveal', category: 'Cinematic', name: 'Rise & Reveal', easeLabel: 'Smooth', duration: 4.5,
+    description: 'Starts low and tight looking up, then rises to level while dollying back to reveal',
+    k: [ { p: 0, e: E.EASE_IN_OUT, v: { camZoom: 1.16, camY: -4.5, camDolly: 160, camTiltX: 10 } },
+         { p: 100, v: { camZoom: 1, camY: 0, camDolly: -50, camTiltX: 0 } } ] },
 
   // ── Editorial ──
   { id: 'cm-slingshot', category: 'Editorial', name: 'Slingshot', easeLabel: 'Impulse', duration: 1.8,
@@ -160,6 +179,11 @@ const RAW = [
     k: [ { p: 0, e: E.LINEAR, v: { camDolly: 98 } },
          { p: 71, e: E.CUSTOM, b: [0.8187, 0.1079, 0.9089, 0.302], v: { camDolly: 234.7692 } },
          { p: 100, e: E.AE_IN, v: { camDolly: 2600 } } ] },
+
+  { id: 'cm-whip', category: 'Energy', name: 'Whip', easeLabel: 'Punch', duration: 1.2,
+    description: 'Fast energetic yaw and pan sweep with punchy acceleration and clean landing',
+    k: [ { p: 0, e: E.PUNCH, v: { camZoom: 1.04, camX: -12, camDolly: -20, camTiltY: -14 } },
+         { p: 100, v: { camZoom: 1.1, camX: 12, camDolly: 40, camTiltY: 14 } } ] },
 
   // ── Loops (first and last snapshots match, so trimming loops cleanly) ──
   { id: 'cm-orbit-pulse', category: 'Loops', name: 'Orbit Pulse', easeLabel: 'Sine', duration: 7,

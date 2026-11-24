@@ -9,7 +9,7 @@
 // voice (presets fakeVoice: `voiceWins`). Preview only — the layer itself is drawn by
 // the Player.
 
-import { evaluate, glyphFor, mul, rgbCss, layerSettings, boxRects, groupBoxes, maskedXf, unitTransform, unitTransformCam, hToCanvas, warpBegin, warpEnd, caretRect } from './textAnimators';
+import { evaluate, glyphFor, mul, rgbCss, layerSettings, boxRects, boxBorder, groupBoxes, maskedXf, unitTransform, unitTransformCam, hToCanvas, warpBegin, warpEnd, caretRect, hasFontEffects, unitFont } from './textAnimators';
 import { evaluatePropertyTrack } from './gsapTransitions';
 import { buildCanvasGradient } from '../../utils/cssGradient';
 
@@ -121,15 +121,33 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
     },
   });
   const n = L.units.length;
-  // tracking reflow, centred rows
+  // Font size / weight / italic: a unit's own font, measured with it (null = the tile's font).
+  const fontCss = new Array(n).fill(null);
+  const UW = Float64Array.from(L.units, (u) => u.w);
+  const UM = new Float64Array(n).fill(1);
+  if (hasFontEffects(built?.animators)) {
+    const base = { size: L.size, weight: Number(weight) || 400, italic: false };
+    for (let i = 0; i < n; i += 1) {
+      const f = unitFont(ev.states[i], base);
+      if (!f) continue;
+      const u = L.units[i];
+      ctx.font = L.font;
+      const w0 = ctx.measureText(u.ch).width;
+      fontCss[i] = `${f.italic ? 'italic ' : ''}${f.weight} ${f.size}px ${family}`;
+      ctx.font = fontCss[i];
+      UW[i] = Math.max(0, u.w + ctx.measureText(u.ch).width - w0);
+      UM[i] = f.size / L.size;
+    }
+  }
+  // tracking and own-font reflow, centred rows
   const X = new Float64Array(n);
   for (const ln of L.lines) {
     let cum = 0;
     for (let j = 0; j < ln.count; j += 1) {
       const i = ln.first + j;
       const tr = ev.states[i].track;
-      X[i] = L.units[i].x + L.units[i].w / 2 + cum + tr / 2;
-      cum += tr;
+      X[i] = L.units[i].x + UW[i] / 2 + cum + tr / 2;
+      cum += tr + UW[i] - L.units[i].w;
     }
     for (let j = 0; j < ln.count; j += 1) X[ln.first + j] -= cum / 2;
   }
@@ -145,21 +163,36 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
     ? { x: w / 2, y: h / 2, d: lay.perspective > 0 ? lay.perspective : (h * 0.5) / Math.tan((14 * Math.PI) / 180) }
     : null;
   const band = L.asc + L.desc;
-  const boxOf = groupBoxes(L.units.map((u, i) => ({ x0: X[i] - u.w / 2, y0: u.cy - band / 2, x1: u.space ? X[i] - u.w / 2 : X[i] + u.w / 2, y1: u.cy + band / 2, wi: u.wi, li: u.li })));
+  // each unit's band, scaled about the baseline by its own font size
+  const top = (i) => L.units[i].baseline - L.asc * UM[i];
+  const bottom = (i) => L.units[i].baseline + L.desc * UM[i];
+  const boxOf = groupBoxes(L.units.map((u, i) => ({ x0: X[i] - UW[i] / 2, y0: top(i), x1: u.space ? X[i] - UW[i] / 2 : X[i] + UW[i] / 2, y1: bottom(i), wi: u.wi, li: u.li })));
   const pivot = { x: lay.pivotX / 100, y: lay.pivotY / 100 };
-  // Mask boxes: across = the unit's, down = its row's ink band (the Player's rule).
+  // Mask boxes: across = the unit's, down = its row's ink band (the Player's rule) — a
+  // unit with a bigger font of its own grows its row's band.
+  let rowInk = null;
+  if (ev.states.some((st) => st.mask) && fontCss.some(Boolean)) {
+    rowInk = L.lines.map((ln) => ({ t: ln.inkTop, b: ln.inkBottom }));
+    L.units.forEach((u, i) => {
+      if (!fontCss[i] || u.space) return;
+      const ln = L.lines[u.li];
+      const r = rowInk[u.li];
+      r.t = Math.min(r.t, ln.baseline - (ln.baseline - ln.inkTop) * UM[i]);
+      r.b = Math.max(r.b, ln.baseline + (ln.inkBottom - ln.baseline) * UM[i]);
+    });
+  }
   const maskOf = ev.states.some((st) => st.mask)
     ? groupBoxes(L.units.map((u, i) => {
       const b = boxOf(i, 'char');
-      const ln = L.lines[u.li];
-      return { x0: b.x0, x1: b.x1, y0: ln.inkTop - 1, y1: ln.inkBottom + 1, wi: u.wi, li: u.li };
+      const ln = rowInk ? rowInk[u.li] : { t: L.lines[u.li].inkTop, b: L.lines[u.li].inkBottom };
+      return { x0: b.x0, x1: b.x1, y0: ln.t - 1, y1: ln.b + 1, wi: u.wi, li: u.li };
     }))
     : null;
   ctx.font = L.font;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   // highlight boxes
-  const cells = L.units.map((u, i) => ({ row: u.li, x: X[i] - u.w / 2, w: u.w, ink: u.space ? 0 : u.w, top: u.baseline - L.asc, bottom: u.baseline + L.desc }));
+  const cells = L.units.map((u, i) => ({ row: u.li, x: X[i] - UW[i] / 2, w: UW[i], ink: u.space ? 0 : UW[i], top: top(i), bottom: bottom(i) }));
   for (const { v, amt, groups } of ev.boxes) {
     ctx.fillStyle = v.color;
     for (const q of boxRects(v, amt, cells, groups)) {
@@ -168,6 +201,12 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
       if (ctx.roundRect) ctx.roundRect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0, q.r);
       else ctx.rect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0);
       ctx.fill();
+      const bd = boxBorder(v, q);
+      if (bd) {
+        ctx.strokeStyle = bd.color; ctx.lineWidth = bd.width; ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(bd.x, bd.y, bd.w, bd.h, bd.r); else ctx.rect(bd.x, bd.y, bd.w, bd.h);
+        ctx.stroke();
+      }
     }
   }
   ctx.globalAlpha = 1;
@@ -210,7 +249,7 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
     if (stroke && !st.outlineK) { c.globalAlpha = st.alpha; c.lineWidth = stroke.w * 2; c.strokeText(g, 0, by); }
     const fillA = st.alpha * (1 - st.outlineK);
     if (fillA > 0.003) {
-      const unitBox = { x: -u.w / 2, y: -band / 2, w: u.w, h: band };
+      const unitBox = { x: -UW[i] / 2, y: -band * UM[i] / 2, w: UW[i], h: band * UM[i] };
       const textBox = { x: L.block.x - X[i], y: L.block.y - u.cy, w: L.block.w, h: L.block.h };
       c.globalAlpha = fillA;
       const css = st.touched ? (st.paint.type === 'solid' ? rgbCss(st.paint.c) : null) : (color || '#ffffff');
@@ -227,6 +266,14 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
   };
   // One unit: its transform around each animator's unit (depth = warped).
   const drawUnit = (i, u, st, target = ctx) => {
+    if (fontCss[i]) {
+      const own = target.font;
+      target.font = fontCss[i];
+      drawUnitIn(i, u, st, target);
+      target.font = own;
+    } else drawUnitIn(i, u, st, target);
+  };
+  const drawUnitIn = (i, u, st, target) => {
     const mb = st.mask ? maskOf(i, st.mask) : null;
     const xfIn = mb ? maskedXf(st, mb.y1 - mb.y0) : st.xf;
     const tf = !st.xf ? null : cam ? unitTransformCam(xfIn, (lv) => boxOf(i, lv), pivot, cam) : unitTransform(xfIn, (lv) => boxOf(i, lv), pivot);
@@ -235,8 +282,8 @@ export function drawPreviewFrame(canvas, { text, family, weight, color, built, p
     if (tf && tf.projective) {
       // Depth: paint the glyph flat, then warp it into perspective.
       target.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const room = band * 0.25 + (st.stroke ? st.stroke.w : 0);
-      const box = { x0: X[i] - u.w / 2 - room, y0: u.cy - band / 2 - room, x1: X[i] + u.w / 2 + room, y1: u.cy + band / 2 + room };
+      const room = band * UM[i] * 0.25 + (st.stroke ? st.stroke.w : 0);
+      const box = { x0: X[i] - UW[i] / 2 - room, y0: top(i) - room, x1: X[i] + UW[i] / 2 + room, y1: bottom(i) + room };
       const reach = 3 * st.blur + (st.shadow ? Math.abs(st.shadow.x) + Math.abs(st.shadow.y) + 1.5 * st.shadow.blur : 0);
       const w = warpBegin(target, tf.H, box, warpScratch(), reach * dpr);
       if (w) { paintGlyph(w.ctx, mul(w.base, local), u, i, st); warpEnd(w); }

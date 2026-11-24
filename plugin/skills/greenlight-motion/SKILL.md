@@ -56,7 +56,7 @@ added by hand); in Codex `codex mcp login greenlight`. Their browser opens green
 ## Setup (once per machine)
 
 ```
-npx greenlight-motion@0.5.8 doctor
+npx greenlight-motion@0.5.9 doctor
 ```
 
 It checks Node 18+, Chrome or Edge, WebGPU and H.264 encoding, and prints a fix for anything missing. Do not install
@@ -72,12 +72,12 @@ every contact sheet against it.
 ## The fast way: a scene script
 
 For a new video, start with a **scene script** instead of a whole project: a short JSON file — scenes, their texts and
-shapes, preset names, transitions, sounds — that `script` turns into `project.json` with the Video Editor's own
+shapes, preset names, transitions — that `script` turns into `project.json` with the Video Editor's own
 animation presets (the same converter the GreenLight Motion connector uses in Claude and ChatGPT). Hand-written
 keyframes rarely look as good. The format, the design rules and the catalogues: `skill/references/scene-script.md`.
 
 ```
-npx greenlight-motion@0.5.8 script <folder> --from scenes.json   # or write <folder>/script.json, then: script <folder>
+npx greenlight-motion@0.5.9 script <folder> --from scenes.json   # or write <folder>/script.json, then: script <folder>
 ```
 
 Then `check` and `stills` (below), fix the SCRIPT and run `script` again — it rewrites `project.json`. A scene's
@@ -101,7 +101,7 @@ would ignore fails with its path and the right name. Format and example: `skill/
 (`review`), not by double-click; `check`, `stills` and `render` open it that way themselves. Keep Final short (seconds per
 frame) and judge glass and liquids in a Final still: Draft shows no liquid inside glass. The 3D engine is a plugin,
 `greenlight-motion-3d`: the CLI downloads it by itself the first time a folder has a `world` (once, into the user's cache);
-`npx greenlight-motion@0.5.8 add-3d` gets it ahead, `doctor` shows it. Never tell the user to install it.
+`npx greenlight-motion@0.5.9 add-3d` gets it ahead, `doctor` shows it. Never tell the user to install it.
 
 ## Beyond the script: the signature visual
 
@@ -118,10 +118,10 @@ Build it with `apply` on the project `script` wrote (the item ids are the script
   (`references/video-effects.md`) for reveals.
 - **Your own drawing and motion**: SVG you write (`{ "type": "image", "svg": "…" }` in the script), shapes with
   keyframes, motion paths (`references/video-paths.md`), particles (`references/video-particles.md`), 3D
-  (`references/video-3d.md`), Text Animators by hand (`references/video-text.md`).
-- **Sound when nothing may be downloaded**: write it in code. A short Node script can write a 48 kHz WAV (a soft bed, a
-  click, a noise whoosh) into `assets/`, then use it as the script's `music` or as an audio clip. Keep the bed quiet
-  under the hits.
+  (`references/video-3d.md`; characters: `references/video-characters.md`), Text Animators by hand (`references/video-text.md`).
+- **Sound when nothing may be downloaded or generated**: write it in code. A short Node script can write a 48 kHz WAV (a
+  soft bed, a click, a noise whoosh) into `assets/`, then use it as the script's `music` or as an audio clip. Keep the
+  bed quiet under the hits.
 
 Keep the build repeatable: put your edits in a file you `apply` again after each `script` run (`script --force`, then
 `apply`), so the script and the hand-made layers never drift apart.
@@ -141,17 +141,18 @@ What the engine does there, so you don't learn it from a broken frame:
 
 ## Workflow
 
-1. `npx greenlight-motion@0.5.8 init <folder>` — starts from a working example (title, subtitle, accent line, four
+1. `npx greenlight-motion@0.5.9 init <folder>` — starts from a working example (title, subtitle, accent line, four
    options). `--from file.json` starts from a project you have (for example one exported from GreenLight Dash).
 2. Edit `<folder>/project.json` — for changes to an EXISTING project prefer `apply` (below): it checks every edit and
    applies all or nothing. Put pictures, video, sound and fonts in `<folder>/assets/` and refer to them as
    `"asset:<file>"` (e.g. `"url": "asset:product.png"`).
-3. `npx greenlight-motion@0.5.8 check <folder>` — fix everything it lists (missing files, template mistakes, blank
+3. `npx greenlight-motion@0.5.9 check <folder>` — fix everything it lists (missing files, template mistakes, blank
    frames, page errors), and read its notes: text the engine wraps where you did not break it. `--json` for machine output.
-4. `npx greenlight-motion@0.5.8 stills <folder>` — renders frames and **a labelled contact sheet**. Open and look at
+4. `npx greenlight-motion@0.5.9 stills <folder>` — renders frames and **a labelled contact sheet**. Open and look at
    it before you go on: layout, readability, timing. Fix and repeat. `--at 0.5,1.2,3` for exact times.
 5. Hand it over: tell the user to open `<folder>/index.html` (Chrome or Edge), or `pack` it into one file, or
-   `render` the MP4 yourself (`--fps 60 --motion-blur` for fast motion).
+   `render` the MP4 yourself (`--fps 60`; `--motion-blur` only when the user asks for it: one fast element gets the
+   `motionBlur` layer effect instead).
 
 `set <folder> key=value …` changes template values the same way the page's options panel does.
 `apply <folder> edits.json` (or `-` for stdin; `--dry-run`, `--json`) applies a LIST of edits atomically: each is
@@ -167,7 +168,6 @@ the error names the edit number with a fix. Ops:
  { "op": "add", "to": "channels", "value": { "id": "ch9" }, "at": 0 },
  { "op": "add", "to": { "channel": "ch9" }, "value": { "id": "it9", "clipId": "c9", "trimStart": 0, "trimEnd": 4 } },
  { "op": "add", "to": { "item": "it9", "list": "effects" }, "value": { "id": "bloom", "eid": "fx-1", "params": {} } },
- { "op": "add", "to": "sounds", "value": { "sfx": "standard-swoosh", "on": "it9", "at": "peak" } },
  { "op": "remove", "effect": "fx-1", "item": "it9" },
  { "op": "move", "channel": "ch9", "to": 0 }]
 ```
@@ -175,12 +175,12 @@ the error names the edit number with a fix. Ops:
 `effect` + `item`; `move` `to` is the stack position, 0 = bottom.)
 `trace <folder> [--fps 30]` writes `trace.json`: every keyframed layer's animated values frame by frame (the engine's own
 curves) and its moments — start, end, `peak` (the fastest instant) and when each track settles. Use it to check
-timing and staggers in numbers instead of guessing from stills, and to place sound cues.
+timing and staggers in numbers instead of guessing from stills, and to place sounds.
 `events <folder> [--fps 30]` writes `events.json`: the film's event timeline, with no browser and no render — each move's
 fastest frame (`move`, with its part: `travel`, `size` or `spin`) and the frame it comes to rest (`stop`, `gone` when it
 shrinks to nothing), appearances, cuts, transitions, each Text Animator letter's start (`text`), and in a 3D Scene its
 objects, camera, `visible` switches, lights and sims (read by the 3D plugin). Each event has `t`, `frame`, `strength`
-(0–1) and where it is on the frame (`x`, `y`, `pan`). A cue's sound goes on these frames: a whoosh's loudest moment on a
+(0–1) and where it is on the frame (`x`, `y`, `pan`). A sound goes on these frames: a whoosh's loudest moment on a
 `move`, a hit's on a `stop`, ticks on the first `text` letter.
 
 ## The project format — essentials
@@ -214,16 +214,27 @@ editor's own normalizer), so write only what you mean.
 - Text: `textContent`, `textColor`, `textFontSize` (px at the composition size), `textFontWeight`, `textFontFamily`,
   `textAlign`, `textLetterSpacing`, `textLineHeight`. Shapes: `shapeType`, `shapeFillColor`, `shapeWidthPct`,
   `shapeHeightPct`, `shapeRadiusPct`.
+- **An HTML page as a layer** (an interface: a product screen, an app window, a dashboard, a chat, a code editor; or a
+  shot only code draws: a canvas simulation, a WebGL page): a clip `{ "mediaType": "html", "url": "asset:<page>.html",
+  "html": { "width": 1920, "height": 1080 }, "duration": <s> }` (in a scene script: an element of type `html`). The
+  engine draws the page itself, stepped on the video's clock frame by frame, so the preview, `stills` and `render` show
+  the same picture and nothing is recorded first (a clip that carries a recording, `prerender`, plays that instead). It
+  needs Chrome 157 or newer (`doctor` has a line for it; `check` names a page that could not be drawn).
+  The page: one HTML document in `assets/`, its own pictures, scripts and styles beside it by a relative address
+  (`<img src="img/logo.png">`) or as `asset:<name>` — or, in a scene script, written into the element (`"html":
+  "<!doctype html>…"`, kept in the project). A transparent background lets the layers behind show. CSS animations,
+  `requestAnimationFrame`, timers and `performance.now()` all run on the video's time. Keep the words a person will
+  change (titles, captions, a price) as text layers over the page, not in it.
 - Not here: MotionFast templates (`mediaType: "motion"`) live only in GreenLight Dash — build the look from layers.
 
 Full references (generated from the editor's own docs; ignore the `/api/` routes they mention):
-`skill/references/` — video-design, scene-script, video-projects, video-text, video-text-kinetic, video-text-presets, video-shapes, video-keyframes,
-video-camera, video-3d, video-effects, video-transitions, video-particles, video-paths, video-backgrounds, video-grid,
+`skill/references/` — video-design, scene-script, video-projects, video-text, video-text-presets (every text animation preset, Kinetic included), video-shapes, video-keyframes,
+video-camera, video-3d, video-characters, video-effects, video-transitions, video-particles, video-paths, video-backgrounds, video-grid,
 video-world3d (the 3D Scene, with world3d-schema.json); video-world3d-notes and video-motion-notes (what real films taught:
-wrong ways and the right one, with values; read them before you build); video-motion-grammar-examples (the films behind the
-motion grammar's rules), video-motion-in-code (its rules in a film made in code); `seam-craft/` (Seam Craft: the joins by
+wrong ways and the right one, with values; read them before you build); video-motion-in-code (the motion grammar in a film made
+in code); `seam-craft/` (Seam Craft: the joins by
 recipe and by numbers, with Python tools).
-Machine-readable lists: `npx greenlight-motion@0.5.8 schema effects | transitions | easings | paths | expressions`.
+Machine-readable lists: `npx greenlight-motion@0.5.9 schema effects | transitions | easings | paths | expressions`.
 
 ## Template
 
@@ -252,33 +263,28 @@ A target is an item (`itemId`, found in nested sequences too), a clip (`clipId`)
 
 ## Sound
 
-Give motion its sound with **cues**, not seconds: `"sounds"` at the top of project.json. Each cue lines a sound's
-own sync point (its loudest moment: a click's contact, a whoosh's pass, a hit) up with an event of a layer, so
-retiming the layer moves its sound with it:
+The engine has no sounds of its own and adds none. A film's sounds and music are files, chosen in the order
+`references/video-design.md` (Sound) gives: what the user gave or named; then their own library or the audio files
+they put in the folder; then generated with a tool they have, or found in an open source (Openverse's audio search,
+CC0 and CC BY files only).
+
+Each one is an ordinary audio clip in `assets/`, on its own channel at the second of its event (`events` gives the
+seconds: a whoosh's loudest moment on a `move`, a hit on a `stop`, ticks on the first `text` letter):
 
 ```json
-"sounds": [
-  { "sfx": "standard-swoosh",         "on": "card", "at": "peak" },
-  { "sfx": "cinematic-transition-13", "on": "logo", "at": "start", "gain": -2 },
-  { "sfx": "data-1",                  "on": "badge", "at": "start" },
-  { "sfx": "selection-data-click",    "time": 3.2, "gain": -6 }
-]
+[{ "op": "add", "to": "clips", "value": { "id": "sfx-whoosh", "mediaType": "audio", "url": "asset:whoosh.mp3", "duration": 0.9 } },
+ { "op": "add", "to": "channels", "value": { "id": "ch-sfx-1", "name": "Sound effects", "unsnapped": true } },
+ { "op": "add", "to": { "channel": "ch-sfx-1" }, "value": { "id": "sfx-1", "clipId": "sfx-whoosh", "freeStart": 2.35, "trimStart": 0, "trimEnd": 0.9, "volume": 70 } }]
 ```
 
-`at`: `start`, `end`, `peak` (the layer's fastest moment, from its keyframes) or seconds from its start; `time` for
-an absolute moment; `align` `sync` (default) / `start` / `end`; `offset` seconds; `gain` dB (≤ 0).
+Items on one channel never overlap: a sound that starts while another still plays goes on a second channel. Music is
+the script's `music`, or an audio clip on its own channel under a voice-over.
 
-The library is 77 hand-picked sounds in categories (whooshes and swooshes, transitions, clicks, pop-ups and
-notifications, data blips, typing and writing, foley, bubbles, impacts and bass drops, camera, gears, voice clips).
-`npx greenlight-motion@0.5.8 schema sounds` lists every one with its `category`, `use` (what it is for), `duration`
-and `sync`. Pick by `category` and `use`, then by name.
+Fewer is better: one sound per meaningful event, whooshes only on big fast moves, nothing under spoken words. The page
+and the rendered MP4 play them.
 
-- **Where the files come from:** the GreenLight sound CDN. `build` downloads each sound a cue uses into
-  `assets/sounds/` (once, so the finished folder plays offline); `check` reports a sound it could not get, with the fix.
-- **Voice clips & memes** are real voices, some of real people: only when the user asks for one.
-
-Fewer is better: one sound per meaningful event, whooshes only on big fast moves, nothing under spoken words. A
-sound never makes the video longer. The page and the rendered MP4 play them; `check` reports a cue it can't place.
+A film made earlier may carry `"sounds"` cues (`{ "sfx", "on", "at" }`): they keep playing, and `build` still downloads
+their files into `assets/sounds/`. Leave them as they are; give a new film audio clips.
 
 ## Review notes from the user
 
@@ -286,7 +292,7 @@ The page has **Notes**: the user marks what should change right on the frame (a 
 and writes a note for each mark. Every note carries the moment (seconds and frame), the mark in composition pixels
 and the layers under it (item ids in project.json), so you change exactly that and nothing else.
 
-- **They review on this computer:** run `npx greenlight-motion@0.5.8 review <folder>` and give them the URL it prints
+- **They review on this computer:** run `npx greenlight-motion@0.5.9 review <folder>` and give them the URL it prints
   (it keeps running; `--open` opens their browser, only when they ask). They mark notes and highlights and press
   **Save for agent**: their notes land in `<folder>/review/` (the server prints a `saved:` line). Read `review/NOTES.md`,
   open each note's picture beside it (`A-at-<t>s-n<note>.png`: the frame with their drawing), make the changes (`apply`),
@@ -306,7 +312,7 @@ When you made several versions or variants (other looks, pacing, endings), never
 ONE review page, the same review card GreenLight Dash shows on a board, and ask the user to highlight, note and pick there.
 
 ```
-npx greenlight-motion@0.5.8 review <a> <b> <c> --titles "Bold,Calm,Neon" [--subs "bigger type,slower,glow"]
+npx greenlight-motion@0.5.9 review <a> <b> <c> --titles "Bold,Calm,Neon" [--subs "bigger type,slower,glow"]
 ```
 
 Every folder is a source (A, B, C …, keys 1–9) on one shared timeline (frame n is the same moment in each):
@@ -332,7 +338,7 @@ choose before you build on them, don't choose yourself: put each frame's picture
 open", "files": ["S01/a.png", "S01/b.png"] }] }`), then:
 
 ```
-npx greenlight-motion@0.5.8 pick <dir> [--title "Teaser stills"]
+npx greenlight-motion@0.5.9 pick <dir> [--title "Teaser stills"]
 ```
 
 It is GreenLight Dash's pick card: a click picks a frame's **take** (the picture to use), more clicks add **extras**,
@@ -358,11 +364,11 @@ that fails (`plugin`); look at `stills` for the look. A package that carries its
 
 The same project opens in GreenLight Dash (the desktop editor this engine comes from) for full editing: the page's
 edit note offers **Open in GreenLight Dash** (it imports the folder as a new project on the open board; a page with
-changes saves a `.glvideo`). `npx greenlight-motion@0.5.8 pack <folder> --glvideo` writes that file yourself: ONE
+changes saves a `.glvideo`). `npx greenlight-motion@0.5.9 pack <folder> --glvideo` writes that file yourself: ONE
 `.glvideo` (the project + its files) that opens in GreenLight Dash on a double-click, or dropped on its board. Hand it
 over when the user wants to keep editing in the app. A
 GreenLight Dash project comes the other way through the app's **Export for agents** — a ready folder like the one
-`init` makes, with the options the author ticked. `npx greenlight-motion@0.5.8 init <folder> --from <its project.json>`
+`init` makes, with the options the author ticked. `npx greenlight-motion@0.5.9 init <folder> --from <its project.json>`
 starts from one too. Never tell the user they must install it: the page plays, changes options and renders on its own.
 
 ## Files
@@ -384,7 +390,7 @@ When the user has not named one, choose from these first. Each still has to suit
 - **Layer Effects** (`layerEffects[]`): `runningGlow`, `motionBlur`, `motionTrail`, `autoFill`, `repetile`,
   `regionDistort`, `cornerPin`, `rig`, `droste`, `glass`, `chromaKey`, `layerMask`.
 - **Leave out unless asked:** `grain`, `lensPrism`, `linesDraw`, `sdfLensBlur`.
-- **Text animation presets** (`references/video-text-presets.md`, `references/video-text-kinetic.md`): Glide Text,
+- **Text animation presets** (`references/video-text-presets.md`, Kinetic included): Glide Text,
   Ember Type, Marker, Outline Pass, Neon Flow, Glitch; Kinetic: Swing Pop, Pendulum, Fan Deal, Whip, Word Swing,
   Letter Vortex; Voice: Spoken Box, Spoken Pop, Spoken Glow, Karaoke Wipe, Word Pop, Rise on Voice,
   Typed as Spoken. Pick the category first (what the text should do), then prefer these within it.

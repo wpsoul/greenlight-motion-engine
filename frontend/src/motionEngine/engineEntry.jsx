@@ -13,6 +13,8 @@
  *   const { blob } = await engine.export({ format: 'mp4', fps: 30, onProgress });
  *   engine.missingAssets();                  // refs asked for and not provided (models, HDRs …)
  *   GreenLightMotion.pluginStatus();         // the page's plugin packages (assets/plugins/) and their proofs
+ *   GreenLightMotion.htmlLayers();           // HTML layers: can this browser draw pages, and the pages that failed
+ *   GreenLightMotion.setHtmlPageScripts(false); // before mounting: HTML layers' pages run no scripts (a chat, a shared link)
  *   engine.dispose();
  *
  *   GreenLightMotion.mountPage(el, { project, assets, theme }); // the viewer's page: preview, layers, options, Render (PlayerPage.jsx)
@@ -41,6 +43,7 @@ import { textWraps } from './textWraps';
 import { SOUNDS } from './sfx';
 import { checkTemplate } from './template';
 import { installFetchLayer, createResolver, setActiveResolver, resolveProject, missingAssets, clearMissingAssets, pluginStatus } from './assets';
+import { htmlLayerStatus, setHtmlPageScripts } from './htmlPages';
 // the shared review interface (left rail, inspector, Edit · Notes · Highlight) every host mounts: studio/index.js
 import { mountStudio } from './studio';
 import { PREVIEW_TIER } from '../components/videoEditor/engine/previewMedia';
@@ -181,7 +184,7 @@ async function create(container, { renderer = 'webgpu', assets = null, worldBase
 
 /** The viewer's page in EL (WebGPU). theme: 'dark' (default), 'light' or 'auto' (follows the system).
  *  Returns { unmount }. */
-function mountPage(el, { project, assets = null, theme = 'dark', worldBase = null } = {}) {
+function mountPage(el, { project, assets = null, theme = 'dark', worldBase = null, pinCameraRows = false } = {}) {
   if (!el) throw new Error('GreenLightMotion.mountPage needs an element');
   if (worldBase) setWorldBase(worldBase);
   if (!project) throw new Error('GreenLightMotion.mountPage needs a project');
@@ -189,10 +192,10 @@ function mountPage(el, { project, assets = null, theme = 'dark', worldBase = nul
   activateMaterialBackendForRenderer('webgpu');
   if (PREVIEW_TIER.touch) setPhoneMode(true);
   const root = createRoot(el);
-  root.render(<PlayerPage project={project} assets={assets} theme={theme} />);
+  root.render(<PlayerPage project={project} assets={assets} theme={theme} pinCameraRows={pinCameraRows} />);
   return { unmount: () => root.unmount() };
 }
 
-window.GreenLightMotion = { create, mountPage, mountStudio, farm: { joinParts, partRanges, readMp4, planFarm, estimateHere, estimate: farmEstimate, limits: FARM_LIMITS }, setRenderFarm, setWorldBase, world3d, hasWorld, filmWorldMode, withWorldMode, finalCost, checkFinalCap, setFinalCap, CHAT_FINAL_CAP, checkTemplate, checkSoundCues, sounds: SOUNDS, missingAssets, pluginStatus, normalize: toEngineProject, trace: async (project, opts) => traceProject(await toEngineProject(project), opts), matteGaps: async (project) => matteGaps(await toEngineProject(project)), textWraps: async (project) => textWraps(await toEngineProject(project)), version: VERSION };
+window.GreenLightMotion = { create, mountPage, mountStudio, farm: { joinParts, partRanges, readMp4, planFarm, estimateHere, estimate: farmEstimate, limits: FARM_LIMITS }, setRenderFarm, setWorldBase, world3d, hasWorld, filmWorldMode, withWorldMode, finalCost, checkFinalCap, setFinalCap, CHAT_FINAL_CAP, checkTemplate, checkSoundCues, sounds: SOUNDS, missingAssets, pluginStatus, htmlLayers: htmlLayerStatus, setHtmlPageScripts, normalize: toEngineProject, trace: async (project, opts) => traceProject(await toEngineProject(project), opts), matteGaps: async (project) => matteGaps(await toEngineProject(project)), textWraps: async (project) => textWraps(await toEngineProject(project)), version: VERSION };
 
-export { joinParts, partRanges, planFarm, estimateHere, setRenderFarm, create, mountPage, mountStudio, setWorldBase, world3d, hasWorld, filmWorldMode, withWorldMode, finalCost, checkFinalCap, setFinalCap, CHAT_FINAL_CAP, checkTemplate, checkSoundCues, SOUNDS as sounds, missingAssets, pluginStatus, toEngineProject as normalize, traceProject, matteGaps, textWraps, VERSION as version };
+export { joinParts, partRanges, planFarm, estimateHere, setRenderFarm, create, mountPage, mountStudio, setWorldBase, world3d, hasWorld, filmWorldMode, withWorldMode, finalCost, checkFinalCap, setFinalCap, CHAT_FINAL_CAP, checkTemplate, checkSoundCues, SOUNDS as sounds, missingAssets, pluginStatus, htmlLayerStatus as htmlLayers, setHtmlPageScripts, toEngineProject as normalize, traceProject, matteGaps, textWraps, VERSION as version };

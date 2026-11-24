@@ -9,11 +9,58 @@ The second half, [Motion grammar](#motion-grammar), is how every move is written
 > right one, with values), and in the app your user's own: `GET /api/agent/engine-notes/motion`
 > ([engine notes](../board-memory.md#engine-notes-general-lessons-for-every-board)).
 
+## Contents
+
+- [The defaults: never and prefer](#the-defaults-never-and-prefer)
+  - [What draws each part of a video](#what-draws-each-part-of-a-video)
+  - [Never](#never)
+  - [Prefer](#prefer)
+  - [The editor's own tool for a named look](#the-editors-own-tool-for-a-named-look)
+- [Hierarchy](#hierarchy)
+- [Text animation](#text-animation)
+- [Text animation pace](#text-animation-pace)
+- [Sound](#sound)
+- [What to check in every version](#what-to-check-in-every-version)
+- [Motion grammar](#motion-grammar)
+  - [A move is two keys and an easing](#a-move-is-two-keys-and-an-easing)
+  - [One gesture per element](#one-gesture-per-element)
+  - [Keys in a chain carry the speed](#keys-in-a-chain-carry-the-speed)
+  - [Curved moves ride a motion path](#curved-moves-ride-a-motion-path)
+  - [Corners on a line: straight legs and one radius](#corners-on-a-line-straight-legs-and-one-radius)
+  - [Computed and measured motion: fit it, then write it](#computed-and-measured-motion-fit-it-then-write-it)
+  - [Joins: one move across the cut](#joins-one-move-across-the-cut)
+  - [The twelve join types](#the-twelve-join-types)
+  - [Check the motion before delivery](#check-the-motion-before-delivery)
+  - [The cases behind the rules](#the-cases-behind-the-rules)
+
 ## The defaults: never and prefer
 
 GreenLight Dash's defaults for every video: the app's agents, the engine's CLI and the chat connector all read this
 list. A user's own request wins over a default ("add a text shadow", "make it bounce"). The sections after it say how to
 do each one.
+
+### What draws each part of a video
+
+A video is built in the Video Editor, and each part of it is drawn by the tool that suits that part. Choose part by
+part, not once for the whole film:
+
+| The part | Drawn by |
+|---|---|
+| An interface: a product screen, an app window, a dashboard, a chat, a code editor, a chart with a layout | an HTML page played as an html clip ([html-clips.md](html-clips.md)) |
+| A title, a caption, a price, a call to action: any words a person may want to retype | a text layer with a preset ([text-presets.md](text-presets.md)), never words inside a page |
+| The camera, transitions, motion blur, glow, glass, colour | the editor's own layers and effects |
+| 3D | first choose the tool for each object, by [Which 3D](world3d.md#which-3d-choose-first): the 3D Scene, or a WebGL page played as an html clip |
+| Footage, sound, the voice | the editor's own layers |
+
+- **Where a page plays.** In GreenLight Dash a page is a live layer. The GreenLight Motion engine outside the app does
+  not draw a page: the page is recorded to a video (its bake) and the html clip carries that, which needs a recorder
+  on the computer (the film workflow's tools: Python 3 with Playwright, and ffmpeg); without one, show the interface
+  as pictures. The chat connector has no html clips: an interface there is built from layers and pictures.
+- **What moves inside a page moves on the editor's curves**
+  ([The editor's easing in a page](html-clips.md#the-editors-easing-in-a-page)).
+- **A film made only in code,** with no editor project, is for two cases: the user asks for one ("in code", "in WebGL",
+  "without the editor"), or neither GreenLight Dash nor the engine can be used. It is never chosen to get a better
+  picture.
 
 ### Never
 
@@ -45,9 +92,32 @@ do each one.
   edges.
 - **The `shockwave` Overlay Effect unless the user asks for a shockwave:** it reads as a stock template move
   ([effects.md](effects.md#shockwave-only-on-request)).
+- **A static backing under animated text.** A plate, pill, card or caption bar behind text that animates in is a
+  Highlight box that grows with the words ([Hierarchy](#hierarchy)).
+- **Two highlight boxes on one caption, unless the user asks for it.** When a caption has a box behind its words (a
+  Highlight box plate, a caption bar, a shape), the highlight that runs with the voice changes only the spoken word's
+  colour (a `fill` effect), never a second box under that word: a box moving inside a box reads as two captions
+  fighting. A running box (Spoken Box, a karaoke bar) is for a caption with no backing
+  ([text.md](text.md#a-backing-that-animates-with-its-text)).
+- **3D made another way than [Which 3D](world3d.md#which-3d-choose-first) picks.** For a real thing, for physics and for what only
+  path tracing shows, that is the app's own 3D Scene ([world3d.md](world3d.md)): a
+  Scene layer (a `rig` clip with `rig.renderer: "world"`) whose world you build and model yourself (objects from ops,
+  materials, lights, the environment), filmed by the timeline's Camera layer (no `scene.camera`). A device the film shows
+  that the [preset table](3d.md#bundled-device-presets) has (iPhone, iPad, MacBook, iMac) may go in ready-made, as a
+  `model3d` preset layer standing in that Scene with its picture in `model3dConfig.screen`
+  ([how](3d.md#devices-from-the-preset-table)); model it yourself when the task asks for that, and take another
+  model only when the task names one. Model layers in a project with no Scene layer and a pre-rendered device mockup
+  clip are not how a video's 3D is made. Any other 3D object may be a WebGL
+  page played as an html clip, when Which 3D picks it.
+- **One Overlay Effect copied onto many small layers.** When many small layers of one object share the same Overlay
+  Effect (a glow on every plexus line, say), group them in a sequence and put the effect once on an adjustment item at
+  the top of that group. Copying it onto each layer multiplies render time
+  ([effects.md](effects.md#one-effect-for-many-small-layers)).
 
 ### Prefer
 
+- **The niche first.** Before a video's first version, decide its niche and follow that niche's rules in
+  [niches.md](niches.md) (Storytelling: sound effects at 30 % volume under the voice).
 - **One idea per scene:** 3–6 scenes of 2–3 s for a short video. A scene that says two things says neither.
 - **One headline per scene,** supporting text much smaller; hierarchy from size and weight, not colour alone. **One
   accent colour** and strong contrast.
@@ -71,10 +141,11 @@ do each one.
   ([Text animation](#text-animation)); punchy presets go on short titles, hooks and calls to action (up to about 5
   words, or 2–4 short stacked lines). Every text animation takes at least 0.8–1 s over the whole line
   ([Text animation pace](#text-animation-pace)).
-- **Transitions and camera:** two or three kinds of transition across a video. Camera moves are slow and small unless
-  they are the point; fast motion looks best at 60 fps with motion blur. A real 3D camera earns its place on one or two
-  moments, not every scene: a zoom onto the one thing a scene is about (a number, the button a screen recording clicks;
-  1.3–2×, then back out), or a slow orbit or push that shows depth.
+- **Transitions:** two or three kinds of transition across a video.
+- **60 fps, no project motion blur by default.** The project's `motionBlurEnabled` (the engine's `--motion-blur`)
+  renders a fast frame up to 16 times over, so it is on only when the user asks for it. One fast element (a card flying
+  out, a quick exit) gets the Motion Blur layer effect on its own layer, which costs only that layer
+  ([effects-layer.md](effects-layer.md#motion-blur-entry)).
 - **Depth from layers at different distances:** a soft shape or picture far behind, the words at the front. Depth of
   field reads only then; keep the words sharp. Keep an orbit in front of flat layers (within about ±70°): text turned
   further goes edge-on, then mirrored.
@@ -82,11 +153,51 @@ do each one.
   ([Sound](#sound)).
 - **Look at every version** on a contact sheet before the user sees it ([What to check](#what-to-check-in-every-version)).
 
+### The editor's own tool for a named look
+
+When the user asks for one of these looks, use the effect that makes it; the stand-ins after each one are not it.
+
+- **Glass** (glassmorphism cards or buttons, liquid or frosted glass, a lens or magnifier, crystal or prism tiles): give
+  a rectangle/ellipse/circle shape with a transparent fill the `glass` Layer Effect
+  (`{ "id": "glass", "params": { "glassPreset": "liquid" } }`). It refracts, frosts and shadows the layers behind and
+  stacks with other glass; never fake glass with blur plus a white fill, CSS `backdrop-filter` in an HTML clip, or
+  generated video ([Glass entry](effects-layer.md#glass-entry)).
+- **Pixelation** (pixel blocks, a mosaic, censor blocks, an 8-bit look, a pixelate-in or pixelate-out transition, a soft
+  blob rebuilt as blocks): the `pixelate` Overlay Effect, its `size` keyed to animate it. `crtMatrix` is a screen
+  texture, not pixelation, and an image downscaled by `scale` or a low render resolution only blurs
+  ([Mosaic](effects-overlay.md#mosaic)).
+- **Letterbox or cinematic bars** (black bars top and bottom, a 2.39:1 look, bars that slide in or out): the `strip`
+  Overlay Effect, usually on an adjustment item over the footage: `height` is each bar in % of the item's height (the
+  frame height on an adjustment item), and `intro` / `outro` slide the bars in and out with their own duration and
+  easing. Two rectangle shapes do not follow the item and need hand-keyed motion ([Strip](effects-overlay.md#strip)).
+- **Posterized** (fewer tones, flat colour bands, a poster or screenprint look, After Effects' Posterize): the
+  `posterize` Overlay Effect: `level` is the tones per channel, with AE's exact mapping. Colorama with Constant
+  interpolation maps brightness onto a gradient; it is not posterization ([Posterize](effects-overlay.md#posterize)).
+- **A shine, glint or light sweep** across a logo, title, button, card or product shot (After Effects' CC Light Sweep):
+  the `lightSweep` Overlay Effect on that item. It sweeps on its own with no keyframes (`duration`, `gap`, `repeat: 0`
+  for one pass), and its edges catch the light. A white shape or gradient keyed across the item is not a sweep
+  ([Light Sweep](effects-overlay.md#light-sweep)).
+- **Effects on a 3D model layer** (`model3d`): an Overlay Effect whose capabilities entry has `real3dOnModels: true`
+  (Mosaic, Bloom, Neon Glow, Edge Detect, Shape Rulers, RGB Split and more) renders in real 3D, on the model's own
+  surface, light and depth, when its entry carries `"real3d": true`. Write that flag whenever you add one of them to a
+  model. In a 3D Scene the entry's `inWorldScene` says what it does: `"onObject"` runs in the world on the model,
+  `"ownPass"` takes the model out of the world while the effect is live (no shadow, not traced in Final), `"skipped"` is
+  not available there. The `depthScan` / `fresnelRim` Layer Effects render nothing on a model in a 3D Scene; a glow
+  along a Scene object's edges or a band across it is a material (`edgeGlow`, `sweep`, `motionBeam`)
+  ([Real 3D on 3D model layers](effects-depth.md#real-3d-on-3d-model-layers)).
+
 ## Hierarchy
 
 When text has to read over footage or a busy picture, get the contrast from the design: a calmer or darker part of the
 frame, a caption bar (`textBgEnabled`), or a shape behind the text — never a shadow under the type
 ([Never](#never)).
+
+**A backing that animates in is a Highlight box, not a static plate.** When text with a backing (a plate, pill, card
+or caption bar behind it) has an entrance animation, the backing is a `box` effect inside the text's own **In**
+animator, `behind: "revealed"`, `grow: true` ("Grow with range"): the plate grows with the words as they arrive and
+leaves with them, so a fully drawn plate never sits there waiting for its words. Do not put a static `textBgEnabled`
+bar, a shape layer or a card picture under animated text. A static caption bar stays fine only for text that does not
+animate in. Recipe and fields: [text.md](text.md#a-backing-that-animates-with-its-text).
 
 ## Text animation
 
@@ -95,9 +206,9 @@ reference and what each line has to do, so two films never share their text anim
 starting point: tune its timing, easing and units, mix it with others, or build your own with the editor's animators
 ([text.md](text.md)).
 
-- The catalogue: [text-presets.md](text-presets.md#pick-a-category) (typing reveals, text on shapes, highlights, loops,
-  decoders, voice captions, classic reveals) and [text-kinetic.md](text-kinetic.md#when-to-use-them) (energetic
-  in-and-out recipes that tilt or overshoot).
+- The catalogue: [text-presets.md](text-presets.md#pick-a-category) (energetic Kinetic in-and-out titles that tilt or
+  overshoot, typing reveals, depth, text on shapes, highlights, loops, decoders, voice captions, classic reveals; when
+  Kinetic fits: [text-presets.md](text-presets.md#when-to-use-them)).
 - Presets without a colour band, for a coloured card: Classic Rise (Mask), Classic Fade Up.
 
 ## Text animation pace
@@ -118,7 +229,7 @@ built:
   ([text.md](text.md)).
 - **Layer entrances and exits** on a text layer: `transitionInDuration` / `transitionOutDuration` of 0.8 or more
   (the most they take is 3 s).
-- **Recipes** from [text-kinetic.md](text-kinetic.md) and [text-presets.md](text-presets.md) keep their tuned timing.
+- **Recipes** from [text-presets.md](text-presets.md) keep their tuned timing.
   On very short text (one or two words), where the span works out under 0.8 s, raise `duration` until it reaches 0.8 s.
 
 Go faster only when the edit really needs it: the user asks for snappy or fast text, a word hits on a beat or a fast
@@ -127,14 +238,21 @@ cut, a glitch or scramble flicks, the layer is too short to fit a 0.8 s move, or
 
 ## Sound
 
-There are no house sounds. Choose them for each film from what is available, in this order:
+There are no house sounds, and no sound is added by default. When the user gave sounds or music, or said where to take
+them, use those. When they said nothing about sound, choose it for this film in this order:
 
-1. **The user's Sound Library** (`GET /api/libraries/sound`,
-   [media.md](../media.md#asset-libraries-sound--assets--music)). If it has sounds, take them from there.
-2. **If it has none, other connected sources:** a connector or tool in this session that has sound effects (a stock
-   sound library, a sound-effect search).
-3. **If nothing is connected, generate them** with the app's audio models (`GET /api/ai/models`, audio output;
-   [ai-generation.md](../ai-generation.md)).
+1. **Their own library first.** In the app: the Sound and Music libraries (`GET /api/libraries/sound`,
+   `GET /api/libraries/music`, [media.md](../media.md#asset-libraries-sound--assets--music)). Outside the app: the audio
+   files they put in the project's folder or on the video page. If it has sounds or music that fit, take them from
+   there.
+2. **If it has none, generate it or find it in an open source.**
+   - Generate: an audio model or tool this session has (in the app `GET /api/ai/models`, audio output,
+     [ai-generation.md](../ai-generation.md); elsewhere a connector that makes sound effects or music).
+   - Open source: Openverse's audio search needs no key:
+     `https://api.openverse.org/v1/audio/?q=<words>&license=cc0,by` (add `&category=music` for music). Each result
+     has the file's `url`, its `license`, `creator`, `foreign_landing_url` and `duration` (ms). Take only CC0 and
+     CC BY files, and name every CC BY file (title, creator, link) when you hand the film over, so the user can credit
+     it.
 
 - Which sound suits each moment is a design choice for this film ([sound.md](sound.md#choosing-the-sounds)).
 - Put each cue where the picture's motion is, read from the project's own data: its event timeline gives every move's
@@ -161,7 +279,7 @@ by 30/fps, and scale px by H/1080. A zoom's speed is % per frame on the log scal
 
 > **With a computer that runs Python,** the joins are also built by recipe and measured on the render:
 > [Seam Craft](seam-craft/README.md). In a chat without a computer, follow this section and skip Seam Craft. The cases
-> behind these rules, with their numbers: [motion-grammar-examples.md](motion-grammar-examples.md).
+> behind these rules, with their numbers: [The cases behind the rules](#the-cases-behind-the-rules).
 
 ### A move is two keys and an easing
 
@@ -176,6 +294,7 @@ and it hides what the move is. Write the move, not its samples.
 | An overshoot, a bounce, a settle | 2 keys and a curve or expression that overshoots (`Back Out`, `spring`), not more keys |
 | A change of direction | a key at each turn: 3–5 |
 | An arc, an S, a loop, an orbit, a swing round an object | a motion path ([Curved moves](#curved-moves-ride-a-motion-path)) |
+| Orbits, carousels and other motion of many layers whose places come from a computation | a script on a sequence ([essential-templates.md](essential-templates.md#scripts)), not keys on every layer |
 | Growing or turning about a point that is not the layer's centre | the transform origin on that point, never position keys that compensate |
 | Following another layer | a parent, never keys copied from it |
 | Steps on purpose: a clock, a stop-motion cadence | hold keys, one per step |
@@ -401,3 +520,59 @@ iris. That is what a viewer sees.
    layer's box edge showing. With ffmpeg, `T0` 1.5 s before the join (tile k is the frame at T0 + 2k/30 s):
    `ffmpeg -v error -ss T0 -t 3 -i film.mp4 -vf "select='not(mod(n\,2))',scale=480:-1,tile=6x8" -frames:v 1 sheet.jpg`
 8. **With Python,** measure every join on the render and put its numbers in the report: [Seam Craft](seam-craft/README.md).
+
+### The cases behind the rules
+
+The real films that taught the rules above: what was built, what it measured, and what the user said. Read them when a
+rule seems too strict for the film in front of you.
+
+#### Keys
+
+- **A key on every frame buys nothing** ([A move is two keys](#a-move-is-two-keys-and-an-easing)). A push into
+  a point written as 6 eased keys and the same push written as 75 per-frame keys rendered the same picture: on every
+  frame checked they differed by under 0.1 of 255 levels on average.
+- **One gesture, not phases** ([One gesture](#one-gesture-per-element)). In one rebuild a card that
+  "appears tilted and makes one move" was built as "it scales up and turns, then it moves down", each piece eased on
+  its own. The user: "again, it's stepped".
+- **A camera move is straight.** Fitted axis by axis through tracked cards, the same rebuild's camera had 9 keys per
+  axis, its zoom breathed and x arrived before y. The user: "whole camera movement feels like trash. Remake it totally
+  and make straight and good".
+- **Keys in a chain carry the speed** ([Keys in a chain](#keys-in-a-chain-carry-the-speed)). The card group
+  drifted down in 3 segments, each eased out to zero: the card's speed on screen went 12.5 → 0.8 → 9.5 → 0.6 → 3.5 → 0
+  px/f, where the reference's falls once, smoothly, 17 → 0.6 over 50 frames.
+- **A segment never goes past its keys.** After a fitter change every card and the camera of that rebuild had handles
+  past 0..1, and the user felt it at once: "feels like you added elastic easing", "all motion has overshoot".
+- **No small back-and-forths.** A layer whose x went +3, −2, +3 px while it fell 600 px read as sliding "slightly left,
+  right instead of direct smooth movements".
+- **Settled things stay still, at the measurement's own limit.** On a track that later travels 2000 px, a 1 % limit
+  held a title's real 24 px drift still and then kicked it into motion.
+- **Never hold a stretch in the middle of a track:** the data jumped where it resumed (a 52 px step in 10 frames).
+- **A hold is its own segment:** a pull-back fitted across a hold, meant to start at a cut, began shrinking 80 frames
+  before it.
+
+#### Fitting
+
+- **A fitted curve stays inside what it fits** ([Computed and measured motion](#computed-and-measured-motion-fit-it-then-write-it)).
+  A scale fitted from rest dipped 0.1 % under it for a frame: an open edge on a full-frame layer.
+- **A measured track is fitted as moves.** A generated texture that waves on its own scatters a tracker even more than
+  ±1–5 px; keys fitted through any scatter at the exact-curve tolerances gave drag, jiggle and stepping on screen
+  though every key was "within tolerance".
+
+#### Corners
+
+- **Never a smooth tangent through the corner points** ([Corners](#corners-on-a-line-straight-legs-and-one-radius)).
+  A connector drawn with tangents through its points, turned 208° where its anchors turned 93°.
+- **A straight leg is exact.** Two measured points 27 px apart made a 500 px leg lean 3°.
+
+#### Joins
+
+- **The reference film** ([Joins](#joins-one-move-across-the-cut)): a SaaS film of 37 seams over 1590 frames,
+  measured frame by frame. 30 of its seams keep the direction of motion, 29 cut within ±2 f of the move's peak speed;
+  21 are hard cuts and 16 continuous, and its mean shot is 41.8 f (1.39 s).
+- **The card flies off in the next shot's direction.** "The card flies off left while the next scene dissolves in" was
+  accepted; "a hard cut from a card to black is too sharp". Flying the card off in the next shot's direction (the next
+  line re-centres ← → fly ←; the next word rises ↑ → fly ↑) removed all four pops to black and white in one film.
+- **No sharp jerks.** Rejected on real films: a ±1° camera roll in 5 f with easeOutExpo on each arrival; a card
+  turning 2° in 3 f; a card dropping back 5 % in 3 f.
+- **Two depths.** A smooth pass changed ~2 s of a 1-minute film and the user didn't see the difference; a full smooth
+  rework (~5 s) read as "a bit smoother"; a scene pass on 4 joins changed only 2.7 s and was seen at once.

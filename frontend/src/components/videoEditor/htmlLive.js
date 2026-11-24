@@ -80,6 +80,70 @@ export function htmlLivePageUrl(mediaUrl) {
   return `${LIVE_PREFIX}${path}${vars ? `?gl-vars=${vars[1]}` : ''}`;
 }
 
+// A page that no server serves (the GreenLight Motion engine outside the app: motionEngine/htmlPages.js). `source(htmlSource)`
+// answers null (not its page: the address above is used), or { key, load, scripts }: `key` names the page as the address
+// does, and `load()` resolves to the page's text. Such a page is the frame's `srcdoc`, where it has this document's origin;
+// as a blob: or data: address it is another origin, the clock cannot be reached and Chrome draws nothing of it (measured,
+// Chrome 158).
+// `scripts: false` — a page that may not run code here (a chat, a shared link: its script would run with the host page's
+// origin). Its frame has no `allow-scripts`, so nothing in it runs: no <script>, no on… attribute. Its time is then set from
+// OUTSIDE (outsideClock): CSS animations, SVG animation and media, which is all a page without scripts can move with. Such
+// a page has no state, so it jumps to any frame, back as well, without a reload. With scripts (the default) the text
+// carries the bake's clock as its first script.
+let pageSource = null;
+export function setHtmlLivePageSource(source) {
+  pageSource = typeof source === 'function' ? source : null;
+}
+
+// Where an html clip's page comes from: { url, load, scripts } (`load` null: `url` is the address the frame opens), or null.
+function pageAddress(mediaUrl) {
+  const own = pageSource ? pageSource(mediaUrl) : null;
+  if (own?.key && typeof own.load === 'function') return { url: String(own.key), load: own.load, scripts: own.scripts !== false };
+  const url = htmlLivePageUrl(mediaUrl);
+  return url ? { url, load: null, scripts: true } : null;
+}
+
+// The page clock of a frame that runs no scripts, driven from here: the document's CSS / Web Animations, the outermost
+// <svg> timelines and the media elements are set to `timeMs`, as the bake's clock sets them inside a page (backend
+// html_clips.py CLOCK_SCRIPT). Everything in such a page exists from its load, so every timeline starts at 0.
+function outsideClock(doc) {
+  const seekMedia = (el, ms) => {
+    try { if (!el.paused) el.pause(); } catch { /* not playing */ }
+    try { el.muted = true; } catch { /* no sound track */ }
+    let t = Math.max(0, ms / 1000);
+    const d = el.duration;
+    if (Number.isFinite(d) && d > 0) t = el.loop ? (t % d) : Math.min(t, Math.max(0, d - 0.001));
+    if (Math.abs((el.currentTime || 0) - t) < 0.0005) return null;
+    if (el.error || (el.readyState === 0 && el.networkState !== 2)) { try { el.currentTime = t; } catch { /* nothing loaded */ } return null; }
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      el.addEventListener('seeked', finish, { once: true });
+      setTimeout(finish, 1500);
+      try { el.currentTime = t; } catch { finish(); }
+    });
+  };
+  return async (timeMs, opts) => {
+    const now = Math.max(0, Number(timeMs) || 0);
+    if (typeof doc.getAnimations === 'function') {
+      for (const anim of doc.getAnimations()) {
+        try { anim.pause(); } catch { /* finished */ }
+        try { anim.currentTime = now; } catch { /* no timeline */ }
+      }
+    }
+    for (const svg of doc.querySelectorAll('svg')) {
+      if (svg.ownerSVGElement) continue;   // SMIL time lives on the outermost <svg>
+      try { svg.pauseAnimations(); svg.setCurrentTime(now / 1000); } catch { /* no animation */ }
+    }
+    const pending = [];
+    if (!(opts && opts.media === false)) {
+      for (const el of doc.querySelectorAll('video, audio')) { const p = seekMedia(el, now); if (p) pending.push(p); }
+    }
+    if (pending.length) await Promise.all(pending);
+    doc.body?.getBoundingClientRect();
+  };
+}
+
 // The bake frame a source time shows: frame k covers [k/fps, (k+1)/fps).
 export function htmlLiveFrameAt(sourceSeconds, fps) {
   const f = Number(fps) || 30;
@@ -102,9 +166,12 @@ function hostElement() {
 let frameListener = null;
 
 class LivePage {
-  constructor({ url, width, height, fps, forExport = false, instance = null }) {
+  constructor({ url, source = null, scripts = true, width, height, fps, forExport = false, instance = null }) {
     this.instance = instance; // the use of the clip (htmlLiveCanvas `instance`): what the timeline marks Loading
     this.url = url;
+    this.source = source;     // a page no server serves (setHtmlLivePageSource): () => its text, loaded as srcdoc
+    this.free = !scripts;     // a page that runs no scripts: its time is set from outside, to any frame (pageAddress)
+    this.seekPage = null;     // (ms, opts) → the page at that time: its own clock, or the outside one
     this.width = width;
     this.height = height;
     this.fps = fps;
@@ -214,20 +281,41 @@ class LivePage {
     this.loads = (this.loads || 0) + 1;
     const iframe = document.createElement('iframe');
     iframe.setAttribute('drawable', '');
-    // The same trust as an HTML card on the board.
-    iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+    // The same trust as an HTML card on the board. A page that may not run code (`free`) gets no allow-scripts.
+    iframe.setAttribute('sandbox', this.free ? 'allow-same-origin' : 'allow-same-origin allow-scripts');
     iframe.style.cssText = `border:0;width:${this.width}px;height:${this.height}px;background:transparent;`;
-    const loaded = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('the page did not finish loading')), LOAD_TIMEOUT_MS);
-      iframe.addEventListener('load', () => { clearTimeout(timer); resolve(); }, { once: true });
-    });
-    iframe.src = this.url;
-    if (this.iframe) this.iframe.replaceWith(iframe);
-    else this.canvas.appendChild(iframe);
-    this.iframe = iframe;
+    // Into the canvas, in place of the page before it; resolves on the frame's load.
+    const attach = () => {
+      const loaded = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('the page did not finish loading')), LOAD_TIMEOUT_MS);
+        iframe.addEventListener('load', () => { clearTimeout(timer); resolve(); }, { once: true });
+      });
+      if (this.iframe) this.iframe.replaceWith(iframe);
+      else this.canvas.appendChild(iframe);
+      this.iframe = iframe;
+      return loaded;
+    };
+    let loaded;
+    if (this.source) {
+      // Its text first: the page before it stays in the canvas (and drawn) until this one is there to take its place.
+      loaded = Promise.resolve().then(() => this.source()).then((text) => {
+        if (typeof text !== 'string' || !text) throw new Error('the page file is missing');
+        iframe.srcdoc = text;
+        return attach();
+      });
+    } else {
+      iframe.src = this.url;
+      loaded = attach();
+    }
     this.loading = loaded.then(async () => {
       const win = iframe.contentWindow;
-      if (typeof win?.__glHtmlClipSeek !== 'function') throw new Error('the page clock did not install');
+      if (this.free) {
+        if (!win?.document) throw new Error('the page cannot be reached (this window has no origin of its own)');
+        this.seekPage = outsideClock(win.document);
+      } else {
+        if (typeof win?.__glHtmlClipSeek !== 'function') throw new Error('the page clock did not install');
+        this.seekPage = (ms, opts) => win.__glHtmlClipSeek(ms, opts);
+      }
       // An iframe whose color-scheme differs from its page is painted opaque.
       try { iframe.style.colorScheme = win.getComputedStyle(win.document.documentElement).colorScheme || 'normal'; } catch { /* default */ }
       try {
@@ -246,6 +334,22 @@ class LivePage {
         // What is on screen decides, not the work: pausing reloads the page to step back
         // from the look-ahead frame, but the frame shown is right to within a frame.
         this.setWaiting(this.drawn < 0 || Math.abs(this.target - this.drawn) > PLAYING_HOLD_FRAMES);
+        if (this.free) {
+          // No scripts, no state: one jump to the frame, forward or back, never a reload for it.
+          if (!this.loading || this.stale) {
+            this.stale = false;
+            await this.load();
+          } else await this.loading;
+          const frame = this.target;
+          if (this.stepped !== frame) {
+            this.stepping = true;
+            try { await this.seekPage((frame * 1000) / this.fps, { media: true }); } finally { this.stepping = false; }
+            this.stepped = frame;
+            this.progressAt = performance.now();
+          }
+          if (this.stepped === this.target && !this.stale) await this.paint();
+          continue;
+        }
         if (this.direct && this.loading && !this.stale && !this.forExport) {
           await this.loading;
           if (this.target < this.stepped) {
@@ -277,7 +381,6 @@ class LivePage {
           if (this.stepped === this.target && !this.stale) await this.paint();
           continue;
         }
-        const win = this.iframe.contentWindow;
         let slice = performance.now();
         // A render that starts inside the page steps it through every frame before
         // the first one it draws; say so, or the job sits on "Warming media".
@@ -288,7 +391,7 @@ class LivePage {
           const frame = this.stepped + 1;
           // Media elements are seeked only on the frame that is drawn (the clock's
           // opts.media): a catch-up step on the way there needs timers and animations.
-          await win.__glHtmlClipSeek((frame * 1000) / this.fps, { media: frame >= this.target });
+          await this.seekPage((frame * 1000) / this.fps, { media: frame >= this.target });
           this.stepped = frame;
           this.progressAt = performance.now();
           if (performance.now() - slice > STEP_SLICE_MS) {
@@ -529,6 +632,9 @@ function blankCanvas(clip, videoSize) {
     canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
+    // a context makes it a real (transparent) picture: a canvas that never had one is no image to the GPU upload
+    // ("CopyExternalImageToTexture(): Browser fails extracting valid resource from external image")
+    try { canvas.getContext('2d'); } catch { /* no 2D canvas */ }
     blanks.set(key, canvas);
   }
   return canvas;
@@ -566,14 +672,15 @@ export function setHtmlLiveFrameListener(fn) {
 // `instance` names this USE of the clip (the item, and the container path above
 // it): two items of one clip at different source times each need their own page.
 function pageFor(clip, { fps, videoSize, instance, forExport = false }) {
-  const url = htmlLivePageUrl(clip.htmlSource);
-  if (!url) return null;
+  const address = pageAddress(clip.htmlSource);
+  if (!address) return null;
+  const { url } = address;
   const f = Number(fps) || 30;
   const { width, height } = pageSize(clip, videoSize);
   const key = `${forExport ? 'export:' : ''}${instance || clip.id}|${url}|${width}x${height}|${f}`;
   let page = pages.get(key);
   if (!page) {
-    page = new LivePage({ url, width, height, fps: f, forExport, instance: instance || clip.id });
+    page = new LivePage({ url, source: address.load, scripts: address.scripts, width, height, fps: f, forExport, instance: instance || clip.id });
     pages.set(key, page);
     if (!sweepTimer) sweepTimer = setInterval(sweep, SWEEP_MS);
   }
@@ -596,7 +703,7 @@ export function htmlLiveCanvas(clip, sourceSeconds, { fps, videoSize, stepSecond
   // Playing, a page a frame or two ahead (the look-ahead) just waits for the playhead:
   // going back means reloading the page, which would stall playback. Paused, and on
   // a real jump back, it reloads so the frame is exact.
-  if (playing && target < page.stepped && page.stepped - target <= PLAYING_HOLD_FRAMES) target = page.stepped;
+  if (playing && !page.free && target < page.stepped && page.stepped - target <= PLAYING_HOLD_FRAMES) target = page.stepped;
   if (!page.shown) {
     page.shown = true;
     if (page.waiting) emitLoading();
@@ -628,7 +735,8 @@ export function htmlLivePrepare(clip, sourceSeconds, { fps, videoSize, instance 
 
 // Why a file's page could not run live (for the HTML panel), or null.
 export function htmlLiveFailure(mediaUrl) {
-  const url = htmlLivePageUrl(mediaUrl);
+  const url = pageAddress(mediaUrl)?.url;
+  if (!url) return null;
   for (const page of pages.values()) {
     if (page.url === url && !page.forExport && page.failed && page.failed !== 'disposed') return page.failed;
   }
@@ -647,7 +755,7 @@ export async function htmlLiveExportCanvas(clip, sourceSeconds, { fps, videoSize
   const page = pageFor(clip, { fps, videoSize, instance, forExport: true });
   if (!page || page.failed) return null;
   const want = htmlLiveFrameAt(sourceSeconds, page.fps);
-  const frame = want < page.stepped && page.stepped - want <= EXPORT_HOLD_FRAMES ? page.stepped : want;
+  const frame = !page.free && want < page.stepped && page.stepped - want <= EXPORT_HOLD_FRAMES ? page.stepped : want;
   return (await page.settle(frame)) ? page.canvas : null;
 }
 
@@ -700,7 +808,7 @@ export function disposeHtmlLiveExportPages() {
 // "Render again": reload every live page of this file now. A file the page LOADS (an
 // image, a script) may have changed, which the page's version cannot see.
 export function reloadHtmlLivePages(mediaUrl) {
-  const url = htmlLivePageUrl(mediaUrl);
+  const url = pageAddress(mediaUrl)?.url;
   if (!url) return;
   for (const page of pages.values()) {
     if (page.url !== url || page.failed) continue;
@@ -732,7 +840,7 @@ if (typeof window !== 'undefined') {
       busy: p.busy,
       waiting: p.waiting, shown: p.shown, instance: p.instance,
       forExport: p.forExport,
-      direct: p.direct, inexact: p.inexact,
+      direct: p.direct, inexact: p.inexact, free: p.free,
       version: p.version, stale: p.stale, loads: p.loads, key,
       stats: { ...p.stats },
     })),

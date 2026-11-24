@@ -18,6 +18,7 @@ import { isShaderBlendMode } from '../blendModes';
 import { isChromaKeyEnabled } from '../chromaKeyLayer';
 import { applyAdjustmentUniforms, applyPremultipliedBlendMode } from '../clipShader';
 import { isCornerPinEnabled } from '../cornerPinLayer';
+import { isDepthKeyEnabled } from '../depthKeyLayer';
 import { isDepthScanEnabled } from '../depthScanLayer';
 import { isDrosteEnabled } from '../drosteLayer';
 import { isFresnelRimEnabled } from '../fresnelRimLayer';
@@ -45,7 +46,7 @@ import { ensureSequenceState as ensureSequenceStateInEngine } from './channelSta
 import { applyAdjustmentMask as applyAdjustmentMaskInEngine, applyShaderBlend as applyShaderBlendInEngine } from './compositeOps';
 import { runEffectChain as runEffectChainInEngine, runLayerOverlayEffects as runLayerOverlayEffectsInEngine } from './effectChain';
 import { buildGridCellPoses as buildGridCellPosesInEngine, seatMockupLayer as seatMockupLayerInEngine, updateGridGuide as updateGridGuideInEngine } from './gridMockup';
-import { clamp01, maskSilhouetteFraming } from './layerHelpers';
+import { clamp01, maskSilhouetteFraming, needsLayerMaskPass } from './layerHelpers';
 import { applyChromaKey as applyChromaKeyInEngine, applySilhouetteFraming as applySilhouetteFramingInEngine, plateToCameraAxis as plateToCameraAxisInEngine, renderLayerAutoFill as renderLayerAutoFillInEngine } from './layerPasses';
 import { applyBackdropBlur as applyBackdropBlurInEngine, applyGlass as applyGlassInEngine, applyLayerMask as applyLayerMaskInEngine, renderLayerRig as renderLayerRigInEngine, runLayerGeometryStages as runLayerGeometryStagesInEngine } from './layerStages';
 import { computeLayerBox } from './layerWarps';
@@ -151,10 +152,11 @@ export function compositeSequenceStack(engine, env, st, seqChannels, localTime, 
       if (isShaderBlendMode(item?.blendMode)) seqShaderBlend.set(ch.id, item.blendMode);
       if (!engine.preTransitionFxItemIds.has(item.id) && !isCameraBaked3dPlate(clip, item)) {
         const mt = clip?.mediaType;
+        const depthKey = isDepthKeyEnabled(item) ? { item, entry: layout[ai], clip } : null;
         const depthScan = isDepthScanEnabled(item) ? { item, entry: layout[ai], clip } : null;
         const fresnelRim = (mt === 'image' || mt === 'video') && isFresnelRimEnabled(item, mt)
           ? { item, entry: layout[ai], clip } : null;
-        if (depthScan || fresnelRim) seqDepthStack.set(ch.id, { depthScan, fresnelRim });
+        if (depthKey || depthScan || fresnelRim) seqDepthStack.set(ch.id, { depthKey, depthScan, fresnelRim });
       }
       if (uprightViaIsolate && isUprightIsolatePlate(clip, item)) seqUpright.add(ch.id);
       const flatItem = withFlatEffects(item, clip);
@@ -178,7 +180,8 @@ export function compositeSequenceStack(engine, env, st, seqChannels, localTime, 
           : 1;
         seqGlass.set(ch.id, resolveGlassLayer(item, kf, compW, compH, poseScale));
       }
-      if (isLayerMaskEnabled(item) && !isCameraBaked3dPlate(clip, item)
+      // A box mask is cut by the layer's own pass instead (layerHelpers.js needsLayerMaskPass).
+      if (needsLayerMaskPass(item, clip) && !isCameraBaked3dPlate(clip, item)
         && !engine.preTransitionFxItemIds.has(item.id)) {
         seqLayerMask.set(ch.id, { item, entry: layout[ai], clip });
       }
@@ -555,6 +558,17 @@ export function compositeSequenceStack(engine, env, st, seqChannels, localTime, 
         // layer's real shape.
         if (ck && applyChromaKeyInEngine(engine, rt.c, ck, localTime, outCameraAxis)) outCameraAxis = false;
         if (lm && seqMesh && applyLayerMaskInEngine(engine, rt.c, lm, seqMesh, chCam, localTime, 1, outCameraAxis)) outCameraAxis = false;
+        if (depthStack?.depthKey && engine.layerStack?.depthKey && seqMesh) {
+          const keyed = engine.layerStack.depthKey(rt.c, depthStack.depthKey, seqMesh, chCam, localTime, outCameraAxis);
+          if (keyed && keyed !== rt.c && engine.seqPlateCopyScene && engine.seqPlateCopyMaterial) {
+            engine.seqPlateCopyMaterial.uniforms.uTexture.value = keyed.texture;
+            renderer.setRenderTarget(rt.c);
+            renderer.setClearColor(0x000000, 0);
+            renderer.clear(true, true, true);
+            renderer.render(engine.seqPlateCopyScene, orthoCamera);
+            outCameraAxis = false;
+          }
+        }
         // Border and shadows along the keyed or masked shape (maskSilhouetteFraming).
         const framed = ck || (lm && maskSilhouetteFraming(lm.item, lm.clip) ? lm : null);
         if (framed && seqMesh

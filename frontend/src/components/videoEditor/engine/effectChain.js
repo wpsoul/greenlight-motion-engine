@@ -13,7 +13,6 @@ import { applyEffectUniforms, chainNeedsPyramid, effectClipsToLayer, effectIsLiv
 import { applyBlendMode, resetMaterialUniforms } from '../clipShader';
 import { takeFxProbeRequest } from '../fxProbeBroker';
 import { getItemKeyframeValues, integratePathRate, itemHasKeyframes } from '../gsapTransitions';
-import { isLayerMaskEnabled } from '../layerMask';
 import { linesDrawRunnerState } from '../linesDrawProfiles';
 import { withFlatEffects } from '../model3dFxCatalog';
 import { resolveObjectPlate } from '../objectPlate';
@@ -32,7 +31,7 @@ import { runDeclarativePasses } from './declarativePasses';
 import { resolveLayerPathFx as resolveLayerPathFxInEngine } from './pathFx';
 import { ensureLayerFxTargets as ensureLayerFxTargetsInEngine } from './renderTargets';
 import { ensurePreTransitionFxTargets as ensurePreTransitionFxTargetsInEngine } from './transitions';
-import { _echoEuler, _echoPos, _echoScale, bakeableLayerStack, calculateVideoTime, clamp01, layerContentBox, maskSilhouetteFraming } from './layerHelpers';
+import { _echoEuler, _echoPos, _echoScale, bakeableLayerStack, calculateVideoTime, clamp01, layerContentBox, maskSilhouetteFraming, needsLayerMaskPass } from './layerHelpers';
 
 export function runEffectChain(engine, env, item, kf, ctx) {
   let { read, write } = ctx;
@@ -674,7 +673,8 @@ export function preparePreTransitionOverlayEffects(engine, env, {
   // its mask would silently VANISH for the length of the transition and snap
   // back at the cut — the transition path replaces the mesh with a full-frame
   // carrier, so there is no layer box left for flow 1 to cut against.
-  const hasMask = isLayerMaskEnabled(item);
+  // (A box mask is cut by the layer's own material in this isolate: layerHelpers.js needsLayerMaskPass.)
+  const hasMask = needsLayerMaskPass(item, clip);
   // Every bakeable per-layer effect enters this path on the same terms: the effect
   // is part of the LAYER, so the transition moves/wipes the effected plate.
   const stack = bakeableLayerStack(item, clip, entry);
@@ -723,6 +723,14 @@ export function preparePreTransitionOverlayEffects(engine, env, {
   // stage must see (the compositor's order, mirrored).
   if (stack?.chromaKey && stages?.chromaKey && stages.chromaKey(bank.source, stack.chromaKey, time, camAxis)) camAxis = false;
   if (hasMask && applyLayerMaskInEngine(engine, bank.source, { item, entry }, proxy, camera, time, 1, camAxis)) camAxis = false;
+  if (stack?.depthKey && stages?.depthKey) {
+    const flipPlate = bank.source === bank.source && camAxis;
+    const keyed = stages.depthKey(bank.source, stack.depthKey, proxy, camera, time, flipPlate);
+    if (keyed && keyed !== bank.source) {
+      camAxis = false;
+      bank.source = keyed;
+    }
+  }
   // Silhouette framing after the key and the mask — the compositor's order.
   const framed = stack?.chromaKey || (hasMask && maskSilhouetteFraming(item, clip) ? { item, entry, clip } : null);
   if (framed && stages?.silhouetteFraming && stages.silhouetteFraming(bank.source, framed, mesh, time, camAxis)) camAxis = false;

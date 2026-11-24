@@ -93,6 +93,15 @@ export const isWorldModelFx = (eff) => isModelFxOverlay(eff) && WORLD_FX_IDS.has
 /** Is this entry skipped on a model in a world Scene? */
 export const skippedInWorld = (eff, clip) => clip?.mediaType === 'model3d' && NOT_IN_WORLD_FX_IDS.has(eff?.id);
 
+/** The Layer Effects (item.layerEffects ids) that run on a model only inside its own pass (engine/compositeHelpers.js resolveModelFx3d):
+ *  Depth Scan and Fresnel Rim. In a world Scene the world draws the model and does not run them, so, like NOT_IN_WORLD_FX_IDS, they are
+ *  not offered on a model there and a saved one is skipped (capabilities: `inWorldScene: "skipped"`). Ids written out: this module is
+ *  data only and must not load the effects. */
+export const NOT_IN_WORLD_LAYER_FX_IDS = Object.freeze(new Set(['depthScan', 'fresnelRim']));
+
+/** Is this Layer Effect id off on this clip because the project's Scene is a world (`worldScene`)? Only a model layer is affected. */
+export const layerFxNotInWorld = (id, clip, worldScene) => !!worldScene && clip?.mediaType === 'model3d' && NOT_IN_WORLD_LAYER_FX_IDS.has(id);
+
 /** Does one of the six take this model out of a world Scene this frame? The chain's own liveness (muted, Mix, Active Range, the master
  *  Amount), flat or 3D alike; `at` is { kf, time (clip-local s), duration, master }. */
 export const modelLeavesWorldAt = (item, at) => Array.isArray(item?.effects)

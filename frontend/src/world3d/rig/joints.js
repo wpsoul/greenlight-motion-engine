@@ -405,23 +405,55 @@ export function findBipedLandmarks(S, given = {}, { symmetric = true } = {}) {
   if (!(H > 0)) return { points: L, found, warnings: ['skeleton: the mesh has no height to find a biped in'] };
   const half = H / 120, gap = H * 0.012;
   const all = band(S, 1, y0 + H / 2, H);
-  const cx = isPoint(L.hips) ? L.hips[0] : (S.min[0] + S.max[0]) / 2;
-  // the legs: from the floor up, every slice that is a ring left of the middle and one right of it
-  let crotch = null;
-  const legs = { L: [], R: [] };
+  // Torso-core centerline X when `hips` is not given: avoids raised asymmetric arms/props pulling cx sideways
+  const cx = (() => {
+    if (isPoint(L.hips)) return L.hips[0];
+    const samples = [];
+    for (const frac of [0.42, 0.50, 0.58, 0.66]) {
+      const gs = sections(S, 1, y0 + H * frac, 0).filter((g) => g.length >= 3);
+      if (!gs.length) continue;
+      // Pick the largest span/central group (torso), not thin arms
+      const pick = gs.reduce((best, g) => (!best || g.length > best.length ? g : best), null);
+      if (pick) samples.push(middle(pick)[0]);
+    }
+    if (samples.length) {
+      samples.sort((a, b) => a - b);
+      return samples[samples.length >> 1];
+    }
+    return (S.min[0] + S.max[0]) / 2;
+  })();
+  // Longest contiguous two-leg run (tolerates touching ankles/base below 16% height and picks top of leg separation as crotch)
+  let bestRun = { L: [], R: [], topY: null };
+  let curRun = { L: [], R: [] };
+  const commitRun = (topY) => {
+    if (curRun.L.length > bestRun.L.length) bestRun = { L: curRun.L, R: curRun.R, topY };
+    curRun = { L: [], R: [] };
+  };
+  let firstAcrossAboveFoot = null;
   for (let k = 2; k < 70; k += 1) {
     const y = y0 + (H * k) / 120;
     const groups = sections(S, 1, y, 0);
     const left = groups.filter((g) => middle(g)[0] > cx), right = groups.filter((g) => middle(g)[0] < cx);
     const across = groups.some((g) => g[0][0] < cx && g[g.length - 1][0] > cx);
-    if (across) { crotch = y; break; }
+    if (across) {
+      if (k > 10 && firstAcrossAboveFoot === null) firstAcrossAboveFoot = y;
+      if (curRun.L.length >= 4) { commitRun(y); if (k > 25) break; }
+      else curRun = { L: [], R: [] };
+      continue;
+    }
     if (left.length && right.length) {
-      // the innermost ring each side is the leg (an arm hanging beside it is further out)
       const inner = (gs, sign) => gs.sort((a, b) => sign * (middle(a)[0] - middle(b)[0]))[0];
-      legs.L.push(middle(inner(left, 1)));
-      legs.R.push(middle(inner(right, -1)));
+      curRun.L.push(middle(inner(left, 1)));
+      curRun.R.push(middle(inner(right, -1)));
+    } else if (curRun.L.length >= 4) {
+      commitRun(y);
+    } else {
+      curRun = { L: [], R: [] };
     }
   }
+  commitRun(bestRun.topY ?? firstAcrossAboveFoot);
+  const legs = { L: bestRun.L, R: bestRun.R };
+  const crotch = bestRun.topY;
   if (crotch === null || legs.L.length < 4) warnings.push('skeleton: no two legs found (give hip.L, knee.L, ankle.L and their .R)');
   const crotchY = crotch ?? y0 + H * 0.47;
   const legAt = (side, y) => {
@@ -440,13 +472,23 @@ export function findBipedLandmarks(S, given = {}, { symmetric = true } = {}) {
     const zs = g.map((p) => p[2]);
     return [cx, y, (Math.min(...zs) + Math.max(...zs)) / 2];
   };
+  // Orientation sanity check: chest should be wider along X than deep along Z (+Z forward)
+  const chestSlice = sections(S, 1, crotchY + H * 0.30, 0).find((r) => r[0][0] <= cx && r[r.length - 1][0] >= cx);
+  if (chestSlice && chestSlice.length >= 4) {
+    const wx = chestSlice[chestSlice.length - 1][0] - chestSlice[0][0];
+    const czs = chestSlice.map((p) => p[2]);
+    const dz = Math.max(...czs) - Math.min(...czs);
+    if (dz > wx * 1.35 && wx > 0) warnings.push('skeleton: mesh appears deeper along Z than wide along X (biped expects facing +Z, left +X)');
+  }
   const sides = symmetric ? ['L'] : ['L', 'R'];
+  const torsoZ0 = torsoAt(crotchY)[2];
   for (const s of sides) {
+    const sign = s === 'L' ? 1 : -1;
     // a hip joint stands a little above where the legs part (the leg's ring just below, raised), an ankle over the foot's ring
     const ring = legAt(s, crotchY - H * 0.02);
-    put(`hip.${s}`, ring && [ring[0], crotchY + H * 0.05, ring[2]]);
+    put(`hip.${s}`, (ring && [ring[0], crotchY + H * 0.05, ring[2]]) || (legs.L.length < 4 ? [cx + sign * H * 0.055, crotchY + H * 0.05, torsoZ0] : null));
     const shin = legAt(s, y0 + H * 0.1);
-    put(`ankle.${s}`, shin && [shin[0], y0 + H * 0.045, shin[2]]);
+    put(`ankle.${s}`, (shin && [shin[0], y0 + H * 0.045, shin[2]]) || (legs.L.length < 4 ? [cx + sign * H * 0.06, y0 + H * 0.045, torsoZ0] : null));
     if (isPoint(L[`hip.${s}`]) && isPoint(L[`ankle.${s}`])) {
       // (leftovers-rig) a knee bent forward (or back) is where the leg's centre line strays furthest from straight; a straight leg's halfway
       const lo = L[`ankle.${s}`][1], hi = L[`hip.${s}`][1];
@@ -466,6 +508,9 @@ export function findBipedLandmarks(S, given = {}, { symmetric = true } = {}) {
       if (front) {
         put(`toe.${s}`, [ankle[0], y0 + H * 0.02, front[2]]);
         put(`ball.${s}`, [ankle[0], y0 + H * 0.025, ankle[2] + (front[2] - ankle[2]) * 0.65]);
+      } else if (legs.L.length < 4) {
+        put(`toe.${s}`, [ankle[0], y0 + H * 0.02, ankle[2] + H * 0.09]);
+        put(`ball.${s}`, [ankle[0], y0 + H * 0.025, ankle[2] + H * 0.058]);
       }
     }
   }
@@ -485,34 +530,38 @@ export function findBipedLandmarks(S, given = {}, { symmetric = true } = {}) {
   }
   put('neck', torsoAt(neckY - H * 0.025));
   put('head', torsoAt(neckY + H * 0.02));
-  // the arms (leftovers-rig): each arm's centre line from its tip inward, by cuts square to it (marchLimb); the shoulder where the arm stops
-  // being an arm alone (the cut has reached the armpit), moved on along the line by a share of the arm's own radius there (the joint turns
-  // inside the armpit's fold); the elbow and wrist along the line by a person's proportions. An arm out from the body (a T or A pose) has
-  // its tip at the far side; an arm hanging at the side is a ring of its own beside the torso, its tip the lowest point below it.
+  // the arms (leftovers-rig): scan multiple torso heights for hanging arms, relax T/A-pose reach to 1.25*torsoHalf, and detect bent elbows
   const torsoHalf = (() => {
     const g = sections(S, 1, at(0.4), 0).find((r) => r[0][0] <= cx && r[r.length - 1][0] >= cx);
     if (!g) return H * 0.1;
-    // the middle run: the torso alone when the arms hang free of it at that height
     return Math.max(cx - g[0][0], g[g.length - 1][0] - cx);
   })();
   const step = H / 160, reach = H * 0.16;
-  const yLow = at(0.3);
-  const lowRings = sections(S, 1, yLow, 0);
-  const torsoLow = lowRings.find((r) => r[0][0] <= cx && r[r.length - 1][0] >= cx) || null;
   for (const s of sides) {
     const sign = s === 'L' ? 1 : -1;
     const side = s === 'L' ? 'left' : 'right';
-    // hanging: a ring beside the torso a third of the way up from the crotch, within half the torso's width of its side
-    const wall = torsoLow ? (sign > 0 ? torsoLow[torsoLow.length - 1][0] : torsoLow[0][0]) : cx;
-    const half = Math.abs(wall - cx) || torsoHalf;
-    const beside = lowRings.filter((r) => r !== torsoLow).map((r) => middle(r))
-      .filter((c) => sign * (c[0] - wall) > 0 && sign * (c[0] - wall) < half * 1.5)
-      .sort((a, b) => sign * (a[0] - b[0]))[0];
+    let beside = null, besideDown = null;
+    for (const hf of [0.30, 0.22, 0.36, 0.44]) {
+      const rings = sections(S, 1, at(hf), 0);
+      const tRing = rings.find((r) => r[0][0] <= cx && r[r.length - 1][0] >= cx) || null;
+      const wall = tRing ? (sign > 0 ? tRing[tRing.length - 1][0] : tRing[0][0]) : cx;
+      const half = Math.abs(wall - cx) || torsoHalf;
+      const cand = rings.filter((r) => r !== tRing).map((r) => middle(r))
+        .filter((c) => sign * (c[0] - wall) > 0 && sign * (c[0] - wall) < half * 1.7)
+        .sort((a, b) => sign * (a[0] - b[0]))[0];
+      if (!cand) continue;
+      // Only treat as a hanging arm if marching straight down follows an arm downward (not slicing across an A-pose cylinder)
+      const down = marchLimb(S, cand, [0, -1, 0], { step, maxLen: H * 0.5, reach });
+      const end = down.line.length ? down.line[down.line.length - 1] : { c: cand, r: half * 0.3 };
+      if (down.line.length >= 6 && cand[1] - end.c[1] > H * 0.09) {
+        beside = { center: cand, half };
+        besideDown = down;
+        break;
+      }
+    }
     let tip = null, dir = null;
     if (beside) {
-      // down the arm to its lowest point: the fingertips
-      const down = marchLimb(S, beside, [0, -1, 0], { step, maxLen: H * 0.5, reach });
-      const end = down.line.length ? down.line[down.line.length - 1] : { c: beside, r: half * 0.3 };
+      const end = besideDown.line[besideDown.line.length - 1];
       const near = end.r * 3 + step * 4;
       for (let i = 0; i < S.m; i += 1) {
         const y = S.P[i * 3 + 1];
@@ -522,19 +571,16 @@ export function findBipedLandmarks(S, given = {}, { symmetric = true } = {}) {
       dir = [0, 1, 0];
     } else {
       for (const p of all) if (p[1] > crotchY && (!tip || sign * p[0] > sign * tip[0])) tip = p;
-      if (!tip || sign * (tip[0] - cx) < torsoHalf * 1.6) {
+      if (!tip || sign * (tip[0] - cx) < torsoHalf * 1.25) {
         warnings.push(`skeleton: the ${side} arm is not found (out from the body, or hanging clear of it): give shoulder.${s}, elbow.${s}, wrist.${s}, handTip.${s}`);
         continue;
       }
-      // toward the middle at about a shoulder's height; the cuts turn with the arm from there
       dir = [cx - tip[0], at(0.62) - tip[1], 0];
     }
     if (!tip) { warnings.push(`skeleton: the ${side} arm's hand was not found: give handTip.${s}`); continue; }
     const arm = marchLimb(S, tip, dir, { step, maxLen: H * 0.6, reach, settle: H * 0.12 });
     if (!arm.merged || arm.line.length < 6) { warnings.push(`skeleton: the ${side} shoulder was not found: give shoulder.${s}`); continue; }
     const last = arm.line[arm.line.length - 1];
-    // on along the line by half the arm's radius; its height one arm's radius under the top of the shoulder above it (an arm hanging down
-    // meets the torso at the armpit, well under the joint)
     const sh = add(last.c, mul(arm.dir, last.r * SHOULDER_IN));
     const top = surfaceAbove(S, sh);
     if (top !== null && top - sh[1] < last.r * 4) sh[1] = Math.max(sh[1], top - last.r);
@@ -542,13 +588,26 @@ export function findBipedLandmarks(S, given = {}, { symmetric = true } = {}) {
     put(`handTip.${s}`, tip);
     const shoulder = L[`shoulder.${s}`], ht = L[`handTip.${s}`];
     if (isPoint(shoulder) && isPoint(ht)) {
-      // the line from the shoulder out to the fingertips
       const pts = [shoulder, ...arm.line.map((x) => x.c).reverse(), ht];
-      // (smallfix) a flat hand shows its wrist in the shape (wristFromShape); the elbow then the person's share of shoulder to wrist
       const u = sub(ht, shoulder), uu = dot3(u, u);
       const wrist = uu > 0 ? wristFromShape(arm.line.map((x) => ({ ...x, share: dot3(sub(x.c, shoulder), u) / uu }))) : null;
-      put(`elbow.${s}`, alongLine(pts, wrist ? (wrist.share * ARM_ELBOW) / ARM_WRIST : ARM_ELBOW));
-      put(`wrist.${s}`, wrist ? wrist.c : alongLine(pts, ARM_WRIST));
+      const wrPt = wrist ? wrist.c : alongLine(pts, ARM_WRIST);
+      // Detect clearly bent elbow along shoulder->wrist line via chord deviation
+      let elbowPt = null;
+      if (wrPt && arm.line.length >= 6) {
+        const sw = sub(wrPt, shoulder), swLen = len3(sw) || 1, swDir = mul(sw, 1 / swLen);
+        let bestDev = 0;
+        for (const q of pts) {
+          const d = sub(q, shoulder);
+          const proj = dot3(d, swDir);
+          if (proj < swLen * 0.25 || proj > swLen * 0.78) continue;
+          const perp = len3(sub(d, mul(swDir, proj)));
+          if (perp > bestDev) { bestDev = perp; elbowPt = q; }
+        }
+        if (bestDev <= H * 0.015) elbowPt = null;
+      }
+      put(`elbow.${s}`, elbowPt || alongLine(pts, wrist ? (wrist.share * ARM_ELBOW) / ARM_WRIST : ARM_ELBOW));
+      put(`wrist.${s}`, wrPt);
     }
   }
   // a symmetric figure: each .R found is the .L mirrored across the middle

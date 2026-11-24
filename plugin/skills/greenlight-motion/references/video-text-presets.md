@@ -4,16 +4,19 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Text animation presets: typing reveals, text on shapes, highlights, loops, decoders, voice captions, classic reveals
+# GLEA — Text animation presets: kinetic titles, typing reveals, depth, text on shapes, highlights, loops, decoders, voice captions, classic reveals
 
-> Builds on [video-text.md](video-text.md#advanced-animations--effects-over-a-moving-range-of-characters-words-or-lines) (the `textAnimators` model). Read that for the fields; this file is the app's own preset catalogue as JSON to paste. Energetic in-and-out titles are in [video-text-kinetic.md](video-text-kinetic.md).
+Read this page when a text layer needs a ready animation. It is the editor's whole preset catalogue (Advanced
+Animations ▸ Presets) as JSON to paste into the layer's `textAnimators`: energetic Kinetic titles, typing reveals,
+depth, text on shapes, highlight passes, loops, decoders, voice captions and the Classic reveals. The fields the
+recipes use are in [video-text.md](video-text.md#advanced-animations--effects-over-a-moving-range-of-characters-words-or-lines).
 
 ## Contents
 
 - [Pick a category](#pick-a-category)
 - [Writing a recipe onto a layer](#writing-a-recipe-onto-a-layer)
-- [The catalogue](#the-catalogue)
-- Recipes: [Sweep Reveal](#sweep-reveal) · [Type on Shape](#type-on-shape) · [Emphasis](#emphasis) · [Loop](#loop) · [Characters](#characters) · [Voice](#voice)
+- [Kinetic](#kinetic): 22 energetic in-and-out titles. [When to use them](#when-to-use-them) · [How every Kinetic recipe works](#how-every-kinetic-recipe-works)
+- [The catalogue](#the-catalogue): [Sweep Reveal](#sweep-reveal) · [Depth](#depth) · [Type on Shape](#type-on-shape) · [Emphasis](#emphasis) · [Loop](#loop) · [Characters](#characters) · [Voice](#voice)
 - [Classic](#classic): 29 calm word and letter reveals, highlights, caption bars and randomizer looks
 
 ## Pick a category
@@ -24,7 +27,8 @@ animator built from scratch rarely looks as good.
 | The text should… | Category |
 |---|---|
 | type in letter by letter while a colour band passes over it (a headline, a prompt, a typed statement) | [Sweep Reveal](#sweep-reveal) |
-| pop, swing, spin or bounce in and out (a title, a hook, a promo line) | Kinetic, in [video-text-kinetic.md](video-text-kinetic.md) |
+| pop, swing, spin, flip or bounce in and out (a title, a hook, a promo or social line, a call to action) | [Kinetic](#kinetic) |
+| move in real depth under one camera: come forward into focus, stand up, rest at their own depths, step into the light, ripple | [Depth](#depth) |
 | type onto a pill, card, bar or marker that grows with it (lower thirds, labels, chat bubbles), or erase with it | [Type on Shape](#type-on-shape) |
 | get one highlight pass while it is on screen (a colour band, glow, wave, marker) | [Emphasis](#emphasis) |
 | keep moving for the whole layer with no keyframes (neon, rainbow, gradient, float, jitter, flicker) | [Loop](#loop) |
@@ -32,15 +36,27 @@ animator built from scratch rarely looks as good.
 | follow speech in a caption (karaoke box, word pops, read-along) | [Voice](#voice) |
 | come in calmly word by word or letter by letter, optionally with a highlight, a caption bar or a randomizer look (captions, lower thirds, a typewriter, a ransom note) | [Classic](#classic) |
 
+**A backing behind animated text is a Highlight box.** When the design calls for a plate, pill, card or bar behind
+captions that animate in, take a [Type on Shape](#type-on-shape) preset ([Pill Type](#pill-type),
+[Card Type](#card-type), [Word Bars](#word-bars)) or [Spoken Box](#spoken-box) for voice captions: their backing is a
+Highlight box that grows with the words. For calm word-by-word captions with a plate, the Classic ones do the same:
+[Classic Pill Grow](#classic-pill-grow), [Classic Lower Third](#classic-lower-third) and
+[Classic Drop Bar](#classic-drop-bar) carry their plate as a Highlight box that grows in and leaves with the words.
+For an outline instead of a filled plate, give the box a `border` and a colour of no opacity, as
+[Classic Outline Tag](#classic-outline-tag) and [Classic Prompt Field](#classic-prompt-field) do.
+
 Recipes combine: a layer holds up to 8 animators, so an entrance plus an Emphasis or Loop recipe on the same text
 works. Append the second recipe with fresh ids (next section).
 
-Preferred presets: once the table has given the category, and the user has not named a preset, choose from these
-first:
+Good starting points: there is no house text animation ([video-design.md](video-design.md#text-animation)): choose for each film
+from the whole category, to fit its style. When the user has named no preset, these are tried and tuned:
 
-- Sweep Reveal: [Glide Text](#glide-text) (the default text animation), [Ember Type](#ember-type).
+- Sweep Reveal: [Glide Text](#glide-text), [Ember Type](#ember-type).
   [Glide Continuous](#glide-continuous) and [Glide Soft Stop](#glide-soft-stop) keep the word drifting for the whole
   layer and never let it rest: use them only when the user asks for that.
+- Kinetic, as long as the recipe fits the text ([When to use them](#when-to-use-them)): [Swing Pop](#swing-pop),
+  [Pendulum](#pendulum), [Fan Deal](#fan-deal) and [Whip](#whip) (words; they read well stacked),
+  [Word Swing](#word-swing) (words), [Letter Vortex](#letter-vortex) (letters).
 - Emphasis: [Marker](#marker), [Outline Pass](#outline-pass).
 - Loop: [Neon Flow](#neon-flow).
 - Characters: [Glitch](#glitch).
@@ -48,33 +64,35 @@ first:
   [Karaoke Wipe](#karaoke-wipe), [Word Pop](#word-pop), [Rise on Voice](#rise-on-voice),
   [Typed as Spoken](#typed-as-spoken).
 - Classic: [Classic Fade Up](#classic-fade-up), [Classic Rise (Mask)](#classic-rise-mask) (calm lines and captions).
-- Kinetic: see [video-text-kinetic.md](video-text-kinetic.md#when-to-use-them).
 
-Type on Shape has no preferred preset: pick by the shape the text needs.
+Depth and Type on Shape have no preferred preset: pick by what the text needs.
 
 ## Writing a recipe onto a layer
 
-- **Copy** the recipe's `textAnimators` into the text item, plus `textAnimatorPivotX` / `textAnimatorPivotY` when it
-  has them, and merge its `propertyKeyframes` into the item's own (the item's other tracks stay).
-  - To **replace** the layer's animation, delete the old `textAnimators` and every `txa:` track first, and set both
-    pivots to the recipe's values (0 when it has none): recipes reuse ids like `a1`/`p1`, so a leftover track or pivot
-    would drive the new animator.
+- **Copy** the recipe's `textAnimators` into the text item, plus the layer fields it has (`textAnimatorPivotX`,
+  `textAnimatorPivotY`, `textAnimatorCamera`, `textAnimatorPerspective`), and merge its `propertyKeyframes` into the
+  item's own (the item's other tracks stay).
+  - To **replace** the layer's animation, delete the old `textAnimators` and every `txa:` track first, set both
+    pivots to the recipe's values (0 when it has none), and set `textAnimatorCamera` / `textAnimatorPerspective` to
+    the recipe's or delete them when it has none: recipes reuse ids like `a1`/`p1`, so a leftover track, pivot or
+    camera would drive the new animator.
   - To **add** on top, give the new animators and effects `aid` / `pid` values the layer does not use yet, and rename
     the recipe's `txa:<aid>:…` / `<pid>.<field>` track keys to match.
 - **Lengths are for a 100 px font.** Multiply every length field listed under [The catalogue](#the-catalogue)
-  by the layer's font size in px / 100: `textFontSize`, or in pct mode `textFontSizePct × videoSize.h / 100`. Angles, scales, opacities, percentages and timings stay as written.
+  (Kinetic recipes included) by the layer's font size in px / 100: `textFontSize`, or in pct mode
+  `textFontSizePct × videoSize.h / 100`. Angles, scales, opacities, percentages and timings stay as written.
   [Classic](#classic) recipes are the exception: their lengths are px and stay as written, apart from the few each
   recipe lists.
-- **Keyframe `position` is a % of the layer's length.** Every recipe is written for a **5 s layer**, and each key has
-  its time in a comment. For a layer `L` seconds long:
+- **Keyframe `position` is a % of the layer's length.** Every keyed recipe is written for a **5 s layer**, and each
+  key has its time in a comment. For a layer `L` seconds long:
   - `t s` → `position = t / L × 100`
   - `t s before the end` → `position = 100 − t / L × 100`
   - `n % of the layer`, `layer start`, `layer end` → keep the position as written
   - If the recipe's longest key time is more than `L`, first divide every key time by `longest / L`, so the motion
     fits the layer. The app does the same.
 
-  Recipes without `propertyKeyframes` (Voice, the Time-driven parts, and every Loop except Gradient Flow, whose keys
-  are layer %) fit any layer length as written.
+  A recipe without `propertyKeyframes` fits any layer length as written: every Kinetic, Voice and Classic recipe, and
+  the Time-driven and looping ones. Its Time animators start with the layer (`in`) and end with it (`out`).
 - **Strip the `//` time comments** from a recipe's blocks before you send it: they are notes, not JSON.
 - **Faster or slower** by a factor `k`: divide every key time and every `stagger`, `duration`, `delay`, `hold` and
   `fadeOut` by `k`; multiply `flow`, wiggle `rate` and scramble `rate` by `k`.
@@ -83,13 +101,484 @@ Type on Shape has no preferred preset: pick by the shape the text needs.
   paints the text itself, so it reads on its shape whatever the layer's colour is.
 - **Voice recipes need `textWordTimings`** on the item (captions made from a transcript have them). Without timings
   they run as Time animators, one word after another.
-- **To check it**, render a still in the middle of the motion and one after it settles (rendering.md).
+- **To check it**, render a still in the middle of the motion and one after it settles (rendering.md (GreenLight Dash only)).
+  For an in-and-out recipe, take the second in the middle of the layer: the text rests there exactly as typed.
+
+## Kinetic
+
+### When to use them
+
+**Prefer these 22 recipes whenever text should feel energetic**: a hook, a title card, a promo or social line, a
+beat-synced word, a call to action, a reveal; anything the user calls punchy, bouncy, poppy, playful, dynamic,
+kinetic, lively, "with energy" or "make it pop". They are the app's own Kinetic presets: tuned in-and-out motion that a
+hand-built animator rarely matches, so start from one instead of composing animators from scratch, then adjust. The
+preferred ones are listed under [Pick a category](#pick-a-category).
+
+Not for calm or readable-first text: captions under speech, tutorials, long paragraphs, lower thirds. Use a plain
+Time fade or rise there ([Classic Fade Up](#classic-fade-up) or [Classic Rise (Mask)](#classic-rise-mask)): a
+swinging paragraph is hard to read.
+
+Pick by the text:
+
+- **2–4 short stacked lines** (one or a few words each): a *words* recipe; Swing Pop is the signature one.
+- **One line of up to ~5 words** (a hook, a title, a call to action): a *words* recipe. A longer line or a caption
+  under speech reads cheap with this much motion; use a calm preset there ([video-design.md](video-design.md#text-animation)).
+- **One short word or title, up to ~20 letters**: a *letters* recipe.
+
+### How every Kinetic recipe works
+
+A Kinetic recipe is Time animators only, with no keyframes:
+
+- the **in** animator (`"animate": "in"`): every unit arrives from its effects, `stagger` seconds apart, from the
+  layer's start;
+- the **out** animator (`"animate": "out"`): units leave into its effects; the last one finishes exactly when the
+  layer ends.
+- [Title Push 3D](#title-push-3d) and [Perspective Type](#perspective-type) add a third, an `in` on the whole text
+  (`"around": "all"`): Push glides the line over while the words arrive, Tilted plane swings the tilted text flat
+  after its 1.2 s `delay`. Both film the text with one camera (`"textAnimatorCamera": "layer"`), so Position `z`
+  is real depth.
+
+A recipe fits any layer length: changing the layer's duration keeps the entrance at the start and the exit at the
+end. One side takes `delay + (units − 1) × stagger + duration` seconds; keep the layer longer than the in and out
+sides together plus the time the text should rest (word recipes on 2–4 lines: 2.5 s or more; letter recipes on long
+text need more).
+
+`"around": "all"` turns every unit around the centre of the **whole** text, not its own centre, so outer words and
+letters travel on arcs: Word Swing's and Letter Vortex's look. `textAnimatorPivotX` / `textAnimatorPivotY`
+(−100…100) move each unit's turning point: Pendulum hangs each word from its top edge (`textAnimatorPivotY: -100`),
+Fan Deal fans each word from its bottom edge, Door Swing hinges each word on its left edge, Domino stands each word
+on its bottom-left corner.
+
+The curves do the energy: `Overshoot` lands past rest and settles, `Elastic` and `Bounce Out` wobble or bounce, and
+`Anticipate` (the usual exit) winds back the other way, then snaps through in the last frames.
+
+<!-- KINETIC:BEGIN (generated from the app's presets; do not edit by hand) -->
+
+The 22 Kinetic recipes, in the order of the app's picker:
+
+| Recipe | What it does | Unit | Turns around | In · Out curve |
+|---|---|---|---|---|
+| [Swing Pop](#swing-pop) | Words swing out of their own centre and overshoot into place; at the end they wind up and pop away | words | each word's centre | Overshoot · Anticipate |
+| [Word Swing](#word-swing) | Words pop out of the middle of the text in random order and swing round into place; at the end they wind up and pop back | words | centre of the whole text | Overshoot · Anticipate |
+| [Letter Vortex](#letter-vortex) | Letters spiral out of the centre of the text one by one; at the end they spin back into it | letters | centre of the whole text | Overshoot · Anticipate |
+| [Center Burst](#center-burst) | The middle words burst out first and the others follow, wobbling into place; at the end they shrink away from the outside in | words | each word's centre | Elastic · Back In |
+| [Pendulum](#pendulum) | Words hang from their top edge and swing in like a pendulum until they settle; at the end they swing away | words | each word's top edge | Elastic · Anticipate |
+| [Spin Pop](#spin-pop) | Each word spins a full turn in place as it grows in; at the end each spins back out | words | each word's centre | Back Out · Back In |
+| [Domino](#domino) | Words stand up on their bottom-left corner and drop flat with a bounce, one after another; at the end they fall over | words | each word's bottom-left corner | Bounce Out · Ease In |
+| [Flip Pop](#flip-pop) | Words flip up into view in 3D, past flat and back; at the end they tip back and flip away | words | each word's centre | Overshoot · Anticipate |
+| [Card Turn](#card-turn) | Words turn to face you like cards, one by one, overshooting the turn; at the end they turn away | words | each word's centre | Overshoot · Anticipate |
+| [Slam Zoom](#slam-zoom) | Words slam down from huge, punch past their size and settle; at the end they fly back at the camera | words | each word's centre | Overshoot · Expo In |
+| [Orbit](#orbit) | Words turn in from a third of a turn away and ease into place; at the end they turn off | words | each word's centre | Smooth Overshoot · Anticipate |
+| [Fan Deal](#fan-deal) | Words fan up from their bottom edge like cards dealt from a hand, last word first; at the end they fan away | words | each word's bottom edge | Overshoot · Anticipate |
+| [Whip](#whip) | Words whip in from the left leaning into the move, snap past and settle; at the end they lean back and whip off to the right | words | each word's centre | Overshoot · Anticipate |
+| [Rubber Letters](#rubber-letters) | Letters spring out of thin slivers and wobble like rubber; at the end they stretch tall and squash flat | letters | each letter's centre | Elastic · Anticipate |
+| [Pop Letters](#pop-letters) | Letters pop up in random order, each with a little twist; at the end they swell and pop away at random | letters | each letter's centre | Overshoot · Anticipate |
+| [Drop Swing](#drop-swing) | Words drop in tilted from above and bounce as they land; at the end they fall out of the frame | words | each word's centre | Bounce Out · Ease In |
+| [Coin Spin](#coin-spin) | Letters spin in like coins, one after another, and rock to a stop; at the end they spin away | letters | each letter's centre | Overshoot · Anticipate |
+| [Converge](#converge) | Words shrink down from far bigger, the outer ones first, and settle; at the end they burst outward | words | each word's centre | Expo Out · Expo In |
+| [Roll In](#roll-in) | Letters roll in from the right like wheels and rock back into place; at the end they roll off to the left | letters | each letter's centre | Overshoot · Back In |
+| [Door Swing](#door-swing) | Words swing open in 3D on a hinge at their left edge, past flat and back; at the end they swing shut | words | each word's left edge | Overshoot · Anticipate |
+| [Title Push 3D](#title-push-3d) | Words fly in from depth one by one, overshoot toward the camera and settle as the line glides over to make room; at the end they rush past the camera | words | each word's centre | Back Out · Ease In |
+| [Perspective Type](#perspective-type) | Lines drive in one after another on a plane tilted toward the camera, which then swings flat; at the end they sink back into depth | lines | each line's centre | AE Smooth · Ease In |
+
+### Swing Pop
+
+Words swing out of their own centre and overshoot into place; at the end they wind up and pop away.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Swing in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.04, "duration": 0.8, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotation", "angle": -25}, {"pid": "p2", "type": "scale", "scale": 0}] },
+    { "aid": "a2", "name": "Pop out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.035, "duration": 0.75, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotation", "angle": -25}, {"pid": "p4", "type": "scale", "scale": 0}] }
+  ]
+}
+```
+
+### Word Swing
+
+Words pop out of the middle of the text in random order and swing round into place; at the end they wind up and pop back.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Swing in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "all", "order": "random", "seed": 3, "stagger": 0.06, "duration": 0.75, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotation", "angle": 35}, {"pid": "p2", "type": "scale", "scale": 0}] },
+    { "aid": "a2", "name": "Pop out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "all", "order": "random", "seed": 7, "stagger": 0.03, "duration": 0.7, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotation", "angle": 35}, {"pid": "p4", "type": "scale", "scale": 0}] }
+  ]
+}
+```
+
+### Letter Vortex
+
+Letters spiral out of the centre of the text one by one; at the end they spin back into it.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Spiral in",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "in", "around": "all", "stagger": 0.02, "duration": 0.9, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotation", "angle": -120}, {"pid": "p2", "type": "scale", "scale": 0}] },
+    { "aid": "a2", "name": "Spiral out",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "all", "order": "random", "seed": 4, "stagger": 0.012, "duration": 0.6, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotation", "angle": 120}, {"pid": "p4", "type": "scale", "scale": 0}] }
+  ]
+}
+```
+
+### Center Burst
+
+The middle words burst out first and the others follow, wobbling into place; at the end they shrink away from the outside in.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Burst in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "order": "center", "stagger": 0.08, "duration": 1.1, "curve": "Elastic"},
+      "effects": [{"pid": "p1", "type": "scale", "scale": 0}] },
+    { "aid": "a2", "name": "Shrink out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "edges", "stagger": 0.05, "duration": 0.5, "curve": "Back In"},
+      "effects": [{"pid": "p2", "type": "scale", "scale": 0}] }
+  ]
+}
+```
+
+### Pendulum
+
+Words hang from their top edge and swing in like a pendulum until they settle; at the end they swing away.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Swing in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.08, "duration": 1.5, "curve": "Elastic"},
+      "effects": [{"pid": "p1", "type": "rotation", "angle": 40}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Swing out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.04, "duration": 0.7, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotation", "angle": -40}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorPivotY": -100
+}
+```
+
+### Spin Pop
+
+Each word spins a full turn in place as it grows in; at the end each spins back out.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Spin in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.09, "duration": 0.9, "curve": "Back Out"},
+      "effects": [{"pid": "p1", "type": "rotation", "angle": -360}, {"pid": "p2", "type": "scale", "scale": 0}] },
+    { "aid": "a2", "name": "Spin out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.05, "duration": 0.55, "curve": "Back In"},
+      "effects": [{"pid": "p3", "type": "rotation", "angle": 360}, {"pid": "p4", "type": "scale", "scale": 0}] }
+  ]
+}
+```
+
+### Domino
+
+Words stand up on their bottom-left corner and drop flat with a bounce, one after another; at the end they fall over.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Drop in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.14, "duration": 1, "curve": "Bounce Out"},
+      "effects": [{"pid": "p1", "type": "rotation", "angle": -90}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Fall out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.08, "duration": 0.6, "curve": "Ease In"},
+      "effects": [{"pid": "p3", "type": "rotation", "angle": 90}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorPivotX": -100,
+  "textAnimatorPivotY": 100
+}
+```
+
+### Flip Pop
+
+Words flip up into view in 3D, past flat and back; at the end they tip back and flip away.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Flip in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.08, "duration": 0.8, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotate3d", "x": -90, "y": 0, "perspective": 600}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Flip out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.05, "duration": 0.6, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotate3d", "x": 90, "y": 0, "perspective": 600}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Card Turn
+
+Words turn to face you like cards, one by one, overshooting the turn; at the end they turn away.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Turn in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.07, "duration": 0.8, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotate3d", "x": 0, "y": 90, "perspective": 500}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Turn out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.04, "duration": 0.6, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotate3d", "x": 0, "y": -90, "perspective": 500}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Slam Zoom
+
+Words slam down from huge, punch past their size and settle; at the end they fly back at the camera.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Slam in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.1, "duration": 0.7, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "scale", "scale": 300}, {"pid": "p2", "type": "blur", "amount": 6}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Zoom out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.05, "duration": 0.45, "curve": "Expo In"},
+      "effects": [{"pid": "p4", "type": "scale", "scale": 300}, {"pid": "p5", "type": "blur", "amount": 6}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Orbit
+
+Words turn in from a third of a turn away and ease into place; at the end they turn off.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Orbit in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.1, "duration": 1.1, "curve": "Smooth Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotation", "angle": -110}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Orbit out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.05, "duration": 0.7, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotation", "angle": 110}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Fan Deal
+
+Words fan up from their bottom edge like cards dealt from a hand, last word first; at the end they fan away.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Deal in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "order": "backward", "stagger": 0.09, "duration": 0.9, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotation", "angle": -70}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Fan out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.05, "duration": 0.6, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotation", "angle": 70}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorPivotY": 100
+}
+```
+
+### Whip
+
+Words whip in from the left leaning into the move, snap past and settle; at the end they lean back and whip off to the right.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Whip in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.07, "duration": 0.7, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "position", "x": -160, "y": 0}, {"pid": "p2", "type": "skew", "skew": 40, "axis": 0}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Whip out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.04, "duration": 0.55, "curve": "Anticipate"},
+      "effects": [{"pid": "p4", "type": "position", "x": 160, "y": 0}, {"pid": "p5", "type": "skew", "skew": -40, "axis": 0}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Rubber Letters
+
+Letters spring out of thin slivers and wobble like rubber; at the end they stretch tall and squash flat.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Stretch in",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "in", "around": "char", "stagger": 0.03, "duration": 0.9, "curve": "Elastic"},
+      "effects": [{"pid": "p1", "type": "scale", "scale": 100, "x": 0, "y": 250}] },
+    { "aid": "a2", "name": "Squash out",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "char", "stagger": 0.015, "duration": 0.5, "curve": "Anticipate"},
+      "effects": [{"pid": "p2", "type": "scale", "scale": 100, "x": 250, "y": 0}] }
+  ]
+}
+```
+
+### Pop Letters
+
+Letters pop up in random order, each with a little twist; at the end they swell and pop away at random.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Pop in",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "in", "around": "char", "order": "random", "seed": 5, "stagger": 0.025, "duration": 0.6, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "scale", "scale": 0}, {"pid": "p2", "type": "rotation", "angle": -40}] },
+    { "aid": "a2", "name": "Pop out",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "char", "order": "random", "seed": 9, "stagger": 0.012, "duration": 0.5, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "scale", "scale": 0}, {"pid": "p4", "type": "rotation", "angle": 40}] }
+  ]
+}
+```
+
+### Drop Swing
+
+Words drop in tilted from above and bounce as they land; at the end they fall out of the frame.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Drop in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.08, "duration": 0.9, "curve": "Bounce Out"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": -120}, {"pid": "p2", "type": "rotation", "angle": 25}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Fall out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.04, "duration": 0.5, "curve": "Ease In"},
+      "effects": [{"pid": "p4", "type": "position", "x": 0, "y": 120}, {"pid": "p5", "type": "rotation", "angle": -25}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Coin Spin
+
+Letters spin in like coins, one after another, and rock to a stop; at the end they spin away.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Spin in",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "in", "around": "char", "stagger": 0.035, "duration": 0.8, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotate3d", "x": 0, "y": 180, "perspective": 400}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Spin out",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "char", "stagger": 0.015, "duration": 0.55, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotate3d", "x": 0, "y": -180, "perspective": 400}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Converge
+
+Words shrink down from far bigger, the outer ones first, and settle; at the end they burst outward.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Close in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "order": "edges", "stagger": 0.08, "duration": 0.9, "curve": "Expo Out"},
+      "effects": [{"pid": "p1", "type": "scale", "scale": 260}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Burst out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "center", "stagger": 0.05, "duration": 0.5, "curve": "Expo In"},
+      "effects": [{"pid": "p3", "type": "scale", "scale": 260}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Roll In
+
+Letters roll in from the right like wheels and rock back into place; at the end they roll off to the left.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Roll in",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "in", "around": "char", "stagger": 0.03, "duration": 0.8, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "position", "x": 120, "y": 0}, {"pid": "p2", "type": "rotation", "angle": 200}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Roll out",
+      "range": {"basedOn": "charsNoSpace", "drive": "time", "animate": "out", "around": "char", "stagger": 0.015, "duration": 0.6, "curve": "Back In"},
+      "effects": [{"pid": "p4", "type": "position", "x": -120, "y": 0}, {"pid": "p5", "type": "rotation", "angle": -200}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ]
+}
+```
+
+### Door Swing
+
+Words swing open in 3D on a hinge at their left edge, past flat and back; at the end they swing shut.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Swing open",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.07, "duration": 0.9, "curve": "Overshoot"},
+      "effects": [{"pid": "p1", "type": "rotate3d", "x": 0, "y": 80, "perspective": 1000}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Swing shut",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "stagger": 0.04, "duration": 0.6, "curve": "Anticipate"},
+      "effects": [{"pid": "p3", "type": "rotate3d", "x": 0, "y": -80, "perspective": 1000}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorPivotX": -100
+}
+```
+
+### Title Push 3D
+
+Words fly in from depth one by one, overshoot toward the camera and settle as the line glides over to make room; at the end they rush past the camera.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Fly in",
+      "range": {"basedOn": "words", "drive": "time", "animate": "in", "around": "word", "stagger": 0.2, "duration": 0.75, "curve": "Back Out"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 35, "z": -2600}, {"pid": "p2", "type": "rotate3d", "x": -50, "y": 0, "perspective": 600}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Push",
+      "range": {"basedOn": "lines", "drive": "time", "animate": "in", "around": "all", "stagger": 0, "duration": 1.6, "curve": "Sine Out"},
+      "effects": [{"pid": "p4", "type": "position", "x": 240, "y": 0}] },
+    { "aid": "a3", "name": "Rush out",
+      "range": {"basedOn": "words", "drive": "time", "animate": "out", "around": "word", "order": "backward", "stagger": 0.05, "duration": 0.55, "curve": "Ease In"},
+      "effects": [{"pid": "p5", "type": "position", "x": 0, "y": 0, "z": 900}, {"pid": "p6", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 1300
+}
+```
+
+### Perspective Type
+
+Lines drive in one after another on a plane tilted toward the camera, which then swings flat; at the end they sink back into depth.
+
+```json
+{
+  "textAnimators": [
+    { "aid": "a1", "name": "Lines in",
+      "range": {"basedOn": "lines", "drive": "time", "animate": "in", "around": "line", "stagger": 0.5, "duration": 0.5, "curve": "AE Smooth"},
+      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 140}, {"pid": "p2", "type": "scale", "scale": 55}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a2", "name": "Tilted plane",
+      "range": {"basedOn": "lines", "drive": "time", "animate": "in", "around": "all", "delay": 1.2, "stagger": 0, "duration": 0.7, "curve": "Natural"},
+      "effects": [{"pid": "p4", "type": "rotate3d", "x": 32, "y": 25, "perspective": 300}, {"pid": "p5", "type": "rotation", "angle": -6}, {"pid": "p6", "type": "scale", "scale": 150}, {"pid": "p7", "type": "position", "x": 16, "y": -4}] },
+    { "aid": "a3", "name": "Sink out",
+      "range": {"basedOn": "lines", "drive": "time", "animate": "out", "around": "line", "order": "backward", "stagger": 0.08, "duration": 0.5, "curve": "Ease In"},
+      "effects": [{"pid": "p8", "type": "position", "x": 0, "y": 0, "z": -800}, {"pid": "p9", "type": "opacity", "opacity": 0}] }
+  ],
+  "textAnimatorCamera": "layer",
+  "textAnimatorPerspective": 300
+}
+```
+
+<!-- KINETIC:END -->
 
 ## The catalogue
 
 <!-- PRESETS:BEGIN (generated from the app's presets; do not edit by hand) -->
 
-54 recipes in 7 categories; the app's 29 Classic recipes follow in [Classic](#classic). **Lengths** to multiply by the font size in px / 100: `blur` `amount`; `box` `padX`, `padY`, `radius`; `glow` `size`; `position` `x`, `y`, `z`; `rotate3d` `perspective`; `stroke` `width`; and the layer's `textAnimatorPerspective`.
+54 recipes in 7 categories; the 22 [Kinetic](#kinetic) recipes and the app's 29 [Classic](#classic) recipes have their own sections.
+
+**Lengths** to multiply by the font size in px / 100, here and in Kinetic: `blur` `amount`; `box` `padX`, `padY`, `radius`; `glow` `size`; `position` `x`, `y`, `z`; `rotate3d` `perspective`; `stroke` `width`; and the layer's `textAnimatorPerspective`.
 
 **A fade-out exit for an `in` recipe**, ending with the layer: append this animator with unused ids. Set its `basedOn` to the recipe's first animator's, and `stagger` to 0.015 for letters, 0.04 for words or 0.08 for lines.
 
@@ -1304,17 +1793,18 @@ The editor's 29 Classic presets: calm Time-driven reveals by word or letter, hig
 bars and randomizer looks. They are in the same preset picker as the recipes above. Each JSON below is what the app
 writes onto the text item when it applies the preset to a layer with a 100 px font.
 
-They differ from the recipes above in four ways:
+Four things to know about them:
 
 - **Lengths are composition px** and stay as written at any font size. The few that follow the font size are listed
   under the recipe with their formula; the JSON shows them for a 100 px font, so recompute them for the layer's font
   size in px (`textFontSize`, or in pct mode `textFontSizePct × videoSize.h / 100`).
 - **No keyframes.** Every Classic recipe is Time-driven: the in side starts with the layer and the out side ends with
-  it, so a recipe fits any layer length as written.
-- **Layer fields.** Caption Bar and Randomizer recipes also set `textBg*` / `textBorder*` or `textRandom*` fields on
-  the item (see [video-text.md](video-text.md#caption-bar-look) and [Text Randomizer](video-text.md#text-randomizer-fields)). They
-  stay on the layer when you later switch recipe, so set `textBgEnabled`, `textBorderEnabled` or
-  `textRandomEnabled` to `false` yourself when the new look should not have them.
+  it, so a recipe fits any layer length as written. The Randomizer recipes' look animators do not move at all.
+- **Layer fields.** The five Randomizer recipes carry their look as animators (Font size, Font weight, Italic and Fill
+  colour on picks: [video-text.md](video-text.md#advanced-animations--effects-over-a-moving-range-of-characters-words-or-lines))
+  and set the layer's own Randomizer off (`textRandomEnabled: false`). The five Caption Bar recipes carry their plate
+  or outline as a Highlight box in a `Plate` animator (an outline is the box's `border` with a fill of no opacity) and
+  set the layer's own bar and border off.
 - **Voice.** To time a Classic recipe to speech (an item with `textWordTimings`), set `"drive": "voice"` and
   `"spread": true` on every animator whose `animate` is not `out` or `inOut`. That is what the app's caption presets
   do when voice sync is on.
@@ -1340,16 +1830,16 @@ They differ from the recipes above in four ways:
 | [Classic Chase Loop](#classic-chase-loop) | Classic · Highlight | An accent keeps chasing through the words for as long as the clip runs | words | in and out, then a looping accent |
 | [Classic Sung Words](#classic-sung-words) | Classic · Highlight | Karaoke fill: each word turns gold on its beat and stays gold | words | in and out, with a highlight |
 | [Classic Marker Words](#classic-marker-words) | Classic · Highlight | Words rise from a mask, then a marker stroke lands under each word and stays | words | in, with a highlight |
-| [Classic Pill Grow](#classic-pill-grow) | Classic · Caption Bar | Words rise, then a dot pops at their left and stretches into a pill behind them | words | in and out |
-| [Classic Lower Third](#classic-lower-third) | Classic · Caption Bar | The bar slides in behind a mask while each word slides out of its own box; exits the same way | words | in and out |
-| [Classic Drop Bar](#classic-drop-bar) | Classic · Caption Bar | Bar and words drop in from above behind masks, and fall away below | words | in and out |
-| [Classic Outline Tag](#classic-outline-tag) | Classic · Caption Bar | An outline draws itself open to the right while the letters slide in | letters | in and out |
-| [Classic Prompt Field](#classic-prompt-field) | Classic · Caption Bar | An outlined pill fades in and the text types inside it behind a caret, like a search box | letters | in and out |
+| [Classic Pill Grow](#classic-pill-grow) | Classic · Caption Bar | Words rise one by one onto a pill that grows with them; it shrinks away as they leave | words | in and out |
+| [Classic Lower Third](#classic-lower-third) | Classic · Caption Bar | Each word slides out of its own box while the dark bar grows to take it; the bar shrinks back as the words leave | words | in and out |
+| [Classic Drop Bar](#classic-drop-bar) | Classic · Caption Bar | Words drop in from above behind masks onto a bar that grows with them, then fall away below as it shrinks | words | in and out |
+| [Classic Outline Tag](#classic-outline-tag) | Classic · Caption Bar | Letters slide in while an outline grows around them; it shrinks back as they fade out | letters | in and out |
+| [Classic Prompt Field](#classic-prompt-field) | Classic · Caption Bar | An outlined field fades in, the text types into it behind a caret, and the field fades out with it | letters | in and out |
 | [Classic Random Pop](#classic-random-pop) | Classic · Randomizer | Words pop in, each with a random size and accent colour | words | in and out |
 | [Classic Chaos Letters](#classic-chaos-letters) | Classic · Randomizer | Characters flip in with scattered sizes and weights | letters | in and out |
-| [Classic Random Rise](#classic-random-rise) | Classic · Randomizer | Masked rise; a wave of size and two colours rolls across the words | words | in and out |
+| [Classic Random Rise](#classic-random-rise) | Classic · Randomizer | Masked rise; the words take random sizes and weights, some in one of two colours | words | in and out |
 | [Classic Ransom Note](#classic-ransom-note) | Classic · Randomizer | Cut-out letters: wild sizes, three colours, mixed weights and italics | letters | in |
-| [Classic Editorial Typer](#classic-editorial-typer) | Classic · Randomizer | Word typing behind a caret, set in a wave of weights, sizes and italics | words | in and out |
+| [Classic Editorial Typer](#classic-editorial-typer) | Classic · Randomizer | Word typing behind a caret, the words set in a mix of weights, sizes and italics | words | in and out |
 
 ### Classic Fade Up
 
@@ -1682,214 +2172,281 @@ Words rise from a mask, then a marker stroke lands under each word and stays. Ap
 
 ### Classic Pill Grow
 
-Words rise, then a dot pops at their left and stretches into a pill behind them. App id `classic-pill-grow`. Plays: in, words 0.07 s apart, 0.5 s each; out at the end, 0.25 s each. Lengths are composition px and stay as written at any font size. Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+Words rise one by one onto a pill that grows with them; it shrinks away as they leave. App id `classic-pill-grow`. Plays: in, words 0.07 s apart, 0.5 s each; out at the end, 0.25 s each. Lengths are composition px and stay as written at any font size. The plate is a Highlight box in its own In & out animator (Plate), 0.2 s a word on the words' turns; the layer's own caption bar and border are set off.
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Plate",
+      "range": {"basedOn": "words", "drive": "time", "animate": "inOut", "stagger": 0.07, "duration": 0.2, "curve": "Ease Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "box", "color": "#2f6bff", "behind": "revealed", "shape": "block", "padX": 40, "padY": 20, "radius": 200}] },
+    { "aid": "a2", "name": "In",
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.07, "duration": 0.5, "curve": "Cubic Out", "spread": false},
-      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 24}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p2", "type": "position", "x": 0, "y": 24}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a3", "name": "Out",
       "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.07, "duration": 0.25, "curve": "Ease In", "spread": false},
-      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": -16}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+      "effects": [{"pid": "p4", "type": "position", "x": 0, "y": -16}, {"pid": "p5", "type": "opacity", "opacity": 0}] }
   ],
-  "textBgEnabled": true, "textBgColor": "#2f6bff", "textBgPaddingX": 40, "textBgPaddingY": 20,
-  "textBgRadius": 200, "textBorderEnabled": false, "textBgInType": "mask-right", "textBgInStyle": "grow",
-  "textBgInDuration": 0.55, "textBgInEasing": "Expo Out", "textBgInDelay": 0.15, "textBgInGrowStart": 0,
-  "textBgInGrowAppear": "scale-in", "textBgInGrowAppearDuration": 0.25, "textBgInGrowAppearEasing": "Back Out", "textBgOutType": "mask-right",
-  "textBgOutStyle": "grow", "textBgOutDuration": 0.3, "textBgOutEasing": "Ease In", "textBgOutGrowStart": 0,
-  "textBgOutGrowAppear": "scale-in", "textBgOutGrowAppearDuration": 0.15, "textBgOutGrowAppearEasing": "Ease In"
+  "textBgEnabled": false, "textBorderEnabled": false
 }
 ```
 
 ### Classic Lower Third
 
-The bar slides in behind a mask while each word slides out of its own box; exits the same way. App id `classic-lower-third`. Plays: in, words 0.06 s apart, 0.7 s each; out at the end, 0.45 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is 1.15 × font px (115 as written, for a 100 px font); Out position `y` is −1.15 × font px (−115 as written, for a 100 px font). Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+Each word slides out of its own box while the dark bar grows to take it; the bar shrinks back as the words leave. App id `classic-lower-third`. Plays: in, words 0.06 s apart, 0.7 s each; out at the end, 0.45 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is 1.15 × font px (115 as written, for a 100 px font); Out position `y` is −1.15 × font px (−115 as written, for a 100 px font). The plate is a Highlight box in its own In & out animator (Plate), 0.2 s a word on the words' turns; the layer's own caption bar and border are set off.
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Plate",
+      "range": {"basedOn": "words", "drive": "time", "animate": "inOut", "stagger": 0.06, "duration": 0.2, "curve": "Ease Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "box", "color": "#0a0a0ee0", "behind": "revealed", "shape": "block", "padX": 34, "padY": 18, "radius": 6}] },
+    { "aid": "a2", "name": "In",
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.06, "duration": 0.7, "curve": "Expo Out", "spread": false},
-      "effects": [{"pid": "p1", "type": "position", "x": -260, "y": 115}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p2", "type": "position", "x": -260, "y": 115}] },
+    { "aid": "a3", "name": "Out",
       "range": {"basedOn": "words", "drive": "time", "animate": "out", "mask": true, "stagger": 0.06, "duration": 0.45, "curve": "Expo In", "spread": false},
-      "effects": [{"pid": "p2", "type": "position", "x": 260, "y": -115}] }
+      "effects": [{"pid": "p3", "type": "position", "x": 260, "y": -115}] }
   ],
-  "textBgEnabled": true, "textBgColor": "rgba(10,10,14,0.88)", "textBgPaddingX": 34, "textBgPaddingY": 18,
-  "textBgRadius": 6, "textBorderEnabled": false, "textBgInType": "mask-right", "textBgInStyle": "slide",
-  "textBgInDuration": 0.55, "textBgInEasing": "Expo Out", "textBgInDelay": 0, "textBgOutType": "mask-right",
-  "textBgOutStyle": "slide", "textBgOutDuration": 0.45, "textBgOutEasing": "Expo In"
+  "textBgEnabled": false, "textBorderEnabled": false
 }
 ```
 
 ### Classic Drop Bar
 
-Bar and words drop in from above behind masks, and fall away below. App id `classic-drop-bar`. Plays: in, words 0.05 s apart, 0.6 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is −(the larger of 90 px and 1.15 × font px) (−115 as written, for a 100 px font); Out position `y` is the larger of 90 px and 1.15 × font px (115 as written, for a 100 px font). Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+Words drop in from above behind masks onto a bar that grows with them, then fall away below as it shrinks. App id `classic-drop-bar`. Plays: in, words 0.05 s apart, 0.6 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is −(the larger of 90 px and 1.15 × font px) (−115 as written, for a 100 px font); Out position `y` is the larger of 90 px and 1.15 × font px (115 as written, for a 100 px font). The plate is a Highlight box in its own In & out animator (Plate), 0.2 s a word on the words' turns; the layer's own caption bar and border are set off.
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Plate",
+      "range": {"basedOn": "words", "drive": "time", "animate": "inOut", "stagger": 0.05, "duration": 0.2, "curve": "Ease Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "box", "color": "#7c5cff", "behind": "revealed", "shape": "block", "padX": 34, "padY": 16, "radius": 10}] },
+    { "aid": "a2", "name": "In",
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.05, "duration": 0.6, "curve": "Expo Out", "spread": false},
-      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": -115}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p2", "type": "position", "x": 0, "y": -115}] },
+    { "aid": "a3", "name": "Out",
       "range": {"basedOn": "words", "drive": "time", "animate": "out", "mask": true, "stagger": 0.05, "duration": 0.4, "curve": "Expo In", "spread": false},
-      "effects": [{"pid": "p2", "type": "position", "x": 0, "y": 115}] }
+      "effects": [{"pid": "p3", "type": "position", "x": 0, "y": 115}] }
   ],
-  "textBgEnabled": true, "textBgColor": "#7c5cff", "textBgPaddingX": 34, "textBgPaddingY": 16,
-  "textBgRadius": 10, "textBorderEnabled": false, "textBgInType": "mask-down", "textBgInStyle": "slide",
-  "textBgInDuration": 0.5, "textBgInEasing": "Expo Out", "textBgInDelay": 0, "textBgOutType": "mask-down",
-  "textBgOutStyle": "slide", "textBgOutDuration": 0.4, "textBgOutEasing": "Expo In"
+  "textBgEnabled": false, "textBorderEnabled": false
 }
 ```
 
 ### Classic Outline Tag
 
-An outline draws itself open to the right while the letters slide in. App id `classic-outline-tag`. Plays: in, letters 0.022 s apart, 0.3 s each; out at the end, 0.2 s each. Lengths are composition px and stay as written at any font size. Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+Letters slide in while an outline grows around them; it shrinks back as they fade out. App id `classic-outline-tag`. Plays: in, letters 0.022 s apart, 0.3 s each; out at the end, 0.2 s each. Lengths are composition px and stay as written at any font size. The outline is a Highlight box with a border and a fill of no opacity, in its own In & out animator (Plate), 0.2 s a letter on the letters' turns; the layer's own caption bar and border are set off.
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Plate",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "inOut", "stagger": 0.022, "duration": 0.2, "curve": "Ease Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "box", "color": "#00000000", "behind": "revealed", "shape": "block", "padX": 36, "padY": 18, "radius": 14, "border": 3, "borderColor": "#33efab"}] },
+    { "aid": "a2", "name": "In",
       "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.022, "duration": 0.3, "curve": "Ease Out", "spread": false},
-      "effects": [{"pid": "p1", "type": "position", "x": -12, "y": 0}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p2", "type": "position", "x": -12, "y": 0}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
+    { "aid": "a3", "name": "Out",
       "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.022, "duration": 0.2, "curve": "Ease In", "spread": false},
-      "effects": [{"pid": "p3", "type": "opacity", "opacity": 0}] }
+      "effects": [{"pid": "p4", "type": "opacity", "opacity": 0}] }
   ],
-  "textBgEnabled": false, "textBgColor": "rgba(0,0,0,0.6)", "textBgPaddingX": 36, "textBgPaddingY": 18,
-  "textBgRadius": 14, "textBorderEnabled": true, "textBorderColor": "#33efab", "textBorderWidth": 3,
-  "textBorderStyle": "solid", "textBgInType": "mask-right", "textBgInStyle": "grow", "textBgInDuration": 0.6,
-  "textBgInEasing": "Cubic Out", "textBgInDelay": 0, "textBgInGrowStart": 0, "textBgInGrowAppear": "fade",
-  "textBgInGrowAppearDuration": 0.2, "textBgInGrowAppearEasing": "Ease Out", "textBgOutType": "mask-right", "textBgOutStyle": "grow",
-  "textBgOutDuration": 0.4, "textBgOutEasing": "Ease In", "textBgOutGrowStart": 0, "textBgOutGrowAppear": "none",
-  "textBgOutGrowAppearDuration": 0.4, "textBgOutGrowAppearEasing": "Ease In"
+  "textBgEnabled": false, "textBorderEnabled": false
 }
 ```
 
 ### Classic Prompt Field
 
-An outlined pill fades in and the text types inside it behind a caret, like a search box. App id `classic-prompt-field`. Plays: in, letters 0.04 s apart, 0.05 s each; out at the end, 0.2 s each. Lengths are composition px and stay as written at any font size. Sets the caption bar and its reveal (`textBg*` / `textBorder*`), as the app does when it applies the preset.
+An outlined field fades in, the text types into it behind a caret, and the field fades out with it. App id `classic-prompt-field`. Plays: in, letters 0.04 s apart, 0.05 s each; out at the end, 0.2 s each. Lengths are composition px and stay as written at any font size. The field is a Highlight box with a border and a fill of no opacity, in its own In & out animator (Plate): every letter's turn at once, so it fades in whole and fades out at the end; the layer's own caption bar and border are set off.
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Plate",
+      "range": {"basedOn": "chars", "drive": "time", "animate": "inOut", "stagger": 0, "duration": 0.35, "curve": "Ease Out", "spread": false},
+      "effects": [{"pid": "p1", "type": "box", "color": "#00000000", "behind": "revealed", "shape": "block", "padX": 46, "padY": 28, "radius": 200, "border": 3, "borderColor": "#ffffff80"}] },
+    { "aid": "a2", "name": "In",
       "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.04, "duration": 0.05, "curve": "Linear", "spread": false},
-      "effects": [{"pid": "p1", "type": "opacity", "opacity": 0}, {"pid": "p2", "type": "caret"}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p2", "type": "opacity", "opacity": 0}, {"pid": "p3", "type": "caret"}] },
+    { "aid": "a3", "name": "Out",
       "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.04, "duration": 0.2, "curve": "Ease In", "spread": false},
-      "effects": [{"pid": "p3", "type": "opacity", "opacity": 0}] }
+      "effects": [{"pid": "p4", "type": "opacity", "opacity": 0}] }
   ],
-  "textBgEnabled": false, "textBgColor": "rgba(0,0,0,0.6)", "textBgPaddingX": 46, "textBgPaddingY": 28,
-  "textBgRadius": 200, "textBorderEnabled": true, "textBorderColor": "rgba(255,255,255,0.5)", "textBorderWidth": 3,
-  "textBorderStyle": "solid", "textBgInType": "fade", "textBgInStyle": "wipe", "textBgInDuration": 0.35,
-  "textBgInEasing": "Ease Out", "textBgInDelay": 0, "textBgOutType": "fade", "textBgOutStyle": "wipe",
-  "textBgOutDuration": 0.3, "textBgOutEasing": "Ease In"
+  "textBgEnabled": false, "textBorderEnabled": false
 }
 ```
 
 ### Classic Random Pop
 
-Words pop in, each with a random size and accent colour. App id `classic-random-pop`. Plays: in, words 0.05 s apart, 0.45 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size. Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+Words pop in, each with a random size and accent colour. App id `classic-random-pop`. Plays: in, words 0.05 s apart, 0.45 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size. The look comes first, as animators: Size runs each word's Font size between 85 % and 150 % (Wiggle at 0 Wiggles / s: one fixed random amount per word, seed 4650); Weight sets every word to 400; Weight 800 gives weight 800 to a Pick of 50 % with the same seed; Colour gives the Fill #33efab to a Pick of 40 % with the same seed. One seed for size, weight and colour, so the biggest words are the heaviest and the coloured ones, as with the Randomizer. The layer's own Randomizer is set off (`textRandomEnabled: false`).
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Size",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "max": 100, "min": -30, "rate": 0, "corr": 0, "seed": 4650},
+      "effects": [{"pid": "p1", "type": "size", "size": 150}] },
+    { "aid": "a2", "name": "Weight",
+      "range": {"basedOn": "words"},
+      "effects": [{"pid": "p2", "type": "weight", "weight": 400}] },
+    { "aid": "a3", "name": "Weight 800",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "pick": 50, "rate": 0, "corr": 0, "seed": 4650},
+      "effects": [{"pid": "p3", "type": "weight", "weight": 800}] },
+    { "aid": "a4", "name": "Colour",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "pick": 40, "rate": 0, "corr": 0, "seed": 4650},
+      "effects": [{"pid": "p4", "type": "fill", "color": "#33efab"}] },
+    { "aid": "a5", "name": "In",
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.05, "duration": 0.45, "curve": "Back Out", "spread": false},
-      "effects": [{"pid": "p1", "type": "scale", "scale": 40}, {"pid": "p2", "type": "opacity", "opacity": 0}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p5", "type": "scale", "scale": 40}, {"pid": "p6", "type": "opacity", "opacity": 0}] },
+    { "aid": "a6", "name": "Out",
       "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.05, "duration": 0.4, "curve": "Smooth", "spread": false},
-      "effects": [{"pid": "p3", "type": "scale", "scale": 50}, {"pid": "p4", "type": "opacity", "opacity": 0}] }
+      "effects": [{"pid": "p7", "type": "scale", "scale": 50}, {"pid": "p8", "type": "opacity", "opacity": 0}] }
   ],
-  "textRandomEnabled": true, "textRandomScope": "words", "textRandomDist": "uniform", "textRandomNth": 3,
-  "textRandomSeed": 7, "textRandomSizeEnabled": true, "textRandomSizeMin": 85, "textRandomSizeMax": 150,
-  "textRandomColorEnabled": true, "textRandomColors": ["#33efab"], "textRandomCoverage": 40, "textRandomWeightEnabled": true,
-  "textRandomWeights": [400, 800], "textRandomItalicEnabled": false, "textRandomItalicMode": "mix", "textRandomItalicShare": 30
+  "textRandomEnabled": false
 }
 ```
 
 ### Classic Chaos Letters
 
-Characters flip in with scattered sizes and weights. App id `classic-chaos-letters`. Plays: in, letters 0.03 s apart, 0.5 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size. Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+Characters flip in with scattered sizes and weights. App id `classic-chaos-letters`. Plays: in, letters 0.03 s apart, 0.5 s each; out at the end, 0.4 s each. Lengths are composition px and stay as written at any font size. The look comes first, as animators: Size runs each letter's Font size between 89 % and 141 % (Wiggle at 0 Wiggles / s: one fixed random amount per letter, seed 6831); Weight sets every letter to 300; Weight 700 gives weight 700 to a Pick of 50 % with the same seed; Italic sets a Pick of 25 % in italic (its own seed). One seed for size and weight, so the biggest letters are the heaviest, as with the Randomizer. The layer's own Randomizer is set off (`textRandomEnabled: false`).
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Size",
+      "range": {"basedOn": "charsNoSpace"},
+      "wiggle": {"enabled": true, "max": 100, "min": -27, "rate": 0, "corr": 0, "seed": 6831},
+      "effects": [{"pid": "p1", "type": "size", "size": 141}] },
+    { "aid": "a2", "name": "Weight",
+      "range": {"basedOn": "charsNoSpace"},
+      "effects": [{"pid": "p2", "type": "weight", "weight": 300}] },
+    { "aid": "a3", "name": "Weight 700",
+      "range": {"basedOn": "charsNoSpace"},
+      "wiggle": {"enabled": true, "pick": 50, "rate": 0, "corr": 0, "seed": 6831},
+      "effects": [{"pid": "p3", "type": "weight", "weight": 700}] },
+    { "aid": "a4", "name": "Italic",
+      "range": {"basedOn": "charsNoSpace"},
+      "wiggle": {"enabled": true, "pick": 25, "rate": 0, "corr": 0, "seed": 398},
+      "effects": [{"pid": "p4", "type": "italic"}] },
+    { "aid": "a5", "name": "In",
       "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.03, "duration": 0.5, "curve": "Smooth", "spread": false},
-      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 10}, {"pid": "p2", "type": "rotate3d", "x": 90, "y": 0}, {"pid": "p3", "type": "opacity", "opacity": 0}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p5", "type": "position", "x": 0, "y": 10}, {"pid": "p6", "type": "rotate3d", "x": 90, "y": 0}, {"pid": "p7", "type": "opacity", "opacity": 0}] },
+    { "aid": "a6", "name": "Out",
       "range": {"basedOn": "chars", "drive": "time", "animate": "out", "stagger": 0.03, "duration": 0.4, "curve": "Smooth", "spread": false},
-      "effects": [{"pid": "p4", "type": "rotate3d", "x": -90, "y": 0}, {"pid": "p5", "type": "opacity", "opacity": 0}] }
+      "effects": [{"pid": "p8", "type": "rotate3d", "x": -90, "y": 0}, {"pid": "p9", "type": "opacity", "opacity": 0}] }
   ],
-  "textRandomEnabled": true, "textRandomScope": "symbols", "textRandomDist": "gaussian", "textRandomNth": 3,
-  "textRandomSeed": 21, "textRandomSizeEnabled": true, "textRandomSizeMin": 70, "textRandomSizeMax": 160,
-  "textRandomColorEnabled": false, "textRandomColors": [], "textRandomCoverage": 35, "textRandomWeightEnabled": true,
-  "textRandomWeights": [300, 700], "textRandomItalicEnabled": true, "textRandomItalicMode": "mix", "textRandomItalicShare": 25
+  "textRandomEnabled": false
 }
 ```
 
 ### Classic Random Rise
 
-Masked rise; a wave of size and two colours rolls across the words. App id `classic-random-rise`. Plays: in, words 0.08 s apart, 0.7 s each; out at the end, 0.5 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is the larger of 90 px and 1.15 × font px (115 as written, for a 100 px font); Out position `y` is −(the larger of 90 px and 1.15 × font px) (−115 as written, for a 100 px font). Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+Masked rise; the words take random sizes and weights, some in one of two colours. App id `classic-random-rise`. Plays: in, words 0.08 s apart, 0.7 s each; out at the end, 0.5 s each. Lengths are composition px and stay as written at any font size, except: In position `y` is the larger of 90 px and 1.15 × font px (115 as written, for a 100 px font); Out position `y` is −(the larger of 90 px and 1.15 × font px) (−115 as written, for a 100 px font). The look comes first, as animators: Size runs each word's Font size between 90 % and 140 % (Wiggle at 0 Wiggles / s: one fixed random amount per word, seed 9726); Weight sets every word to 500; Weight 900 gives weight 900 to a Pick of 50 % with the same seed; Colour gives the Fill #7aa2ff to a Pick of 45 % with the same seed; Colour 2 gives the Fill #ff6b81 to a random half of those: the same Pick, intersected with a Range ▸ Random order band. One seed for size, weight and colour, so the biggest words are the heaviest and the coloured ones, as with the Randomizer. The layer's own Randomizer is set off (`textRandomEnabled: false`).
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Size",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "max": 100, "min": -25, "rate": 0, "corr": 0, "seed": 9726},
+      "effects": [{"pid": "p1", "type": "size", "size": 140}] },
+    { "aid": "a2", "name": "Weight",
+      "range": {"basedOn": "words"},
+      "effects": [{"pid": "p2", "type": "weight", "weight": 500}] },
+    { "aid": "a3", "name": "Weight 900",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "pick": 50, "rate": 0, "corr": 0, "seed": 9726},
+      "effects": [{"pid": "p3", "type": "weight", "weight": 900}] },
+    { "aid": "a4", "name": "Colour",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "pick": 45, "rate": 0, "corr": 0, "seed": 9726},
+      "effects": [{"pid": "p4", "type": "fill", "color": "#7aa2ff"}] },
+    { "aid": "a5", "name": "Colour 2",
+      "range": {"basedOn": "words", "start": 0, "end": 50, "smooth": 0, "randomize": true, "seed": 1},
+      "wiggle": {"enabled": true, "pick": 45, "rate": 0, "corr": 0, "seed": 9726},
+      "effects": [{"pid": "p5", "type": "fill", "color": "#ff6b81"}] },
+    { "aid": "a6", "name": "In",
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "mask": true, "stagger": 0.08, "duration": 0.7, "curve": "Smooth", "spread": false},
-      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 115}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p6", "type": "position", "x": 0, "y": 115}] },
+    { "aid": "a7", "name": "Out",
       "range": {"basedOn": "words", "drive": "time", "animate": "out", "mask": true, "stagger": 0.08, "duration": 0.5, "curve": "Smooth", "spread": false},
-      "effects": [{"pid": "p2", "type": "position", "x": 0, "y": -115}] }
+      "effects": [{"pid": "p7", "type": "position", "x": 0, "y": -115}] }
   ],
-  "textRandomEnabled": true, "textRandomScope": "words", "textRandomDist": "wave", "textRandomNth": 3,
-  "textRandomSeed": 12, "textRandomSizeEnabled": true, "textRandomSizeMin": 90, "textRandomSizeMax": 140,
-  "textRandomColorEnabled": true, "textRandomColors": ["#7aa2ff", "#ff6b81"], "textRandomCoverage": 45, "textRandomWeightEnabled": true,
-  "textRandomWeights": [500, 900], "textRandomItalicEnabled": false, "textRandomItalicMode": "mix", "textRandomItalicShare": 30
+  "textRandomEnabled": false
 }
 ```
 
 ### Classic Ransom Note
 
-Cut-out letters: wild sizes, three colours, mixed weights and italics. App id `classic-ransom-note`. Plays: in, letters 0.025 s apart, 0.4 s each. Lengths are composition px and stay as written at any font size. Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+Cut-out letters: wild sizes, three colours, mixed weights and italics. App id `classic-ransom-note`. Plays: in, letters 0.025 s apart, 0.4 s each. Lengths are composition px and stay as written at any font size. The look comes first, as animators: Size runs each letter's Font size between 75 % and 165 % (Wiggle at 0 Wiggles / s: one fixed random amount per letter, seed 4232); Weight 700 · colour gives weight 700 and the Fill #ffd166 to a Pick of 60 % with the same seed; Weight 900 gives weight 900 to a Pick of 33.33 % with the same seed; Colour 2 (#ff6b81) and Colour 3 (#7aa2ff) take random thirds of the coloured letters: the same Pick, intersected with Range ▸ Random order bands; Italic sets a Pick of 30 % in italic (its own seed). One seed for size, weight and colour, so the biggest letters are the heaviest and the coloured ones, as with the Randomizer. The lightest letters keep the layer's own weight (`textFontWeight`; 400 matches the Randomizer's). The layer's own Randomizer is set off (`textRandomEnabled: false`).
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Size",
+      "range": {"basedOn": "charsNoSpace"},
+      "wiggle": {"enabled": true, "max": 100, "min": -38, "rate": 0, "corr": 0, "seed": 4232},
+      "effects": [{"pid": "p1", "type": "size", "size": 165}] },
+    { "aid": "a2", "name": "Weight 700 · colour",
+      "range": {"basedOn": "charsNoSpace"},
+      "wiggle": {"enabled": true, "pick": 60, "rate": 0, "corr": 0, "seed": 4232},
+      "effects": [{"pid": "p2", "type": "weight", "weight": 700}, {"pid": "p3", "type": "fill", "color": "#ffd166"}] },
+    { "aid": "a3", "name": "Weight 900",
+      "range": {"basedOn": "charsNoSpace"},
+      "wiggle": {"enabled": true, "pick": 33.33, "rate": 0, "corr": 0, "seed": 4232},
+      "effects": [{"pid": "p4", "type": "weight", "weight": 900}] },
+    { "aid": "a4", "name": "Colour 2",
+      "range": {"basedOn": "charsNoSpace", "start": 0, "end": 66.67, "smooth": 0, "randomize": true, "seed": 2704},
+      "wiggle": {"enabled": true, "pick": 60, "rate": 0, "corr": 0, "seed": 4232},
+      "effects": [{"pid": "p5", "type": "fill", "color": "#ff6b81"}] },
+    { "aid": "a5", "name": "Colour 3",
+      "range": {"basedOn": "charsNoSpace", "start": 0, "end": 33.33, "smooth": 0, "randomize": true, "seed": 2704},
+      "wiggle": {"enabled": true, "pick": 60, "rate": 0, "corr": 0, "seed": 4232},
+      "effects": [{"pid": "p6", "type": "fill", "color": "#7aa2ff"}] },
+    { "aid": "a6", "name": "Italic",
+      "range": {"basedOn": "charsNoSpace"},
+      "wiggle": {"enabled": true, "pick": 30, "rate": 0, "corr": 0, "seed": 4672},
+      "effects": [{"pid": "p7", "type": "italic"}] },
+    { "aid": "a7", "name": "In",
       "range": {"basedOn": "chars", "drive": "time", "animate": "in", "stagger": 0.025, "duration": 0.4, "curve": "Smooth", "spread": false},
-      "effects": [{"pid": "p1", "type": "scale", "scale": 30}, {"pid": "p2", "type": "rotation", "angle": 8}, {"pid": "p3", "type": "opacity", "opacity": 0}] }
+      "effects": [{"pid": "p8", "type": "scale", "scale": 30}, {"pid": "p9", "type": "rotation", "angle": 8}, {"pid": "p10", "type": "opacity", "opacity": 0}] }
   ],
-  "textRandomEnabled": true, "textRandomScope": "symbols", "textRandomDist": "uniform", "textRandomNth": 3,
-  "textRandomSeed": 33, "textRandomSizeEnabled": true, "textRandomSizeMin": 75, "textRandomSizeMax": 165,
-  "textRandomColorEnabled": true, "textRandomColors": ["#ffd166", "#ff6b81", "#7aa2ff"], "textRandomCoverage": 60, "textRandomWeightEnabled": true,
-  "textRandomWeights": [400, 700, 900], "textRandomItalicEnabled": true, "textRandomItalicMode": "mix", "textRandomItalicShare": 30
+  "textRandomEnabled": false
 }
 ```
 
 ### Classic Editorial Typer
 
-Word typing behind a caret, set in a wave of weights, sizes and italics. App id `classic-editorial-typer`. Plays: in, words 0.18 s apart, 0.14 s each; out at the end, 0.25 s each. Lengths are composition px and stay as written at any font size. Sets the Text Randomizer (`textRandom*`), as the app does when it applies the preset.
+Word typing behind a caret, the words set in a mix of weights, sizes and italics. App id `classic-editorial-typer`. Plays: in, words 0.18 s apart, 0.14 s each; out at the end, 0.25 s each. Lengths are composition px and stay as written at any font size. The look comes first, as animators: Size runs each word's Font size between 88 % and 128 % (Wiggle at 0 Wiggles / s: one fixed random amount per word, seed 5459); Weight sets every word to 300; Weight 800 gives weight 800 to a Pick of 50 % with the same seed; Italic sets a Pick of 35 % in italic (its own seed). One seed for size and weight, so the biggest words are the heaviest, as with the Randomizer. The layer's own Randomizer is set off (`textRandomEnabled: false`).
 
 ```json
 {
   "textAnimators": [
-    { "aid": "a1", "name": "In",
+    { "aid": "a1", "name": "Size",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "max": 100, "min": -43, "rate": 0, "corr": 0, "seed": 5459},
+      "effects": [{"pid": "p1", "type": "size", "size": 128}] },
+    { "aid": "a2", "name": "Weight",
+      "range": {"basedOn": "words"},
+      "effects": [{"pid": "p2", "type": "weight", "weight": 300}] },
+    { "aid": "a3", "name": "Weight 800",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "pick": 50, "rate": 0, "corr": 0, "seed": 5459},
+      "effects": [{"pid": "p3", "type": "weight", "weight": 800}] },
+    { "aid": "a4", "name": "Italic",
+      "range": {"basedOn": "words"},
+      "wiggle": {"enabled": true, "pick": 35, "rate": 0, "corr": 0, "seed": 1},
+      "effects": [{"pid": "p4", "type": "italic"}] },
+    { "aid": "a5", "name": "In",
       "range": {"basedOn": "words", "drive": "time", "animate": "in", "stagger": 0.18, "duration": 0.14, "curve": "Ease Out", "spread": false},
-      "effects": [{"pid": "p1", "type": "position", "x": 0, "y": 12}, {"pid": "p2", "type": "opacity", "opacity": 0}, {"pid": "p3", "type": "caret", "hide": true, "hideAfter": 1}] },
-    { "aid": "a2", "name": "Out",
+      "effects": [{"pid": "p5", "type": "position", "x": 0, "y": 12}, {"pid": "p6", "type": "opacity", "opacity": 0}, {"pid": "p7", "type": "caret", "hide": true, "hideAfter": 1}] },
+    { "aid": "a6", "name": "Out",
       "range": {"basedOn": "words", "drive": "time", "animate": "out", "stagger": 0.18, "duration": 0.25, "curve": "Ease In", "spread": false},
-      "effects": [{"pid": "p4", "type": "opacity", "opacity": 0}] }
+      "effects": [{"pid": "p8", "type": "opacity", "opacity": 0}] }
   ],
-  "textRandomEnabled": true, "textRandomScope": "words", "textRandomDist": "wave", "textRandomNth": 3,
-  "textRandomSeed": 5, "textRandomSizeEnabled": true, "textRandomSizeMin": 88, "textRandomSizeMax": 128,
-  "textRandomColorEnabled": false, "textRandomColors": [], "textRandomCoverage": 35, "textRandomWeightEnabled": true,
-  "textRandomWeights": [300, 800], "textRandomItalicEnabled": true, "textRandomItalicMode": "mix", "textRandomItalicShare": 35
+  "textRandomEnabled": false
 }
 ```
 <!-- CLASSIC:END -->

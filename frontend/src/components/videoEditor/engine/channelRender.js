@@ -35,6 +35,7 @@ import { ensurePreviewAudio } from '../previewAudioMedia.js';
 import { isInactiveTextureNeededAsFallback, reconcileChannelPreviewMedia, shouldPrepareNextVideo } from '../previewMediaLifecycle';
 import { isCameraChannel, isCameraClip } from '../projectCamera';
 import { isCameraBaked3dPlate, isScenePlate, resolveRigAt, RIG_MEDIA_TYPE, sceneTimeAt, shutterEntries } from '../rig3d';
+import { findBlockingMuteRigAt } from '../rigAiVideo';
 import { prerenderPlaybackClip } from '../sequencePrerender';
 import { getSpeedAtTime } from '../speedUtils';
 import { hideTransitionPackageInstances, renderTransitionPackage } from '../transitionPackageRuntime';
@@ -45,8 +46,9 @@ import { ensureSequenceState as ensureSequenceStateInEngine } from './channelSta
 import { _platePos, resolveActiveIndex, shutterTimeIn } from './compositeHelpers';
 import { pictureWorldRun } from '../liveLayers';
 import { isPictureInWorldLayer } from '../world3dText.js';
-import { handWorldText, isWorldRig, modelFxLiveAt, modelKeepsOwnPass, prepareWorldFrame, textKeepsOwnPass, worldBlockedOn, worldHolds, worldLayerResult } from '../world3dLayer';
-import { bakeableLayerStack, calculateVideoTime, layerContentBox } from './layerHelpers';
+import { orderModelPoses } from '../handPose';
+import { handWorldText, isWorldRig, modelFxLiveAt, modelKeepsOwnPass, prepareWorldFrame, textKeepsOwnPass, worldBlockedOn, worldHolds, worldLayerResult, worldLoadingPreview } from '../world3dLayer';
+import { bakeableLayerStack, calculateVideoTime, layerContentBox, needsLayerMaskPass } from './layerHelpers';
 import { playbackRateTrim } from './mediaClock';
 import { getClipPlaybackUrl, normalizeUrl, primePreparedVideoTexture as primePreparedVideoTextureInEngine } from './mediaTextures';
 import { textureVideoOf } from './videoCanvasTexture';
@@ -479,8 +481,14 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
   // A model layer's pixels come from its own depth-buffered 3D pass. Same contract as
   // resolveSequenceTexture: hand back a texture for env.setupMesh's overrideTexture, or
   // null when there is nothing to draw yet.
+  const blockingMuted = findBlockingMuteRigAt(env.channels, (ch) => env.layoutMap.get(ch.id), time);
   const resolveModelTexture = (mItem, mClip, mTimeInClip) => {
     if (mClip?.mediaType !== 'model3d') return null;
+    if (blockingMuted && mItem?.aiRole !== 'composite') {
+      engine.modelDepth.delete(channel.id);
+      engine.modelDepthTex.delete(channel.id);
+      return null;
+    }
     // Only what the world really took: a camera-locked channel is not in it, and suppressing its pass makes the model vanish. One of the
     // six live this frame takes the model out of the world (modelKeepsOwnPass); coming back, it keeps its pass until the world holds it
     // again, since the world rebuilds without it in the meantime. A Scene that cannot draw here (the WebGL engine, no WebGPU) takes the
@@ -892,6 +900,14 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
       engine.modelSpillDepth.delete(channel.id);
       return null;
     }
+    if (!engine.worldFrameReady && blockingMuted && rItem?.rig?.cyclorama?.material?.mode !== 'shadowCatcher') {
+      engine.modelDepth.delete(channel.id);
+      engine.modelDepthRange.delete(channel.id);
+      engine.modelDepthTex.delete(channel.id);
+      engine.modelTransparentDepthTex.delete(channel.id);
+      engine.modelSpillDepth.delete(channel.id);
+      return null;
+    }
     if (engine.worldFrameReady) {
       const res = worldLayerResult(engine);
       engine.modelDepth.set(channel.id, res.viewDistance);
@@ -908,8 +924,23 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     const mod = engine.model3d;
     if (!mod) {
       requestModel3dModule(engine, () => { if (!engine.exporting && !engine.isPlaying) engine.renderFrame(); });
-      return null;
     }
+    const preview = worldLoadingPreview(engine, engine.activeRigAt?.(engine.currentTime) || rItem?.rig || null);
+    if (preview) {
+      engine.worldLoadingPreview = true;
+      if (preview.viewDistance != null) engine.modelDepth.set(channel.id, preview.viewDistance);
+      else engine.modelDepth.delete(channel.id);
+      if (preview.viewRange) engine.modelDepthRange.set(channel.id, preview.viewRange);
+      else engine.modelDepthRange.delete(channel.id);
+      if (preview.depthTexture) engine.modelDepthTex.set(channel.id, preview.depthTexture);
+      else engine.modelDepthTex.delete(channel.id);
+      engine.modelTransparentDepthTex.delete(channel.id);
+      engine.modelSpillDepth.delete(channel.id);
+      engine.worldShadowTexture = null;
+      engine.worldLinearCover = false;
+      return preview.texture;
+    }
+    if (!mod) return null;
     const renderer = engine.renderer;
     if (!renderer || !mod.renderRigLayer) return null;
     const { w: rW, h: rH } = engine.videoSize;
@@ -1368,7 +1399,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     // did not bake here would disappear for the length of the transition.
     const prepareTransitionFx = engine.preTransitionFxPrepare;
     if (prepareTransitionFx) {
-      if (hasActiveLayerOverlayEffects(withFlatEffects(prevItem, prevClip, engine.worldScene && !ctx)) || isLayerMaskEnabled(prevItem) || bakeableLayerStack(prevItem, prevClip, prevLayout)) {
+      if (hasActiveLayerOverlayEffects(withFlatEffects(prevItem, prevClip, engine.worldScene && !ctx)) || needsLayerMaskPass(prevItem, prevClip) || bakeableLayerStack(prevItem, prevClip, prevLayout)) {
         prepareTransitionFx({
           key: prevItem.id,
           mesh: cs.prevMesh,
@@ -1381,7 +1412,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
           refClipOf,
         });
       }
-      if (hasActiveLayerOverlayEffects(withFlatEffects(item, clip, engine.worldScene && !ctx)) || isLayerMaskEnabled(item) || bakeableLayerStack(item, clip, itemLayout)) {
+      if (hasActiveLayerOverlayEffects(withFlatEffects(item, clip, engine.worldScene && !ctx)) || needsLayerMaskPass(item, clip) || bakeableLayerStack(item, clip, itemLayout)) {
         prepareTransitionFx({
           key: item.id,
           mesh: cs.currMesh,
@@ -1620,7 +1651,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
     transitionOutType: outType,
     transitionOutDuration: outDuration,
   });
-  if (effectTransitionStage && (hasActiveLayerOverlayEffects(withFlatEffects(item, clip, engine.worldScene && !ctx)) || isLayerMaskEnabled(item) || bakeableLayerStack(item, clip, itemLayout))) {
+  if (effectTransitionStage && (hasActiveLayerOverlayEffects(withFlatEffects(item, clip, engine.worldScene && !ctx)) || needsLayerMaskPass(item, clip) || bakeableLayerStack(item, clip, itemLayout))) {
     engine.preTransitionFxPrepare?.({
       key: item.id,
       mesh: cs.currMesh,
@@ -1723,6 +1754,7 @@ export function renderChannel(engine, env, channel, time, ctx = null) {
  */
 export function prePoseWorldModels(engine, env, time) {
   engine.worldFrameReady = false;
+  engine.worldLoadingPreview = false;
   // (mblur3) whether this frame's world goes over the stack in linear light: said again by the world's own layer (resolveRigTexture)
   engine.worldLinearCover = false;
   engine.worldTakesText = false;
@@ -1738,6 +1770,8 @@ export function prePoseWorldModels(engine, env, time) {
   const { w, h } = engine.videoSize;
   // (enginebugs2) a world Scene turns its model layers as it turns its objects (resolveModelTexture), the pose its shadows and copy take
   const sceneTurn = !!engine.worldScene;
+  const sceneTime = sceneTimeAt(shutterEntries(engine.rigEntries, engine.shutterFrameTime), time);
+  const pending = [];
   for (const channel of env.channels) {
     if (channel.visible === false || channel.cameraLocked || !channel.items?.length) continue;
     const layout = env.layoutMap.get(channel.id);
@@ -1750,10 +1784,13 @@ export function prePoseWorldModels(engine, env, time) {
     const timeInClip = time - itemLayout.startTime;
     const progress = itemLayout.duration > 0 ? Math.max(0, Math.min(1, timeInClip / itemLayout.duration)) : 0;
     const kfNow = itemHasKeyframes(item) ? getItemKeyframeValues(item, progress) : null;
-    mod.poseModelLayer({
+    pending.push({
       item, clip, prs: localPrs(item, kfNow, w, h, { sceneTurn }), sceneTurn, W: w, H: h,
-      time: Math.max(0, timeInClip), sceneTime: sceneTimeAt(shutterEntries(engine.rigEntries, engine.shutterFrameTime), time), rig, frameToken: engine.frameToken,
+      time: Math.max(0, timeInClip), sceneTime, rig, frameToken: engine.frameToken, env,
     });
   }
+  mod.clearHeldModelMatrices?.();
+  // Topologically order models so unconstrained models and attach holders pose before downstream targets.
+  for (const opts of orderModelPoses(pending, env.channels)) mod.poseModelLayer(opts);
   prepareWorldFrame(engine, env, time);
 }

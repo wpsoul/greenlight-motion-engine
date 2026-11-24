@@ -22,6 +22,7 @@ import { cacheStatus, localCacheDeps } from './localRenderCache';
 import { applyTemplateValues, fieldValues } from './template';
 import { createResolver, resolveProject, setActiveResolver, missingAssets } from './assets';
 import { toEngineProject } from './normalize';
+import { timelineOrder } from './rowOrder';
 import { rulerSteps, rulerLabel } from './rulerSteps';
 import { mixProject, hasSound, hasSoundEffects } from './mix';
 import { activeLayers } from '../components/videoEditor/PreviewTransformOverlay';
@@ -47,12 +48,14 @@ import { critiqueFrame } from './critique';
 // (motion3d) a Final 3D Scene's render cost against the host's cap (the chat's: 10 s at 64 samples), confirmed before a longer one
 import { checkFinalCap } from './finalCap';
 import { FarmPane, useFarm } from './FarmPane';
-// (chatswitch) the studio's Draft | Final switch: the film's 3D Scenes in the viewer's mode, and the app's own Final in the preview
-// (it traces only on pause)
+// (chatswitch) a film's 3D Scenes in the mode the page renders (the film's own, or the Render pane's 3D), and the preview's own Draft |
+// Final (the studio's switch in the player bar: the app's own Final, it traces only on pause)
 import { filmWorldMode, withWorldMode, sceneRender, worldTraceOptions } from './worldMode';
 import { setWorldFinal, worldStatus, watchWorldLoad, worldInUse } from '../components/videoEditor/world3dLayer';
 import { normalizeRigRender } from '../components/videoEditor/rig3d';
 import { REVIEW_TOOLS } from './reviewNotes';
+// the camera's focus probe, the editor Player's own (studio/camera.js: the focus pad, Pick in preview)
+import { probeFocusDepth } from '../components/videoEditor/engine/focusProbe';
 import './playerPage.css';
 
 // The editor's own preset windows (text animation, entrance / exit, transitions) open here too, with their live
@@ -108,15 +111,18 @@ const FRAME = 1 / 30;
 // (0.5.5) how long a render waits for the page's player (a cold pod's GPU start is seconds; pod-serve waits for the page this long too)
 const PLAYER_WAIT_MS = 180000;
 
-// Every layer on the timeline, in the editor's order (one row per channel), with its place in time.
-function layersOf(channels, clips) {
+// Every layer on the timeline, one row per channel, in GreenLight Dash's order (rowOrder.js: the top of the stack first,
+// the Camera row first and the 3D Scene's rig row under it), with its place in time. `pin` (a page with the camera's
+// controls, studio/camera.js): those two rows marked with their kind, for the app's colours.
+const PIN_KINDS = new Set(['camera', 'rig']);
+function layersOf(channels, clips, pin = false) {
   const byId = new Map((clips || []).map((c) => [c.id, c]));
   const rows = [];
   let end = 0;
-  for (const ch of channels || []) {
+  for (const ch of timelineOrder(channels)) {
     if (!ch?.items?.length || ch.visible === false) continue;
     const layout = getTimelineLayout(ch.items, { unsnapped: ch.unsnapped });
-    const row = { id: ch.id, layers: [] };
+    const row = { id: ch.id, layers: [], ...(pin && PIN_KINDS.has(ch.kind) ? { pin: ch.kind } : null) };
     ch.items.forEach((item, i) => {
       const at = layout[i];
       if (!at) return;
@@ -289,7 +295,8 @@ function useLiveTime(playing, currentTime) {
 function Transport({ duration, playing, currentTime, onPlay, onStep, onSeek, loop, onLoop, rows, meter }) {
   const t = Math.min(useLiveTime(playing, currentTime) || 0, duration);
   const now = [];
-  for (const row of rows) for (const l of row.layers) if (t >= l.start && t < l.end && now.length < 3) now.push(l.name);
+  // the plain page's "Now" line keeps the order it always had, the stack bottom first (the timeline lists it top first)
+  for (const row of [...rows].reverse()) for (const l of row.layers) if (t >= l.start && t < l.end && now.length < 3) now.push(l.name);
   return (
     <div className="glm-transport">
       <div className="glm-tgroup">
@@ -500,7 +507,7 @@ function Timeline({ rows, duration, playing, currentTime, onSeek, onSelect, sele
         </div>
         <div className="glm-rows" ref={rowsRef} style={{ '--rows': rows.length }}>
           {rows.map((row) => (
-            <div key={row.id} className="glm-row">
+            <div key={row.id} className={row.pin ? `glm-row is-pin is-pin-${row.pin}` : 'glm-row'}>
               {row.layers.map((l) => (
                 <button
                   key={l.id}
@@ -735,7 +742,7 @@ function OpenInAppDialog({ title, direct, onSave, onClose }) {
 
 /* ── the page ──────────────────────────────────────────────────────────────────────────────────── */
 
-export function PlayerPage({ project: source, assets, theme = 'dark' }) {
+export function PlayerPage({ project: source, assets, theme = 'dark', pinCameraRows = false }) {
   const playerRef = useRef(null);
   // (0.5.5) the page is up (`page.ready`) a moment before its player: the engine's GPU device and the project's first load (measured
   // 0.1–0.6 s on this Mac; longer on a cold pod, where 0.5.4's pod-serve called renderVideo into the null player). Everything that
@@ -773,8 +780,11 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   const [capAsked, setCapAsked] = useState(null);   // (motion3d) the Final cost a Render press was warned about: pressed again, it renders
   const farmHost = useFarm();   // (chatfarm2) a host's GPU farm (GreenLightMotion.setRenderFarm), or null
   const renderAtRef = useRef(0);   // (chatfarm2) when the Render pane's render started
-  // (chatswitch) the viewer's Draft | Final for the film's 3D Scenes (page.world3d.set, the studio's switch); null = the film's own
+  // (chatswitch) what the page renders the film's 3D Scenes in (page.world3d.set, the Render pane's 3D); null = the film's own
   const [worldMode, setWorldMode] = useState(null);
+  // (chatswitch) what the preview shows (page.world3d.setPreview, the studio's switch in the player bar): Draft unless set to Final,
+  // which traces the paused frame; nothing it does reaches what renders (owner, 2026-11-24: the switch is the preview's only)
+  const [previewMode, setPreviewMode] = useState(null);
   const [missing, setMissing] = useState([]);
   // the viewer's own changes (./pageEdits.js): a layer's values, a replaced picture, where layers sit
   const [selectedId, setSelectedId] = useState(null);
@@ -832,8 +842,8 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     [base, itemEdits, clipEdits, values, template]);
   const settled = useMemo(() => applyTiming(applyItemEdits(valued, structEdits, null), timing), [valued, structEdits, timing]);
   const edited = useMemo(() => (dragTiming ? applyTiming(settled, dragTiming) : settled), [settled, dragTiming]);
-  // (chatswitch) what the page plays, renders, draws as stills and critiques: the film with its 3D Scenes in the switch's mode (the same
-  // object with no switch set, or with no Scene)
+  // (chatswitch) what the page plays, renders, draws as stills and critiques: the film with its 3D Scenes in the mode it renders (the same
+  // object with nothing picked in the Render pane, or with no Scene); the preview's Final is on top of it (below)
   const ownWorld = useMemo(() => filmWorldMode(edited), [edited]);
   const project = useMemo(() => withWorldMode(edited, worldMode), [edited, worldMode]);
   // what the Player plays and renders: the project with the page's mix (the same object at 100 % with effects on)
@@ -852,7 +862,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   const heavyAsked = useRef(false);
   const sound = useMemo(() => ({ any: hasSound(project), effects: hasSoundEffects(project) }), [project]);
   const size = project?.videoSize || { w: 1920, h: 1080 };
-  const { rows, duration } = useMemo(() => layersOf(project?.channels, project?.clips), [project]);
+  const { rows, duration } = useMemo(() => layersOf(project?.channels, project?.clips, pinCameraRows), [project, pinCameraRows]);
   const meterKey = useMemo(() => renderCacheGlobalKey({
     videoSize: { w: size.w, h: size.h }, motionBlurEnabled: motionBlur, background: project?.background || null,
     markers: project?.markers || [], textVariables: project?.textVariables || [],
@@ -912,13 +922,14 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     return () => ro.disconnect();
   }, [size.w, size.h, hasProject]);
 
-  // (chatswitch) Final on the switch: the app's own Final 3D in the preview (world3dLayer setWorldFinal, the player bar's): playing shows
-  // Draft, and on pause the frame path traces in place (not while playing or rendering, nor right after a seek or an edit: it comes back
-  // once they settle), with the Scene's own render settings, so the paused picture is the frame Render MP4 makes. Set once the world is
-  // there (its trace settings go on the world itself). Draft, or no switch set: nothing here, the preview as before.
+  // (chatswitch) Final on the preview's switch: the app's own Final 3D in the preview (world3dLayer setWorldFinal, the player bar's): playing
+  // shows Draft, and on pause the frame path traces in place (not while playing or rendering, nor right after a seek or an edit: it comes
+  // back once they settle), with the Scene's own render settings, so the paused picture is the frame a Final render makes. Set once the
+  // world is there (its trace settings go on the world itself). Draft (the page's start): nothing here, the live picture. It changes
+  // nothing that renders: a Final film renders Final with the preview in Draft, a Draft film renders Draft with it in Final.
   const traceKey = useMemo(() => { const r = sceneRender(edited); return r ? JSON.stringify(worldTraceOptions(r, normalizeRigRender)) : ''; }, [edited]);
   useEffect(() => {
-    if (worldMode !== 'final' || !ownWorld) return undefined;
+    if (previewMode !== 'final' || !ownWorld) return undefined;
     let timer = 0, used = null;
     const apply = () => {
       const inner = playerRef.current?.engine?.engine;
@@ -932,7 +943,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
       // back to Draft; a page going away (a rebuild mounts the next one) draws nothing more with its engine
       if (used) setWorldFinal(playerRef.current?.engine?.engine === used ? used : {}, false);
     };
-  }, [worldMode, ownWorld, traceKey]);
+  }, [previewMode, ownWorld, traceKey]);
 
   const seek = useCallback((t) => {
     setPlayingState(false);
@@ -1221,7 +1232,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
   // changes written in, pictures picked here added to the files.
   const exportProject = useCallback(async () => {
     const changed = applyTemplateValues(applyItemEdits(applyItemEdits(applyTiming(source, timing), structEdits, null), itemEdits, clipEdits), values, source?.template);
-    // (chatswitch) the switch's Draft | Final goes with it (a version sent from the page, a .glvideo, a rebuild of the page)
+    // (chatswitch) the Render pane's 3D goes with it (a version sent from the page, a .glvideo, a rebuild of the page); the preview's does not
     return bakeForExport(withWorldMode(changed, worldMode), assets);
   }, [source, timing, structEdits, itemEdits, clipEdits, values, assets, worldMode]);
   const saveForApp = useCallback(async () => {
@@ -1302,6 +1313,9 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
       setLayerValue: (id, path, v) => setItemValue(id, path, v),
       retimeLayer: (id, span) => retimeLayer(id, span),
       pickAt: (x, y, at = currentTime) => pickAt(x, y, at),
+      // how far what the paused frame shows at (x, y) (0..1 of the frame) is from the camera, in frame px, or null over nothing:
+      // the editor's focus probe on this page's renderer (the flat layers' meshes, a 3D model's surface, a 3D Scene's world)
+      probeDepth: (x, y) => probeFocusDepth(playerRef.current?.engine?.engine, { channels: mixed?.channels || [], clips: mixed?.clips || [], time: currentTime }, x, y),
       edits: () => ({ itemEdits, clipEdits, timing, structEdits, ops: editOps(), dirty }),
       // every change on the page as one plain value, and back (Undo / Redo: studio/history.js)
       editState: () => ({ itemEdits, clipEdits, timing, structEdits, values, applied }),
@@ -1373,14 +1387,18 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
         const b64 = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = no; r.readAsDataURL(res.blob); });
         return { base64: b64, size: res.blob.size };
       },
-      // (chatswitch) the film's 3D Scenes, Draft or Final: `own` the film's (its Scenes' render.mode), `mode` what the page plays, renders,
-      // draws as stills and critiques (set(): the switch's, once set; null = the film's own again). `status()`: the paused preview's
-      // trace under Final ({ done, spp, target, seconds } or null); `watchLoad(fn)`: the world loading or Final starting ({ stage } or null)
+      // (chatswitch) the film's 3D Scenes, Draft or Final: `own` the film's (its Scenes' render.mode), `mode` what the page renders, draws
+      // as stills and critiques (set(): the Render pane's 3D; null = the film's own again); `preview` what the preview shows (setPreview():
+      // the studio's switch in the player bar, Draft at the start, Final tracing the paused frame — nothing that renders follows it).
+      // `status()`: the paused preview's trace under Final ({ done, spp, target, seconds } or null); `watchLoad(fn)`: the world loading or
+      // Final starting ({ stage } or null)
       world3d: {
         has: !!ownWorld,
         own: ownWorld,
         mode: ownWorld ? (worldMode || ownWorld) : null,
         set: (m) => { if (m === null || m === 'draft' || m === 'final') setWorldMode(m); },
+        preview: ownWorld ? (previewMode || 'draft') : null,
+        setPreview: (m) => { if (m === null || m === 'draft' || m === 'final') setPreviewMode(m); },
         status: () => worldStatus(),
         watchLoad: (fn) => watchWorldLoad(fn),
         rendering: () => !!playerRef.current?.engine?.engine?.exporting,   // an MP4 under way: its mode stays as it started
@@ -1406,11 +1424,33 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
     return undefined;
   });
 
+  // (chatswitch) the mode the page renders changed (the Render pane's 3D, or page.world3d.set): the host hears it (`glm:world3d`
+  // { mode, own }: a chat's page reports it and draws its frames in it). The preview's switch is never told: it renders nothing.
+  const toldWorld = useRef(null);
+  useEffect(() => {
+    if (!ownWorld) { toldWorld.current = null; return; }
+    const m = worldMode || ownWorld;
+    if (toldWorld.current === null) { toldWorld.current = m; return; }
+    if (toldWorld.current !== m) { toldWorld.current = m; window.dispatchEvent(new CustomEvent('glm:world3d', { detail: { mode: m, own: ownWorld } })); }
+  }, [worldMode, ownWorld]);
+
   if (!project) return <div className="glm-app glm-loading" data-theme={theme}><span>Loading the video…</span></div>;
   const fields = template?.fields || [];
   const isRender = pane === 'render';
   // straight to the app from a page on disk with nothing changed; otherwise the changes travel in a file
   const direct = OPEN_IN_APP && !dirty ? OPEN_IN_APP : null;
+  // (chatswitch) a film with a 3D Scene: what Render MP4 renders it in (the app's Render dialog "3D renderer"), the film's own mode until
+  // picked here; the preview's switch is not this. In the Render pane under Motion blur, or above a GPU farm's choice
+  const render3d = ownWorld ? (
+    <>
+      <h3 className="glm-h">3D</h3>
+      <div className="glm-fmts" role="group" aria-label="3D renderer" data-render-3d="">
+        {[['draft', 'Draft 3D', 'Fast picture'], ['final', 'Final 3D', 'Path traced']].map(([m, label, sub]) => (
+          <button key={m} type="button" aria-pressed={(worldMode || ownWorld) === m} disabled={!!render} onClick={() => setWorldMode(m)}><b>{label}</b><span>{sub}</span></button>
+        ))}
+      </div>
+    </>
+  ) : null;
 
   return (
     <div className={`glm-app${isRender ? ' is-render' : ''}`} data-theme={theme}>
@@ -1553,7 +1593,17 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
                     <kbd>Esc</kbd>
                   </div>
                   <div className="glm-dbody">
-                    {farm ? farm.body : (
+                    {farm ? (
+                      <>
+                        {/* (chatswitch) the farm's own choice (a long render with a host's GPU farm): the 3D renderer above it, as its time and
+                            price follow it */}
+                        {farm.choosing && render3d && <section className="glm-sec">{render3d}</section>}
+                        {farm.body}
+                        {/* (chatswitch) what a press of its Render here answered (the Final cap's question): the Final it asks about is
+                            picked in this pane now, so it is said here too */}
+                        {farm.choosing && notice && <p className={`glm-status glm-sec is-${notice.tone || 'plain'}`} role="status">{notice.text}</p>}
+                      </>
+                    ) : (
                       <section className="glm-sec">
                         <h3 className="glm-h">Frame rate <span>{size.w}×{size.h} · {seconds(duration)}{probing ? ' · measuring' : estimate ? ` · ${estimate.sec < 60 ? `≈ ${Math.max(1, Math.round(estimate.sec))} s` : `≈ ${Math.round(estimate.sec / 60)} min`} here` : ''}</span></h3>
                         <div className="glm-fmts" role="group" aria-label="Frame rate">
@@ -1564,6 +1614,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
                         <label className="glm-toggle"><b>Motion blur</b><small>Smoother fast moves, slower render</small>
                           <input type="checkbox" checked={motionBlur} disabled={!!render} onChange={(e) => setMotionBlur(e.target.checked)} /><u aria-hidden="true" />
                         </label>
+                        {render3d}
                         {render ? (
                           <div className="glm-progress" role="status">
                             <div className="glm-pbar"><span style={{ transform: `scaleX(${render.progress})` }} /></div>
@@ -1587,7 +1638,7 @@ export function PlayerPage({ project: source, assets, theme = 'dark' }) {
               const fr = Math.round(duration * fps);
               const sr = sceneRender(project) || {};
               return (
-                <FarmPane project={project} frames={fr} fps={fps} mode={filmWorldMode(project) || null} spp={Number(sr.spp) || 64} pixels={size.w * size.h} title={title}
+                <FarmPane project={project} frames={fr} fps={fps} mode={filmWorldMode(project) || null} spp={Number(sr.spp) || 32} pixels={size.w * size.h} title={title}
                   full={farmHost.full?.() ?? false} probe={async (t) => (await needPlayer()).captureFrameAtTime(Math.max(0, t))} renderHere={startRender} here={!!render} hereProgress={render?.progress} stopHere={() => abortRef.current?.abort()}
                   exportProject={exportProject} saveFile={saveFile}
                   renderAudio={async () => { const res = await (await needPlayer()).exportVideo('mp4', noop, undefined, fps, null, null, null, { audioOnly: true }); return res?.blob ? new Uint8Array(await res.blob.arrayBuffer()) : null; }}

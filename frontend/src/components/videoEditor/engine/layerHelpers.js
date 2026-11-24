@@ -2,7 +2,7 @@
  * Small layer helpers the render loop shares (PLANS/GREENLIGHT_MOTION_ENGINE_PLAN.md, Stage 9 step 22 — moved verbatim out
  * of Player.jsx with tests/engine-extraction/tools/move_module_decls.py, which the Player imports back): clamp01, a
  * box's bounds, a clip's media time, a layer's content box, which layers a transition can bake, Silhouette Framing's
- * mask, and Echo's pose scratch.
+ * mask, which Layer Masks the layer's own pass draws (a box: shaderBoxMask / needsLayerMaskPass), and Echo's pose scratch.
  */
 import * as THREE from 'three';
 import { isAutoFillEnabled } from '../autoFillLayer';
@@ -10,10 +10,12 @@ import { isBendEnabled } from '../bendLayer';
 import { isBezierWarpEnabled } from '../bezierWarp';
 import { isChromaKeyEnabled } from '../chromaKeyLayer';
 import { isCornerPinEnabled } from '../cornerPinLayer';
+import { isDepthKeyEnabled } from '../depthKeyLayer';
 import { isDepthScanEnabled } from '../depthScanLayer';
 import { isDrosteEnabled } from '../drosteLayer';
 import { isFresnelRimEnabled } from '../fresnelRimLayer';
-import { isLayerMaskEnabled } from '../layerMask';
+import { boxMaskShape, isLayerMaskEnabled } from '../layerMask';
+import { normalizeBlendMode } from '../blendModes';
 import { isMeshWarpEnabled } from '../meshWarp';
 import { isMockupFrameActive } from '../mockupFrame';
 import { isPryzmEnabled } from '../pryzmLayer';
@@ -41,6 +43,7 @@ export function bakeableLayerStack(item, clip, entry) {
   const stack = {
     // Keying reads pixels, not the layer box, so it has no 3D exclusion.
     chromaKey: e(isChromaKeyEnabled(item)),
+    depthKey: e(isDepthKeyEnabled(item) && !baked3d),
     glow: e(isRunningGlowEnabled(item)),
     autoFill: e(isAutoFillEnabled(item) && mt !== 'model3d'),
     // The scan reads the layer BOX (to place the depth map), so a camera-baked
@@ -93,6 +96,33 @@ export function maskSilhouetteFraming(item, clip) {
   const mt = clip?.mediaType;
   return mt !== 'shape' && mt !== 'text' && mt !== 'adjustment'
     && isLayerMaskEnabled(item) && !isCameraBaked3dPlate(clip, item) && hasSilhouetteFraming(item);
+}
+
+// A Layer Mask that is just a box (layerMask.js boxMaskShape) is cut by the clip shader in the layer's own pass
+// (layerMesh.js applyShaderBoxMask → clipShader.js uBoxCrop), with no isolate, coverage plate or mask pass — on a plain
+// picture layer: an image or a video the clip material draws, whose masked pixels nothing else reads. A border or a
+// shadow follows the masked silhouette (maskSilhouetteFraming), an Overlay Effect or a per-layer stage (bakeableLayerStack)
+// reads the masked isolate, a blend mode other than Normal composites it: those keep the mask pass, as everything that is
+// not a box does. → the box's shape, or null. Cached per item and clip (both are replaced, never mutated, on an edit).
+const BOX_ENTRY = Object.freeze({});
+const shaderBoxCache = new WeakMap();
+export function shaderBoxMask(item, clip) {
+  // `globalThis.__veBoxMaskPass = true`: every mask takes the mask pass again (an A/B of the two in one page; tests only)
+  if (!item || typeof item !== 'object' || globalThis.__veBoxMaskPass === true) return null;
+  const hit = shaderBoxCache.get(item);
+  if (hit && hit.clip === clip) return hit.shape;
+  const mt = clip?.mediaType;
+  let shape = (mt === 'image' || mt === 'video') && !clip?.htmlSource ? boxMaskShape(item) : null;
+  if (shape && (hasSilhouetteFraming(item) || bakeableLayerStack(item, clip, BOX_ENTRY)
+    || (Array.isArray(item.effects) && item.effects.some((e) => e && e.enabled !== false))
+    || normalizeBlendMode(item.blendMode) !== 'normal')) shape = null;
+  shaderBoxCache.set(item, { clip, shape });
+  return shape;
+}
+
+/** The layer's mask needs the mask pass (an isolate and a coverage plate): every enabled mask but a box (shaderBoxMask). */
+export function needsLayerMaskPass(item, clip) {
+  return isLayerMaskEnabled(item) && !shaderBoxMask(item, clip);
 }
 
 export function boxAabb(box, insetPct = 0) {

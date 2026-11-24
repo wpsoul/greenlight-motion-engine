@@ -4,7 +4,7 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Backgrounds and custom shaders
+# GLEA — Backgrounds and custom shaders
 
 > Part of the `greenlight-dash` skill. Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts.
 

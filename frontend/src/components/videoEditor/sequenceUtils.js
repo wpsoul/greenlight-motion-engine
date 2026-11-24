@@ -7,7 +7,7 @@ import { getTimelineLayout } from './speedUtils';
 import { remapParentingIds, repairParentingReferences } from './keyframeParenting';
 import { remapTrackMatteIds, repairTrackMatteReferences } from './trackMatte';
 import { remapMotionFollowIds } from './motionTracking';
-import { TransitionType, isContainerClip } from './types';
+import { TransitionType, isContainerClip, isTakeClip } from './types';
 import { CAMERA_CHANNEL_KIND } from './projectCamera';
 
 const EPS = 1e-4;
@@ -43,6 +43,14 @@ function deepClone(value) {
 export function sequenceDepth(clip) {
   if (!isContainerClip(clip)) return 0;
   let maxChild = 0;
+  if (isTakeClip(clip)) {
+    for (const variant of clip.takes || []) {
+      for (const c of variant?.sequence?.clips || []) {
+        maxChild = Math.max(maxChild, sequenceDepth(c));
+      }
+    }
+    return 1 + maxChild;
+  }
   for (const c of clip.sequence.clips || []) {
     maxChild = Math.max(maxChild, sequenceDepth(c));
   }
@@ -50,16 +58,23 @@ export function sequenceDepth(clip) {
 }
 
 // All clip defs reachable from `clips`, including those nested inside containers
-// (sequences and grids). Used wherever the editor needs to touch every media URL
-// (validation, proxy hydration, render warm-up) — a container kind missing here
-// exports blank cells while the preview looks perfect.
+// (sequences, grids, and the ACTIVE variant of a Take). Used wherever the editor
+// needs to touch every media URL a render will draw (render warm-up) — a container
+// kind missing here exports blank cells while the preview looks perfect.
+// A Take's other variants are not walked: they are not in the picture, and warming
+// them made every render (and each video of a batch) load media it never showed.
 export function flattenClips(clips) {
   const out = [];
   const walk = (list) => {
     for (const clip of list || []) {
       if (!clip) continue;
       out.push(clip);
-      if (isContainerClip(clip)) walk(clip.sequence.clips);
+      if (isTakeClip(clip)) {
+        const active = clip.takes.find((v) => v?.id === clip.activeTakeId) || clip.takes[0];
+        walk((clip.sequence || active?.sequence)?.clips);
+      } else if (isContainerClip(clip)) {
+        walk(clip.sequence.clips);
+      }
     }
   };
   walk(clips);
@@ -76,7 +91,23 @@ export function remapSequenceIds(sequence) {
       const newId = createId();
       clipIdMap.set(clip.id, newId);
       clip.id = newId;
-      if (isContainerClip(clip)) remapLevel(clip.sequence);
+      if (isTakeClip(clip)) {
+        const varIdMap = new Map();
+        for (const variant of clip.takes || []) {
+          const newVarId = createId();
+          varIdMap.set(variant.id, newVarId);
+          variant.id = newVarId;
+          if (variant.sequence) remapLevel(variant.sequence);
+        }
+        clip.activeTakeId = varIdMap.get(clip.activeTakeId) || clip.takes?.[0]?.id || null;
+        const active = (clip.takes || []).find((v) => v.id === clip.activeTakeId) || clip.takes?.[0] || null;
+        if (active?.sequence) {
+          clip.sequence = active.sequence;
+          clip.duration = active.duration;
+        }
+      } else if (isContainerClip(clip)) {
+        remapLevel(clip.sequence);
+      }
     }
     // Parenting links other items by id, so the remap has to happen in two passes:
     // mint every new id first, then rewrite the references to point at the copies.

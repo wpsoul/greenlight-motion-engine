@@ -401,9 +401,125 @@ const factory = function (T, P) {
   // Regular preset props that are not the animation itself (caption bar, border,
   // Randomizer, shadow, size): an Advanced copy writes them too, so it looks the same.
   const ANIMATION_KEY = /^(split(In|Out)|textSplit|textHighlight|textCaret)/;
+  // The Classic presets whose bar became a Highlight box say what they do now.
+  const PLATE_DESCRIPTION = {
+    'pill-grow': 'Words rise one by one onto a pill that grows with them; it shrinks away as they leave',
+    'lower-third': 'Each word slides out of its own box while the dark bar grows to take it; the bar shrinks back as the words leave',
+    'drop-bar': 'Words drop in from above behind masks onto a bar that grows with them, then fall away below as it shrinks',
+    'outline-tag': 'Letters slide in while an outline grows around them; it shrinks back as they fade out',
+    'prompt-field': 'An outlined field fades in, the text types into it behind a caret, and the field fades out with it',
+  };
+  const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+  // A Highlight box takes #rrggbb or #rrggbbaa: a caption bar's rgba() becomes the 8-digit form.
+  function boxColor(c) {
+    const s = String(c || '').trim();
+    if (/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(s)) return s.toLowerCase();
+    const m = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i);
+    if (!m) return '#33efab';
+    const hex = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+    const a = m[4] === undefined ? 1 : Number(m[4]);
+    return `#${hex(m[1])}${hex(m[2])}${hex(m[3])}${a < 1 ? hex(a * 255) : ''}`;
+  }
+  // ── Text Randomizer → Font and colour animators ─────────────────────────────
+  // The Randomizer gives every unit of its scope one value t (Distribution, Seed) and
+  // reads everything from it: the size between Min and Max, the weight from the list
+  // by t (n weights = n bands), a colour on the units in the top Coverage % of t (which
+  // colour: a second random), and italic on its own random share. As animators:
+  //   Size      Wiggle, Wiggles / s 0 = one fixed random amount per unit, mapped so the
+  //             Font size runs from Min to Max (seed S)
+  //   Weight    every unit at the lightest weight; Weight <w> = Pick of the top share of
+  //             the same seed S, so the heaviest words are the biggest, as with t
+  //   Colour    Pick Coverage % of seed S; Colour 2, 3 … = the same pick, intersected with
+  //             a band of Range ▸ Random order (seed S2), so each colour takes an equal,
+  //             random part of the coloured units
+  //   Italic    Pick Share % of its own seed (S3), or every unit when Italic ▸ All
+  // Gaussian's clustered t becomes the uniform spread of the same deviation (the middle
+  // 58 % of Min…Max); Wave (1.5 swells across the whole text) and Every Nth have no
+  // animator counterpart and spread at random. `room` = how many animators may be made;
+  // over it, the first colour shares the weight band nearest its coverage (at the
+  // coverage), then the lightest units keep the layer's own weight (no Weight animator).
+  //   seeds = { size, colour, italic } (S, S2, S3; default: the Randomizer seed + 1, 2, 3)
+  function randomizerAnimators(f, { room = T.MAX_ANIMATORS, seeds = {} } = {}) {
+    const basedOn = f.textRandomScope === 'symbols' ? 'charsNoSpace' : f.textRandomScope === 'lines' ? 'lines' : 'words';
+    const seed = clamp(Math.round(numOr(f.textRandomSeed, 0)), 0, 9990);
+    const S = seeds.size ?? seed + 1;
+    const S2 = seeds.colour ?? seed + 2;
+    const S3 = seeds.italic ?? seed + 3;
+    const still = { rate: 0, corr: 0 };
+    const pick = (share, s = S) => ({ ...still, seed: s, pick: Math.round(clamp(share, 0, 100) * 100) / 100 });
+    let size = null;
+    if (f.textRandomSizeEnabled !== false) {
+      let lo = clamp(numOr(f.textRandomSizeMin, 80), 20, 300);
+      let hi = clamp(numOr(f.textRandomSizeMax, 145), 20, 300);
+      if (lo > hi) [lo, hi] = [hi, lo];
+      if (f.textRandomDist === 'gaussian') {
+        // the mean of three uniforms: σ = 1/6, a uniform of that σ spans 0.5 ± 0.289
+        const mid = (lo + hi) / 2, half = (hi - lo) * 0.289;
+        lo = mid - half; hi = mid + half;
+      }
+      // Font size = one end, the amount running to the other: the end farther from 100 % is the
+      // effect's value, so the amounts stay within −100…100 %; the biggest unit = the highest noise.
+      lo = Math.round(lo); hi = Math.round(hi);
+      if (hi - lo >= 1) {
+        const up = Math.abs(hi - 100) >= Math.abs(lo - 100);
+        const v = up ? hi : lo;
+        const a = Math.round((100 * ((up ? lo : hi) - 100)) / (v - 100));
+        size = { name: 'Size', range: { basedOn }, wiggle: { ...still, seed: S, max: up ? 100 : a, min: up ? a : 100 }, effects: [['size', { size: v }]] };
+      } else if (hi !== 100) size = { name: 'Size', range: { basedOn }, effects: [['size', { size: hi }]] };
+    }
+    const weights = f.textRandomWeightEnabled === false ? []
+      : [...new Set((Array.isArray(f.textRandomWeights) ? f.textRandomWeights : []).map(Number).filter((w) => w >= 100 && w <= 900))].sort((a, b) => a - b);
+    let floor = weights.length ? { name: 'Weight', range: { basedOn }, effects: [['weight', { weight: weights[0] }]] } : null;
+    const bands = weights.slice(1).map((w, j) => ({ name: `Weight ${w}`, range: { basedOn }, wiggle: pick((100 * (weights.length - 1 - j)) / weights.length), effects: [['weight', { weight: w }]] }));
+    const colours = f.textRandomColorEnabled === false || f.textClipMask ? []
+      : (Array.isArray(f.textRandomColors) ? f.textRandomColors : []).map(hexOf).filter(Boolean);
+    const coverage = clamp(numOr(f.textRandomCoverage, 35), 0, 100);
+    const K = coverage > 0 ? colours.length : 0;
+    let first = K ? { name: 'Colour', range: { basedOn }, wiggle: pick(coverage), effects: [['fill', { color: colours[0] }]] } : null;
+    const rest = [];
+    for (let j = 1; j < K; j += 1) {
+      rest.push({ name: `Colour ${j + 1}`, range: { basedOn, randomize: true, seed: S2, start: 0, end: Math.round((10000 * (K - j)) / K) / 100, smooth: 0 },
+        wiggle: pick(coverage), effects: [['fill', { color: colours[j] }]] });
+    }
+    let italic = null;
+    if (f.textRandomItalicEnabled) {
+      const all = f.textRandomItalicMode === 'all';
+      const share = clamp(numOr(f.textRandomItalicShare, 30), 0, 100);
+      if (all || share > 0) italic = { name: 'Italic', range: { basedOn }, ...(all ? null : { wiggle: pick(share, S3) }), effects: [['italic', {}]] };
+    }
+    const list = () => [size, floor, ...bands, first, ...rest, italic].filter(Boolean);
+    if (list().length > room && first && bands.length) {
+      // the first colour rides the weight band nearest its coverage (at the coverage)
+      const near = bands.reduce((b, a) => (Math.abs(a.wiggle.pick - coverage) < Math.abs(b.wiggle.pick - coverage) ? a : b));
+      near.wiggle = pick(coverage);
+      near.name = `${near.name} · colour`;
+      near.effects.push(['fill', { color: colours[0] }]);
+      first = null;
+    }
+    if (list().length > room) floor = null;
+    return list();
+  }
+
+  // The five Randomizer presets: the Randomizer's look as Font and colour animators. Seeds
+  // chosen so the sample line "Make every word / look hand picked" gets the sizes, weights,
+  // colours and italics on the words (letters) the Randomizer gave them.
+  const RANDOM_SEEDS = {
+    'random-pop': { size: 4650 },
+    'chaos-letters': { size: 6831, italic: 398 },
+    'random-rise': { size: 9726, colour: 1 },
+    'ransom-note': { size: 4232, colour: 2704, italic: 4672 },
+    'editorial-typer': { size: 5459, italic: 1 },
+  };
+  // Their descriptions where the Randomizer's Wave has become a random spread.
+  const RANDOM_DESCRIPTION = {
+    'random-rise': 'Masked rise; the words take random sizes and weights, some in one of two colours',
+    'editorial-typer': 'Word typing behind a caret, the words set in a mix of weights, sizes and italics',
+  };
+
   // Every regular preset (EditorPanel TEXT_ANIM_PRESETS: { id, name, cat,
   // description, props }) as an Advanced preset, in "Classic · <category>" groups.
-  function classicPresets(list, categories) {
+  //   seeds  the Randomizer presets' seeds by id (RANDOM_SEEDS)
+  function classicPresets(list, categories, seeds = RANDOM_SEEDS) {
     const catName = Object.fromEntries((categories || []).map((c) => [c.id, c.name]));
     const presets = [];
     for (const p of list || []) {
@@ -412,8 +528,47 @@ const factory = function (T, P) {
         id: `classic-${p.id}`, name: p.name, cat: `classic-${p.cat}`, description: p.description,
       });
       if (!preset) continue;
-      const extra = {};
+      let extra = {};
       for (const [k, v] of Object.entries(p.props)) if (!ANIMATION_KEY.test(k)) extra[k] = v;
+      // A caption bar or an outline behind text that animates in is a Highlight box, not the
+      // layer's static bar (video/design.md, Hierarchy): the plate gets its own In & out
+      // animator on the units' clock, so it grows with them and leaves with them. An outline
+      // is the box's border with a fill of no opacity.
+      if (extra.textBgEnabled === true || extra.textBorderEnabled === true) {
+        const first = preset.animators.find((a) => a.range && a.range.animate === 'in') || preset.animators[0];
+        const last = preset.animators.find((a) => a.range && a.range.animate === 'out');
+        const r = (first && first.range) || {};
+        // One animator runs both ways on the words' own turns, and quickly (0.2 s a word): coming in,
+        // the plate is there before its word has landed; going out (turns end at the layer's end),
+        // it goes in the last moments of each word's exit, never before the word.
+        // A bar that only faded in (no slide, no grow) is there whole before the text: every
+        // unit's turn at once, over the bar's own fade.
+        const whole = extra.textBgInType === 'fade';
+        const border = extra.textBorderEnabled === true ? num(extra.textBorderWidth, 2) : 0;
+        const plate = { name: 'Plate',
+          range: { basedOn: r.basedOn || 'words', order: r.order || 'forward', stagger: whole ? 0 : r.stagger ?? 0.06, mask: false, spread: false,
+            drive: 'time', animate: 'inOut',
+            duration: whole ? num(extra.textBgInDuration, 0.35) : Math.min(0.2, r.duration ?? 0.2, (last && last.range.duration) ?? 0.2), curve: 'Ease Out' },
+          effects: [['box', { color: extra.textBgEnabled === true ? boxColor(extra.textBgColor) : '#00000000', behind: 'revealed', shape: 'block',
+            padX: num(extra.textBgPaddingX, 12), padY: num(extra.textBgPaddingY, 4), radius: Math.min(200, num(extra.textBgRadius, 10)),
+            ...(border > 0 ? { border, borderColor: boxColor(extra.textBorderColor) } : null) }]] };
+        preset.animators = [plate, ...preset.animators];
+        // the layer's own bar and border stay off, or two plates would draw
+        extra = Object.fromEntries(Object.entries(extra).filter(([k]) => !/^text(Bg|Border)/.test(k)));
+        extra.textBgEnabled = false; extra.textBorderEnabled = false;
+        if (PLATE_DESCRIPTION[p.id]) preset.description = PLATE_DESCRIPTION[p.id];
+      }
+      // A Randomizer look is animators too (Font size, Font weight, Italic, Fill colour with
+      // crisp picks), ahead of the In / Out ones; the layer's own Randomizer is set off.
+      if (extra.textRandomEnabled === true) {
+        // room for the rest, and for the side Presets ▸ Sides (or Exit) adds to an In or an Out preset
+        const room = T.MAX_ANIMATORS - preset.animators.length - (preset.sides === 'in' || preset.sides === 'out' ? 1 : 0);
+        const style = randomizerAnimators(extra, { room, seeds: seeds[p.id] });
+        preset.animators = [...style, ...preset.animators];
+        extra = Object.fromEntries(Object.entries(extra).filter(([k]) => !/^textRandom/.test(k)));
+        extra.textRandomEnabled = false;
+        if (RANDOM_DESCRIPTION[p.id]) preset.description = RANDOM_DESCRIPTION[p.id];
+      }
       presets.push({ ...preset, classicOf: p.id, ...(Object.keys(extra).length ? { layerProps: extra } : null) });
     }
     // Grouped by the regular catalogue's category order (its list interleaves them).
@@ -428,7 +583,7 @@ const factory = function (T, P) {
     };
   }
 
-  const api = { EASE_NAME, curveOf, fromItem, classicPresets, migrateItem, splitUnitCount, LEGACY_KEY, LEGACY_TRACKS };
+  const api = { EASE_NAME, curveOf, fromItem, classicPresets, randomizerAnimators, migrateItem, splitUnitCount, LEGACY_KEY, LEGACY_TRACKS };
   return api;
 };
 
@@ -438,6 +593,7 @@ export const {
   curveOf,
   fromItem,
   classicPresets,
+  randomizerAnimators,
   migrateItem,
   splitUnitCount,
   LEGACY_KEY,

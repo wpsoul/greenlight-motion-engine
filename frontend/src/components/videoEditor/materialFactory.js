@@ -70,7 +70,7 @@ async function loadNodeModules() {
       import('./compositeNodes.js'), import('./repetileNodes.js'), import('./model3dNodes.js'),
       import('./motionTrailNodes.js'), import('./echoNodes.js'), import('./timeshiftNodes.js'),
       import('./rigDeformNodes.js'),
-      import('./chromaKeyNodes.js'), import('./depthScanNodes.js'),
+      import('./chromaKeyNodes.js'), import('./depthScanNodes.js'), import('./depthKeyNodes.js'),
       import('./silhouetteFramingNodes.js'),
       import('./backdropBlurNodes.js'),
       import('./glassNodes.js'),
@@ -78,10 +78,10 @@ async function loadNodeModules() {
       import('./transitionPackageSdkNodes.js'),
       import('three/tsl'),
     ]).then(([clip, mask, warp, adj, pkg, glow, af, mf, mb, part, grow, comp,
-      rep, m3d, trail, echo, ts, rig, ck, scn, sf, bd, glass, bc, sdkNodes, tsl]) => {
+      rep, m3d, trail, echo, ts, rig, ck, scn, dk, sf, bd, glass, bc, sdkNodes, tsl]) => {
       sdkNodesImpl = sdkNodes;
       tslImpl = tsl;
-      nodeImpl = { clip, mask, warp, adj, pkg, glow, af, mf, mb, part, grow, comp, rep, m3d, trail, echo, ts, rig, ck, scn, sf, bd, glass, bc };
+      nodeImpl = { clip, mask, warp, adj, pkg, glow, af, mf, mb, part, grow, comp, rep, m3d, trail, echo, ts, rig, ck, scn, dk, sf, bd, glass, bc };
     }).catch((err) => {
       nodeLoadPromise = null;
       throw err;
@@ -223,6 +223,11 @@ export const materials = {
     const n = nodes();
     return n ? n.scn.createDepthScanNodeMaterial() : null;
   },
+  /** Depth Matte: AE-style depth keying over the isolate, sampling the depth map / Video Depth. */
+  depthKey: () => {
+    const n = nodes();
+    return n ? n.dk.createDepthKeyNodeMaterial() : null;
+  },
   layerMask: () => {
     const n = nodes();
     return n ? n.mask.createLayerMaskNodeMaterial() : null;
@@ -338,6 +343,10 @@ export const materials = {
   depthStamp: () => {
     const n = nodes();
     return n ? n.comp.createDepthStampNodeMaterial() : null;
+  },
+  footageDepthStamp: () => {
+    const n = nodes();
+    return n ? n.comp.createFootageDepthStampNodeMaterial() : null;
   },
   // (gaps1) a model pass filmed by a world Scene's orthographic camera: its depth as the compositor keeps it. WebGPU only, as the Scene.
   orthoDepth: () => {

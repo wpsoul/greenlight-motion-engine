@@ -9,6 +9,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { createMotionEngine } from '../components/videoEditor/engine/motionEngine';
 import { isWebCodecsSupported } from '../components/videoEditor/videoExporter';
 import { substituteHtmlClips } from '../components/videoEditor/htmlClips';
+import { htmlPageVersions } from './htmlPages';
 
 // (smallfix) A commit that never comes (a page that stopped rendering) does not hold a still forever: past this it goes on.
 const SETTLE_CAP_MS = 5000;
@@ -66,9 +67,10 @@ export const EngineCanvas = forwardRef(function EngineCanvas(props, ref) {
 
   // The app's html clips (a Video Editor project opened in the engine: a review card's source) go in as the editor's
   // Player gets them (htmlClips.js): a baked one plays its bake, and every one draws its page live where the browser
-  // has HTML-in-canvas (htmlLive.js, the desktop app) — handed over as 'html' they were never drawn. The same arrays
-  // come back for a project without html clips.
-  const played = useMemo(() => substituteHtmlClips(channels || [], clips || []), [channels, clips]);
+  // has HTML-in-canvas (htmlLive.js: the desktop app, Chrome 157+) — handed over as 'html' they were never drawn. Outside
+  // the app a clip with no bake is drawn live from the project's own files (htmlPages.js; its version here, so a changed
+  // page reloads) and one with a bake plays it. The same arrays come back for a project without html clips.
+  const played = useMemo(() => substituteHtmlClips(channels || [], clips || [], { shas: htmlPageVersions() }), [channels, clips]);
 
   // the project and options, exactly as the Player received them
   useEffect(() => {

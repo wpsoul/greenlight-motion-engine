@@ -6,11 +6,12 @@
  */
 import { DENOISE_LOOK_DEFAULT } from '../../world3d/render/denoiseLook.js';
 
-/** Trace options a Scene's `rig.render` may leave out, at the defaults its schema gives them (rig3d.js normalizeRigRender; the tracer's own
+/** Trace options a Scene's `rig.render` may leave out, at the defaults its schema gives them (`spp` 32, not 64: on four kinds of
+ *  scene 32 samples flickered no more than 64 and traced 1.55 to 1.93 times faster, html/INTERFACE/final-spp-lab) (rig3d.js normalizeRigRender; the tracer's own
  *  defaults, WorldRenderer's `trace`): a render after the preview, a farm frame after another Scene's, or the preview after a render, must
  *  not keep the other's samples, bounce limits, clamp, denoise or denoise look (WorldRenderer.setTraceOptions merges). */
 export const TRACE_UNSET = Object.freeze({
-  spp: 64, bounces: 8, transparentBounces: 5, glossy: 0.5, clamp: 0, denoise: true,
+  spp: 32, bounces: 8, transparentBounces: 5, glossy: 0.5, clamp: 0, denoise: true,
   diffuseBounces: null, specularBounces: null, transmissionBounces: null, volumeBounces: null,
   denoiseLook: DENOISE_LOOK_DEFAULT, lightPasses: false,
 });
@@ -34,7 +35,7 @@ const FINAL_FRAME_FLOOR_MS = 600000;
 const FINAL_FRAME_FIXED_MS = 300000;
 const FINAL_MS_PER_SAMPLE_PIXEL = 0.0025;
 export function finalFrameBudgetMs(spp, width, height) {
-  const samples = Math.max(1, Number(spp) || 64), pixels = Math.max(1, (Number(width) || 1920) * (Number(height) || 1080));
+  const samples = Math.max(1, Number(spp) || 32), pixels = Math.max(1, (Number(width) || 1920) * (Number(height) || 1080));
   return Math.max(FINAL_FRAME_FLOOR_MS, FINAL_FRAME_FIXED_MS + samples * pixels * FINAL_MS_PER_SAMPLE_PIXEL);
 }
 

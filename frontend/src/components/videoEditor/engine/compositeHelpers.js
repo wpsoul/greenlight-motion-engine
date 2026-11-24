@@ -11,7 +11,7 @@ import { depthScanPhase, getDepthScanEffect, resolveDepthScanParams } from '../d
 import { getFresnelRimEffect, isFresnelRimEnabled, resolveFresnelRimParams } from '../fresnelRimLayer';
 import { glassShapeOf, resolveGlassParams } from '../glassEffect';
 import { applyGsapEasing } from '../gsapTransitions';
-import { resolveModelOverlayFx, isModelFxOverlay, NOT_IN_WORLD_FX_IDS } from '../model3dFxCatalog';
+import { resolveModelOverlayFx, isModelFxOverlay, NOT_IN_WORLD_FX_IDS, NOT_IN_WORLD_LAYER_FX_IDS } from '../model3dFxCatalog';
 import { perfRegistry } from '../perfRegistry.js';
 import { isCameraBaked3dPlate, RIG_MEDIA_TYPE } from '../rig3d';
 import { withRadiusScaleLock } from '../borderKeyframes';
@@ -217,8 +217,11 @@ export const _plateScale = new THREE.Vector3();
  */
 export function resolveModelFx3d(item, kfNow, clipNow, duration, inWorld = false) {
   const out = [];
+  // Depth Scan and Fresnel Rim run only in this pass. In a world Scene the world draws the model, so they are skipped there
+  // (NOT_IN_WORLD_LAYER_FX_IDS), here too: a model the world lets go for a few frames must not flash them on and off.
+  const layerFxHere = (id) => !(inWorld && NOT_IN_WORLD_LAYER_FX_IDS.has(id));
   // Depth Scan on a model slices EXACT depth inside the 3D pass — no depth map.
-  const scan = getDepthScanEffect(item);
+  const scan = layerFxHere('depthScan') ? getDepthScanEffect(item) : null;
   if (scan && scan.enabled !== false) {
     const params = resolveDepthScanParams(item, kfNow);
     const win = effectWindowAt(scan, clipNow, duration);
@@ -233,7 +236,7 @@ export function resolveModelFx3d(item, kfNow, clipNow, duration, inWorld = false
       });
     }
   }
-  if (isFresnelRimEnabled(item, 'model3d')) {
+  if (layerFxHere('fresnelRim') && isFresnelRimEnabled(item, 'model3d')) {
     const win = effectWindowAt(getFresnelRimEffect(item), clipNow, duration);
     if (!win || win.amount > 0) {
       out.push({ id: 'fresnelRim', params: resolveFresnelRimParams(item, kfNow), time: win ? win.time : clipNow });

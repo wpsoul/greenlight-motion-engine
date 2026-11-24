@@ -21,6 +21,7 @@
  */
 import { getTimelineLayout } from '../components/videoEditor/speedUtils';
 import { zipStore } from './reviewNotes';
+import { inlinePageFiles, pagesToFiles } from './htmlPageText';
 
 const clone = (v) => (typeof structuredClone === 'function' ? structuredClone(v) : JSON.parse(JSON.stringify(v)));
 export const EMPTY_TIMING = Object.freeze({ channels: {}, items: {} });
@@ -210,17 +211,37 @@ function folderPathOf(ref) {
  * glvideo.json (what the file is), project.json, assets/<each file>. Stored, not compressed: the files are
  * pictures and sounds, and the project is small. Returns the file's bytes.
  */
-export async function glvideoFile({ title, project, assets }) {
+export async function glvideoFile({ title, project: given, assets }) {
+  // a page the model wrote (an inline data: URL) goes in as a file: GreenLight Dash opens html clips from files
+  const { project, files: written } = pagesToFiles(given);
   const files = [
     { name: 'glvideo.json', data: JSON.stringify({ format: 'glvideo', version: 1, title: title || project?.name || '' }) },
     { name: 'project.json', data: JSON.stringify(project) },
   ];
   const stored = new Set();
-  for (const [ref, src] of Object.entries(assets && typeof assets === 'object' ? assets : {})) {
+  const map = assets && typeof assets === 'object' ? assets : {};
+  // an HTML layer's page goes in with its own files written into it (htmlPageText.js): GreenLight Dash takes over the files
+  // a project names (the page), not the ones a page names by a relative address
+  const pages = new Set();
+  eachClip(project, (clip) => { if (clip?.mediaType === 'html' && typeof clip.url === 'string') pages.add(clip.url); });
+  const dataUrl = async (ref) => {
+    const src = map[ref];
+    if (typeof src !== 'string' || !/^(data|blob):/.test(src)) return null;
+    if (src.startsWith('data:')) return src;
+    const blob = await (await fetch(src)).blob();
+    return new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = () => resolve(null); r.readAsDataURL(blob); });
+  };
+  for (const [ref, src] of Object.entries(map)) {
     const rel = folderPathOf(ref);
     if (!rel || stored.has(rel) || typeof src !== 'string' || !/^(data|blob):/.test(src)) continue;
     stored.add(rel);
-    files.push({ name: `assets/${rel}`, data: new Uint8Array(await (await fetch(src)).arrayBuffer()) });
+    const bytes = new Uint8Array(await (await fetch(src)).arrayBuffer());
+    files.push({ name: `assets/${rel}`, data: pages.has(ref) ? new TextEncoder().encode(await inlinePageFiles(new TextDecoder().decode(bytes), ref, dataUrl)) : bytes });
+  }
+  for (const { rel, text } of written) {
+    if (stored.has(rel)) continue;
+    stored.add(rel);
+    files.push({ name: `assets/${rel}`, data: new TextEncoder().encode(await inlinePageFiles(text, `asset:${rel}`, dataUrl)) });
   }
   return zipStore(files);
 }

@@ -41,7 +41,8 @@ function normalizeApiKeys(value) {
   return value && typeof value === "object" ? value : {};
 }
 
-async function readStoredApiKeys() {
+// Exported for the render farm (components/renderFarm/farmClient.js): its RunPod key travels like every other key.
+export async function readStoredApiKeys() {
   if (typeof window === "undefined") {
     return {};
   }
@@ -76,7 +77,7 @@ if (typeof window !== "undefined") {
   });
 }
 
-async function withRuntimeApiKeyHeaders(headers = {}) {
+export async function withRuntimeApiKeyHeaders(headers = {}) {
   const keys = await readStoredApiKeys();
   const filtered = Object.fromEntries(
     Object.entries(keys).filter(([, value]) => typeof value === "string" && value.trim())
@@ -252,6 +253,27 @@ async function request(path, options = {}, _retries = 0, _opId = null) {
   } finally {
     endCanvasWrite?.();
   }
+}
+
+/**
+ * A script template's declared data source, fetched by the desktop backend (backend/essential_data.py,
+ * PLANS/ESSENTIAL_TEMPLATES.md §13.3): { url, format, settings } → { at, value, bytes, host }. ONE request, never
+ * retried (`request` retries a 502 / 504, and a retry here would fetch the remote again), and none of the stored API
+ * keys go with it. An error carries the route's own `detail` text.
+ */
+export async function fetchEssentialData({ url, format, settings = {} }) {
+  const res = await fetch(`${API}/essential/fetch-data`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-GL-Client-Id": CLIENT_ID },
+    body: JSON.stringify({ url, format, settings }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const error = new Error(extractErrorDetail(err.detail) || `The data could not be fetched (${res.status}).`);
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
 }
 
 export const api = {
@@ -501,7 +523,7 @@ export const api = {
   socialChatLinkSync: () => request(`/social/chat-link/sync`, { method: "POST", body: "{}" }),
   socialChatUnlink: () => request(`/social/chat-link`, { method: "DELETE", body: JSON.stringify({ keep_posts: true }) }),
 
-  // Ads research (PLANS/ADS_RESEARCH_API.md): an Ads frame (data.social.kind "ads") holds ad cards (data.social.kind "ad") as a
+  // Ads research (PLANS/FINISHED/ADS_RESEARCH_API.md): an Ads frame (data.social.kind "ads") holds ad cards (data.social.kind "ad") as a
   // Trends frame holds trend cards. Pulse's Ads section reads every one; a search reads ads without saving anything.
   adsSources: () => request(`/ads/sources`),                         // → { providers: [data keys set, failover order], can: { meta, tiktok } }
   adsSearch: (body) => request(`/ads/search`, { method: "POST", body: JSON.stringify(body) }),   // → { ads, tried, cost_usd }
@@ -1182,6 +1204,21 @@ export const api = {
     request(`/asset-packs/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
   removeAssetPack: (packId) =>
     request(`/asset-packs/${encodeURIComponent(packId)}`, { method: "DELETE" }),
+  listRemoteAssets: ({ category = "", q = "" } = {}) => {
+    const qs = new URLSearchParams();
+    if (category && category !== "all") qs.set("category", category);
+    if (q) qs.set("q", q);
+    const tail = qs.toString();
+    return request(`/remote-assets${tail ? `?${tail}` : ""}`);
+  },
+  refreshRemoteAssets: () =>
+    request("/remote-assets/refresh", { method: "POST" }),
+  downloadRemoteAsset: (assetId) =>
+    request(`/remote-assets/${encodeURIComponent(assetId)}/download`, { method: "POST" }),
+  deleteRemoteAssetCache: (assetId) =>
+    request(`/remote-assets/${encodeURIComponent(assetId)}/cache`, { method: "DELETE" }),
+  getRemoteAssetFileUrl: (assetId, auto = false) =>
+    `${API}/remote-assets/${encodeURIComponent(assetId)}/file${auto ? "?auto=1" : ""}`,
   getMediaBoardDownloadUrl: (boardId) => `${API}/media/admin/boards/${encodeURIComponent(boardId)}/download`,
   getExportBoardUrl: (boardId) => `${API}/moodboards/${encodeURIComponent(boardId)}/export`,
   importBoardArchive: async (boardId, file, mode = "replace") => {
@@ -1430,6 +1467,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  // (lipctl) A voice's mouth shapes from its file alone ({ url }): the route answers the track and writes no project
+  makeLipsync: (body, signal) =>
+    request("/world3d/lipsync", { method: "POST", body: JSON.stringify(body), signal }),
   activateVideoProject: (mbId, projectId) =>
     request(`/moodboards/${mbId}/video-projects/${projectId}/activate`, {
       method: "POST",
@@ -1557,6 +1597,32 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || "Project import failed");
+    }
+    return res.json();
+  },
+  getVideoProjectOtioExportUrl: (mbId, projectId) =>
+    `${API}/moodboards/${encodeURIComponent(mbId)}/video-projects/${encodeURIComponent(projectId)}/export-otio`,
+  exportVideoProjectOtio: async (mbId, projectId) => {
+    const res = await fetch(`${API}/moodboards/${encodeURIComponent(mbId)}/video-projects/${encodeURIComponent(projectId)}/export-otio`, {
+      headers: await withRuntimeApiKeyHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "OTIO export failed");
+    }
+    return res.text();
+  },
+  importVideoProjectOtio: async (mbId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API}/moodboards/${encodeURIComponent(mbId)}/video-projects/import-otio`, {
+      method: "POST",
+      body: form,
+      headers: await withRuntimeApiKeyHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "OTIO import failed");
     }
     return res.json();
   },

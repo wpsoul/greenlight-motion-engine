@@ -15,7 +15,11 @@ import { applyAutoFillUniforms, autoFillBakeParams, createAutoFillMaterial, getA
 import { getAutofillField } from '../autofillField';
 import { hasBorderKeyframes, withBorderKeyframes } from '../borderKeyframes';
 import { applyChromaKeyUniforms, createChromaKeyMaterials, isChromaKeyEnabled, resolveChromaKeyParams } from '../chromaKeyLayer';
-import { applyDepthScanUniforms, createDepthScanMaterial, depthScanPhase, depthScanSource, getDepthScanEffect, resolveDepthScanParams } from '../depthScanLayer';
+import { applyDepthScanUniforms, createDepthScanMaterial, depthScanPhase, getDepthScanEffect, resolveDepthScanParams } from '../depthScanLayer';
+import { applyDepthKeyUniforms, computeFollowLayerDepth, createDepthKeyMaterial, getDepthKeyEffect, resolveDepthKeyParams } from '../depthKeyLayer';
+import { buildParentIndex, resolveItemPrs } from '../keyframeParenting';
+import { sceneObjectPointPx, sceneTargetId } from '../cameraTargets';
+import { resolveLayerDepthSource } from './depthSource';
 import { fresnelRimFxModule, fresnelRimPhase, getFresnelRimEffect, resolveFresnelRimParams } from '../fresnelRimLayer';
 import { getItemKeyframeValues, integratePathRate } from '../gsapTransitions';
 import { materials as makeMaterial, swapWarpMaterialForBackend } from '../materialFactory';
@@ -124,7 +128,7 @@ export function renderLayerDepthScan(engine, srcTarget, scan, layerMesh, chCam, 
   // No map yet (the panel is still offering "Analyse depth"): render nothing
   // rather than a slice through an empty texture, which would paint the whole
   // layer at depth 0.
-  const source = depthScanSource(item);
+  const source = resolveLayerDepthSource(item, entry, t);
   if (!source) return srcTarget;
   const box = computeLayerBox(layerMesh, chCam || engine.camera, srcTarget.width, srcTarget.height);
   if (!box) return srcTarget;
@@ -189,6 +193,111 @@ export function renderLayerDepthScan(engine, srcTarget, scan, layerMesh, chCam, 
   });
   rig.material.uniforms.uTexture.value = plate.texture;
   const dest = ensurePassTargetInEngine(engine, `scn:${item.id}`, plate.width, plate.height, false);
+  if (!dest) return srcTarget;
+  renderer.setRenderTarget(dest);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear(true, true, true);
+  renderer.render(rig.scene, orthoCamera);
+  return dest;
+}
+
+const _dkViewPos = new THREE.Vector3();
+
+function resolveFollowLayerDistancePx(engine, env, followLayerId, chCam, t) {
+  if (!followLayerId || !env?.channels || !chCam) return null;
+  const { w: W, h: H } = engine.videoSize || { w: 1920, h: 1080 };
+  const layoutFor = (ch) => env.layoutMap?.get(ch.id);
+  let worldPos = null;
+  const sid = sceneTargetId(followLayerId);
+  if (sid) {
+    const p = sceneObjectPointPx(env.channels, env.clipsMap, layoutFor, t, sid);
+    if (p) worldPos = _dkViewPos.set(p.x, p.y, p.z);
+  } else {
+    const idx = env.parentIndex || buildParentIndex(env.channels, layoutFor);
+    const prs = resolveItemPrs(idx, followLayerId, t, {
+      W,
+      H,
+      evalKeyframes: (it, prog) => getItemKeyframeValues(it, prog),
+    });
+    if (prs) worldPos = _dkViewPos.set(prs.px, prs.py, prs.pz);
+  }
+  if (!worldPos) return null;
+  chCam.updateMatrixWorld();
+  const zView = -worldPos.applyMatrix4(chCam.matrixWorldInverse).z;
+  return Number.isFinite(zView) && zView > 1 ? zView : null;
+}
+
+export function renderLayerDepthKey(engine, env, srcTarget, keyEntry, layerMesh, chCam, t, flipPlate = false) {
+  const renderer = engine.renderer;
+  const orthoCamera = engine.orthoCamera;
+  if (!renderer || !orthoCamera || !layerMesh || !srcTarget || !keyEntry?.item || !keyEntry?.entry) return srcTarget;
+  const { item, entry } = keyEntry;
+  const source = resolveLayerDepthSource(item, entry, t);
+  if (!source) return srcTarget;
+  const box = computeLayerBox(layerMesh, chCam || engine.camera, srcTarget.width, srcTarget.height);
+  if (!box) return srcTarget;
+
+  const duration = entry.endTime - entry.startTime;
+  const progress = duration > 0 ? Math.max(0, Math.min(1, (t - entry.startTime) / duration)) : 0;
+  const kf = getItemKeyframeValues(item, progress);
+  const params = resolveDepthKeyParams(item, kf);
+  const clipNow = Math.max(0, t - entry.startTime);
+  const dkWin = effectWindowAt(getDepthKeyEffect(item), clipNow, duration);
+  if (dkWin && dkWin.amount <= 0) return srcTarget;
+  if (!(params.dkMix > 0.01)) return srcTarget;
+
+  let resolvedDepthCut = null;
+  if (params.dkFollowLayerId) {
+    const cam = chCam || engine.posedCamera || engine.camera;
+    const distPx = resolveFollowLayerDistancePx(engine, env, params.dkFollowLayerId, cam, t);
+    if (distPx != null) {
+      resolvedDepthCut = computeFollowLayerDepth({
+        viewDistancePx: distPx,
+        depthNearM: source.nearM,
+        depthFarM: source.farM,
+        followOffset: params.dkFollowOffset,
+      });
+    }
+  }
+
+  // Normalize a camera-axis isolate into WebGL storage layout first — exact
+  // two-hop invariant matching renderLayerDepthScan for WebGPU parity.
+  let plate = srcTarget;
+  if (flipPlate) {
+    const norm = ensurePassTargetInEngine(engine, `dk:norm:${srcTarget.width}x${srcTarget.height}`, srcTarget.width, srcTarget.height, false);
+    const bScene = engine.blitScene;
+    const bMaterial = engine.blitMaterial;
+    if (norm && bScene && bMaterial) {
+      bMaterial.uniforms.uTexture.value = srcTarget.texture;
+      renderer.setRenderTarget(norm);
+      renderer.setClearColor(0x000000, 0);
+      renderer.clear(true, true, true);
+      renderer.render(bScene, orthoCamera);
+      plate = norm;
+    }
+  }
+
+  let rig = engine.depthKeyRig;
+  if (!rig) {
+    const material = makeMaterial.depthKey() ?? createDepthKeyMaterial();
+    const scene = new THREE.Scene();
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    rig = { scene, mesh, material };
+    engine.depthKeyRig = rig;
+  }
+  applyDepthKeyUniforms(rig.material, params, {
+    width: plate.width,
+    height: plate.height,
+    box,
+    depthTexture: source.texture,
+    depthSize: source.size,
+    invert: source.invert,
+    resolvedDepthCut,
+  });
+  rig.material.uniforms.uTexture.value = plate.texture;
+  const dest = ensurePassTargetInEngine(engine, `dk:${item.id}`, plate.width, plate.height, false);
   if (!dest) return srcTarget;
   renderer.setRenderTarget(dest);
   renderer.setClearColor(0x000000, 0);
@@ -347,7 +456,7 @@ export function renderLayerFresnelRim(engine, srcTarget, fr, layerMesh, chCam, t
   const orthoCamera = engine.orthoCamera;
   if (!renderer || !orthoCamera || !layerMesh || !srcTarget || !fr?.item || !fr?.entry) return srcTarget;
   const { item, entry } = fr;
-  const source = depthScanSource(item);
+  const source = resolveLayerDepthSource(item, entry, t);
   if (!source) return srcTarget;
   const fxm = fresnelRimFxModule(() => {
     if (!engine.exporting && !engine.isPlaying) engine.renderFrame?.();

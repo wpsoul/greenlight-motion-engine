@@ -10,6 +10,11 @@ import { normalizeRig, resolveEnvUrl, vectorFromSpherical, lightTarget, areaLumi
 
 export const WORLD_UNITS = 0.001;
 
+// The neutral grid tile laid on floors and the backdrop in a Blocking prerender: 256 px, #c9ced6 with #b3bac4 lines every 64 px and a
+// 2 px #8c96a4 edge. A PNG, never an SVG: the world decodes maps with createImageBitmap (world3d/host.js), which refuses an SVG, and
+// the whole Scene then failed to build, so every Blocking @video1 came out as the empty background (16.6.35).
+export const BLOCKING_GRID_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAD90lEQVR42u3VsQ3EIBBFQfoXMRXQAZljEicOXY+3C4vdkShg7v4+ufUxPa/sa/4CTwDzft5D37r2uXj+358A+AUgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BOCB+ATggfgE4IH4BOCB+ATggfgE4IH4BOCB+ATggfgE4IH4BOCB+ATggfgE4IH4BOCB+ATggfgHw8wuAn18A/PwC4OcXAD+/APj5BcDPLwB+fgHw8wuAn18A/PwC4BeAAPgFYAB+ARiAXwAG4BeAAfgFYAB+ARiAXwAG4BeAAfjzBhA/w/MKPl8Afl8AAfALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAHxC8AB8QvAAfELwAHxC8AB8QvAAfELwAHxC8AB8QvAAfELwAHxC8AB8QvAAfELwAHxC8AB8QuAn18A/PwC4OcXAD+/APj5BcDPLwB+fgHw8wuAn18A/PwC4OcXAL8ABMAvAAPwC8AA/AIwAL8ADMAvAAPwC8AA/AIwAL8ADMAvAAPwC8AA/NkCiJ/heQWfLwC/L4AA+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AVgAH4BGIBfAAbgF4AB+AXggPgF4ID4BeCA+AXggPgF4ID4BeCA+AXggPgF4ID4BeCA+AXggPgF4ID4BeCA+AXggPgF4ID4BcDPLwB+fgHw8wuAn18A/PwC4OcXAD+/APj5BcDPLwB+fgHw8wuAXwAC4BeAAfgFYAB+ARiAXwAG4BeAAfgFYAB+ARiAXwAG4BeAAfgFYAD+bAHEz/C8gs8XgN8XQAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AjAAvwAMwC8AA/ALwAD8AnBA/AJwQPwCcED8AnBA/AJwQPwCcED8AnBA/AJwQPwCcED8AnBA/AJwQPwCcED8AnBA/AJwQPwC4OcXAD+/APj5BcDPLwB+fgHw8wuAn18A/PwC4OcXAD+/APj5BcAvAAHwC8AA/AIwAL8ADMAvAAPwC8AA/AIwAL8ADMAvAAPwC8AA/AIwAH8a/wfyYyewQHcNAwAAAABJRU5ErkJggg==';
+
 const scaled = (p) => [p.x * WORLD_UNITS, p.y * WORLD_UNITS, p.z * WORLD_UNITS];
 
 // How much of the distance to the subject a lamp's radius is at softness 1: what the Rig's soft shadow filter opens by (rigSoftShadows.lightSpread).
@@ -165,7 +170,7 @@ export function worldSceneFromRig(rawRig, { W, H, models = [], materials = {}, b
   // adds an Ambient's intensity × colour as irradiance (a diffuse surface returns albedo × intensity / π), and a flat world of radiance L
   // gives albedo × L, so L = intensity / π. Every such light counts, on, off or at 0, so a key on one never makes the world build again.
   const ownStrength = Number.isFinite(own?.intensity);
-  const flat = !env.hdri && !env.flat && !ownStrength && rig.lights.some(isAmbient);
+  const flat = !env.hdri && !env.sky && !env.flat && !ownStrength && rig.lights.some(isAmbient);
   if (flat) { env.flat = [1, 1, 1]; env.intensity = Math.round((ambient / Math.PI) * 1e6) / 1e6; }
   // (ownercalls) the Ambients' and Hemispheres' colours, as they rest and as keys move them; a scene with its own environment strength only
   // from where the Rig rests (that strength takes their place at rest)
@@ -173,8 +178,38 @@ export function worldSceneFromRig(rawRig, { W, H, models = [], materials = {}, b
   if (tint) env.ambientTint = tint;
   // What an agent built: world3d objects, materials and sims, in world units, living on the Scene.
   const built = rawRig?.scene && typeof rawRig.scene === 'object' ? rawRig.scene : {};
+  const prerenderLook = rawRig?.prerenderLook;
+  const isClayOrBlocking = prerenderLook === 'clay' || prerenderLook === 'blocking';
+  const muteBlocking = rawRig?.muteBlocking === true && !prerenderLook;
   const objects = [], mats = { ...(built.materials || {}), ...materials };
-  if (backdrop) {
+  if (isClayOrBlocking) {
+    for (const key of Object.keys(mats)) {
+      if (key === 'backdrop') continue;
+      const orig = mats[key];
+      if (orig?.pane === true) {
+        mats[key] = { pane: true };
+      } else if (Number(orig?.transmission) > 0.2 || (Number.isFinite(orig?.alpha) && orig.alpha < 0.85)) {
+        mats[key] = { base: '#d5dbe3', roughness: 0.2, metalness: 0, alpha: 0.22 };
+      } else if (prerenderLook === 'blocking' && /floor|ground|terrain|plane|stage|surface/i.test(key)) {
+        mats[key] = { base: '#cfd4dc', roughness: 0.92, metalness: 0, uvScale: [8, 8], maps: { base: BLOCKING_GRID_DATA_URL } };
+      } else {
+        mats[key] = { base: '#c4c8cf', roughness: 0.86, metalness: 0 };
+      }
+    }
+    if (typeof env.background === 'string' && env.background.startsWith('#')) {
+      env.background = '#9aa3b0';
+    }
+  }
+  if (muteBlocking) {
+    // Keep world background transparent when blocking 3D geometry is muted so the placed
+    // AI video plate underneath shows through cleanly while 3D Text & composites render on top.
+    env.background = 'none';
+    delete env.opaque;
+    delete env.sky;
+    delete env.view;
+  }
+  const backdropAllowed = backdrop && (!muteBlocking || rig.cyclorama?.material?.mode === 'shadowCatcher');
+  if (backdropAllowed) {
     const m = rig.cyclorama.material || {};
     // One-sided, and casting nothing unless asked. Back-face culling is what lets the camera stand outside a room, and a set
     // shadowing itself is acne with no upside (model3dLayer.js, syncCyclorama).
@@ -190,17 +225,27 @@ export function worldSceneFromRig(rawRig, { W, H, models = [], materials = {}, b
     // colour, or in the footage's floor laid on it (`imageUrl`, uvs from cycloramaArrays), so their bounce takes the real floor's colour.
     const lit = m.mode === 'shadowCatcher' && m.light > 0;
     if (lit && m.imageUrl) mats.backdrop.maps = { base: m.imageUrl };
+    if (prerenderLook === 'blocking') {
+      mats.backdrop = { base: '#cfd4dc', roughness: 0.92, metalness: 0, uvScale: [12, 12], maps: { base: BLOCKING_GRID_DATA_URL } };
+    } else if (prerenderLook === 'clay') {
+      mats.backdrop = { base: '#bcc0c7', roughness: 0.9, metalness: 0 };
+    }
     const c = rig.cyclorama;
+    const needsUv = lit || prerenderLook === 'blocking';
+    const isCatcher = m.mode === 'shadowCatcher' && prerenderLook !== 'blocking';
     // `rev` is what the backdrop's mesh is made of. Its scale is not: the mesh is built at scale 1 and scaled by its pose (cycloramaArrays'
     // matrix, posed every frame), so a new scale moves it in place, as a key on it does, and does not rebuild the world.
-    objects.push({ id: 'backdrop', name: 'Backdrop', baked: 'backdrop', material: 'backdrop', rev: [c.shape, c.width, c.height, c.depth, c.curve, H, ...(lit ? ['uv'] : [])].join(), ...(m.mode === 'shadowCatcher' ? { catcher: { tint: m.shadowColor || '#000000', strength: m.opacity ?? 1, ...(lit ? { light: m.light } : {}) } } : {}), castShadow: m.castShadow === true, receiveShadow: m.receiveShadow !== false });
+    objects.push({ id: 'backdrop', name: 'Backdrop', baked: 'backdrop', material: 'backdrop', rev: [c.shape, c.width, c.height, c.depth, c.curve, H, ...(needsUv ? ['uv'] : [])].join(), ...(isCatcher ? { catcher: { tint: m.shadowColor || '#000000', strength: m.opacity ?? 1, ...(lit ? { light: m.light } : {}) } } : {}), castShadow: m.castShadow === true, receiveShadow: m.receiveShadow !== false });
   }
   for (const m of models) {
     const rigid = m.rigid ? { rigid: m.rigid } : {};
     if (m.splat) objects.push({ id: m.id, name: m.name, splat: m.splat, ...rigid });
-    else objects.push(m.url ? { id: m.id, name: m.name, model: m.url, ...rigid, ...(m.skeleton ? { skeleton: m.skeleton } : {}) } : { id: m.id, name: m.name, baked: m.baked, material: m.material, rev: m.rev, ...rigid });
+    else objects.push(m.url ? { id: m.id, name: m.name, model: m.url, ...rigid, ...(m.skeleton ? { skeleton: m.skeleton } : {}), ...(m.skinning ? { skinning: m.skinning } : {}) } : { id: m.id, name: m.name, baked: m.baked, material: m.material, rev: m.rev, ...rigid });
   }
-  if (Array.isArray(built.objects)) objects.push(...built.objects);
+  if (Array.isArray(built.objects)) {
+    const builtObjs = muteBlocking ? built.objects.filter((o) => o?.aiRole === 'composite') : built.objects;
+    objects.push(...builtObjs);
+  }
   return {
     version: 1, name: 'Scene', duration, fps, size: [W, H],
     camera: built.camera || { at: [0, 0, 2], target: [0, 0, 0], fov: 28 },
@@ -240,7 +285,7 @@ export function worldLiveValues(scene) {
   return {
     lights: scene.lights,
     // (ownercalls) the Ambients' and Hemispheres' colours: the environment's tint (world3dScene ambientTint), none when every one is white
-    env: { intensity: scene.env.intensity, rotation: scene.env.rotation, ...(scene.env.ambientTint ? { ambientTint: scene.env.ambientTint } : {}) },
+    env: { intensity: scene.env.intensity, rotation: scene.env.rotation, ...(scene.env.ambientTint ? { ambientTint: scene.env.ambientTint } : {}), ...(scene.env.sky ? { sky: scene.env.sky } : {}) },
     // (ownercalls) and the backdrop's opacity: its alpha, at rest and keyed
     materials: paint ? { [backdrop.material]: { base: paint.base, ...(paint.alpha < 1 ? { alpha: paint.alpha } : {}) } } : {},
     catchers: backdrop?.catcher ? { [backdrop.id]: backdrop.catcher } : {},

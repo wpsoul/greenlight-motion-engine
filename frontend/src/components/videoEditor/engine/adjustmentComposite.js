@@ -23,10 +23,13 @@ import { selectedBackend } from '../videoRenderer';
 import { cameraForChannel } from './camera';
 import { _dofView, _dofWorld, getChannelsBottomToTop, isUprightIsolatePlate, orderChannelsForComposite, resumeChannelBlend, suspendChannelBlend } from './compositeHelpers';
 import { applyAdjustmentMask as applyAdjustmentMaskInEngine, applyShaderBlend as applyShaderBlendInEngine, ensurePictureRefPlate as ensurePictureRefPlateInEngine } from './compositeOps';
+import { resolveLayerDepthSource } from './depthSource';
+import { hasDepthSource, resolveDepthMapParams } from '../depthMapEffect';
+import { setFxBoxUniforms } from '../homography';
 import { runEffectChain as runEffectChainInEngine, runLayerOverlayEffects as runLayerOverlayEffectsInEngine } from './effectChain';
 import { seatMockupLayer as seatMockupLayerInEngine } from './gridMockup';
 import { maskSilhouetteFraming } from './layerHelpers';
-import { applyChromaKey as applyChromaKeyInEngine, applySilhouetteFraming as applySilhouetteFramingInEngine, plateToCameraAxis as plateToCameraAxisInEngine, renderLayerAutoFill as renderLayerAutoFillInEngine, renderLayerDepthScan as renderLayerDepthScanInEngine, renderLayerFresnelRim as renderLayerFresnelRimInEngine } from './layerPasses';
+import { applyChromaKey as applyChromaKeyInEngine, applySilhouetteFraming as applySilhouetteFramingInEngine, plateToCameraAxis as plateToCameraAxisInEngine, renderLayerAutoFill as renderLayerAutoFillInEngine, renderLayerDepthKey as renderLayerDepthKeyInEngine, renderLayerDepthScan as renderLayerDepthScanInEngine, renderLayerFresnelRim as renderLayerFresnelRimInEngine } from './layerPasses';
 import { applyBackdropBlur as applyBackdropBlurInEngine, applyGlass as applyGlassInEngine, applyLayerMask as applyLayerMaskInEngine, renderLayerRig as renderLayerRigInEngine, runLayerGeometryStages as runLayerGeometryStagesInEngine } from './layerStages';
 import { computeLayerBox } from './layerWarps';
 import { applyMeshTransform, resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
@@ -358,6 +361,40 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     renderer.setRenderTarget(target);
     renderer.render(depthStampScene, orthoCamera);
   };
+  const hasFootageDepthStamp = (channel) => {
+    const it = engine.layerItems.get(channel.id);
+    return !!it && resolveDepthMapParams(it).dmWrite3dDepth === 1 && hasDepthSource(it);
+  };
+  const stampFootageDepth = (channel, cs, target, colorTex = null) => {
+    const fScene = engine.footageDepthStampScene;
+    const fMat = engine.footageDepthStampMaterial;
+    const it = engine.layerItems.get(channel.id);
+    if (!depth3d || !fScene || !fMat || !it || resolveDepthMapParams(it).dmWrite3dDepth !== 1) return;
+    const layout = env.layoutMap?.get(channel.id);
+    const entry = layout ? layout[resolveActiveIndex(layout, t)] : null;
+    if (!entry) return;
+    const depthSrc = resolveLayerDepthSource(it, entry, t);
+    if (!depthSrc?.texture) return;
+    const mesh = cs?.currMesh?.visible ? cs.currMesh : cs?.prevMesh;
+    if (!mesh) return;
+    const chCam = cameraForChannel(channel, engine.posedCamera, camera);
+    const box = computeLayerBox(mesh, chCam, target.width, target.height);
+    if (!box) return;
+    const u = fMat.uniforms;
+    const dm = resolveDepthMapParams(it);
+    u.uDepth.value = depthSrc.texture;
+    u.uColor.value = colorTex || null;
+    u.uHasColor.value = colorTex ? 1 : 0;
+    u.uResolution.value.set(target.width, target.height);
+    setFxBoxUniforms(u, box);
+    u.uInvert.value = depthSrc.invert ? 1 : 0;
+    u.uDepthNearM.value = depthSrc.nearM ?? dm.dmDepthNear;
+    u.uDepthFarM.value = depthSrc.farM ?? dm.dmDepthFar;
+    u.uCamNear.value = camera?.near || 1;
+    u.uCamFar.value = camera?.far || 100000;
+    renderer.setRenderTarget(target);
+    renderer.render(fScene, orthoCamera);
+  };
   // Draw an isolate with real per-pixel depth: colour and depth are tested and
   // written in one fragment pass, so two crossing surfaces alternate which one is
   // in front across the overlap instead of one flat quad winning everywhere.
@@ -569,7 +606,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     || engine.repetileLayers.get(channelId) || engine.regionDistortLayers.get(channelId)
     || engine.bendLayers.get(channelId) || engine.cornerPinLayers.get(channelId)
     || engine.drosteLayers.get(channelId) || engine.pryzmLayers.get(channelId)
-    || engine.chromaKeyLayers.get(channelId) || engine.depthScanLayers.get(channelId)
+    || engine.chromaKeyLayers.get(channelId) || engine.depthKeyLayers.get(channelId) || engine.depthScanLayers.get(channelId)
     || engine.frRimLayers.get(channelId)
     || engine.meshWarpLayers.get(channelId) || engine.bezierWarpLayers.get(channelId)
     || engine.mockupFrameLayers.get(channelId)
@@ -612,6 +649,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     const mockupFrame = engine.mockupFrameLayers.get(channel.id) || null;
     const layerMask = engine.layerMaskLayers.get(channel.id) || null;
     const chromaKey = engine.chromaKeyLayers.get(channel.id) || null;
+    const depthKey = engine.depthKeyLayers.get(channel.id) || null;
     const depthScan = engine.depthScanLayers.get(channel.id) || null;
     const frRim = engine.frRimLayers.get(channel.id) || null;
     const defocused = coc >= 0.25;
@@ -665,6 +703,23 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     if (layerMask) {
       const lmMesh = cs.currMesh?.visible ? cs.currMesh : (cs.prevMesh?.visible ? cs.prevMesh : null);
       if (lmMesh && applyLayerMaskInEngine(engine, rt.c, layerMask, lmMesh, chCam, t, ss, rtcCameraAxis)) rtcCameraAxis = false;
+    }
+
+    // AE Depth Matte cuts by foreground/background/band depth and copies back into
+    // rt.c with identity layout so Silhouette Framing, Rig, Auto Fill and Overlay Fx matte all respect it.
+    if (depthKey) {
+      const dkMesh = cs.currMesh?.visible ? cs.currMesh : (cs.prevMesh?.visible ? cs.prevMesh : null);
+      if (dkMesh) {
+        const keyed = renderLayerDepthKeyInEngine(engine, env, rt.c, depthKey, dkMesh, chCam, t, rtcCameraAxis);
+        if (keyed && keyed !== rt.c && engine.seqPlateCopyScene && engine.seqPlateCopyMaterial) {
+          engine.seqPlateCopyMaterial.uniforms.uTexture.value = keyed.texture;
+          renderer.setRenderTarget(rt.c);
+          renderer.setClearColor(0x000000, 0);
+          renderer.clear(true, true, true);
+          renderer.render(engine.seqPlateCopyScene, orthoCamera);
+          rtcCameraAxis = false;
+        }
+      }
     }
 
     // Silhouette framing: the keyed layer's border + shadows, drawn from the
@@ -991,7 +1046,8 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
     if (!ch.cameraLocked || adjById.has(ch.id)) break;
     lockedLead.add(ch);
   }
-  const deferLead = depth3d && lockedLead.size > 0 && lockedLead.size < compositeOrder.length
+  const leadHasFootageDepth = [...lockedLead].some(hasFootageDepthStamp);
+  const deferLead = depth3d && !leadHasFootageDepth && lockedLead.size > 0 && lockedLead.size < compositeOrder.length
     && !!engine.backdropUnderScene && !!engine.seqPlateCopyScene
     && compositeOrder.every((ch) => lockedLead.has(ch) || (!adjById.has(ch.id)
       && normalizeBlendMode(engine.layerItems.get(ch.id)?.blendMode) === 'normal'
@@ -1184,6 +1240,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
       const mockupFrame = engine.mockupFrameLayers.get(channel.id) || null;
       const layerMask = engine.layerMaskLayers.get(channel.id) || null;
       const chromaKey = engine.chromaKeyLayers.get(channel.id) || null;
+      const depthKey = engine.depthKeyLayers.get(channel.id) || null;
       const depthScan = engine.depthScanLayers.get(channel.id) || null;
       const frRim = engine.frRimLayers.get(channel.id) || null;
       const layerItem = engine.layerItems.get(channel.id) || null;
@@ -1205,7 +1262,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
       const activeMatte = matte && matte.sourceChannelId ? matte : null;
       const coc = cocForChannel(channel, cs, chCam);
       const defocused = coc >= 0.25;
-      if (!defocused && !glow && !fx && !mblur && !motionTrail && !activeMatte && !autoFill && !rigFx && !repetile && !regionDistort && !bend && !meshWarp && !bezierWarp && !cornerPin && !droste && !pryzm && !mockupFrame && !layerMask && !chromaKey && !depthScan && !frRim && !shaderBlend) {
+      if (!defocused && !glow && !fx && !mblur && !motionTrail && !activeMatte && !autoFill && !rigFx && !repetile && !regionDistort && !bend && !meshWarp && !bezierWarp && !cornerPin && !droste && !pryzm && !mockupFrame && !layerMask && !chromaKey && !depthKey && !depthScan && !frRim && !shaderBlend) {
         // Exact bypass: DOF off, zero aperture/blur, no Running Glow, no layer
         // effects, no Motion Blur, no mask — in-focus plain layers retain the
         // original direct render path byte-for-byte.
@@ -1266,12 +1323,13 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
           renderer.setRenderTarget(read);
           renderer.render(cs.rig, chCam);
         }
+        stampFootageDepth(channel, cs, read, null);
       } else {
         // The layer's own surface depth, captured from the untouched geometry
         // before any effect reshapes it. Only in a 3D frame, and never for a
         // camera-baked pass — that one carries its own depth already, or (a
         // shadow-only backdrop) deliberately none.
-        const ownDepth = depth3d && !isLockedFlat(channel) && !engine.modelDepthTex.has(channel.id) && !isBakedPass(channel) && !isParticlePlate(channel)
+        const ownDepth = depth3d && !hasFootageDepthStamp(channel) && !isLockedFlat(channel) && !engine.modelDepthTex.has(channel.id) && !isBakedPass(channel) && !isParticlePlate(channel)
           ? layerDepthPass(cs, chCam)
           : null;
         const ownFallback = ownDepth
@@ -1360,6 +1418,7 @@ export function renderAdjustmentComposite(engine, env, adjustments) {
             // Fallback for a context that could not create the GLSL3 depth-colour
             // pass: preserve the older colour-then-stamp behavior.
             stampModelDepth(channel, read);
+            stampFootageDepth(channel, cs, read, out.texture);
           }
         }
         // The flatten pass below shares this material and always wants plain over.

@@ -622,3 +622,155 @@ export function ccWheelBackground(size) {
   x.putImageData(im, 0, 0);
   return c;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Track 6.5: Pre-Tonemap Linear HDR / EV Stops Scopes (-4 to +6 EV)
+   ══════════════════════════════════════════════════════════════════════════ */
+export const HDR_MID_GREY = 0.18;
+export const HDR_MIN_STOP = -4;
+export const HDR_MAX_STOP = 6;
+
+export const linearToEv = (v) => Math.log2(Math.max(1e-6, v) / HDR_MID_GREY);
+
+export function computeHdrClipStats(floatRgba, w, h, { clipStop = HDR_MAX_STOP } = {}) {
+  const n = w * h;
+  const clipLinear = HDR_MID_GREY * Math.pow(2, clipStop);
+  let above0 = 0;
+  let above2 = 0;
+  let clipped = 0;
+  let peakEv = -Infinity;
+  let minEv = Infinity;
+  let sumEv = 0;
+  for (let i = 0; i < n; i += 1) {
+    const o = i * 4;
+    const r = Math.max(0, floatRgba[o]);
+    const g = Math.max(0, floatRgba[o + 1]);
+    const b = Math.max(0, floatRgba[o + 2]);
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const ev = linearToEv(lum);
+    if (ev > peakEv) peakEv = ev;
+    if (ev < minEv) minEv = ev;
+    sumEv += ev;
+    if (ev > 0) above0 += 1;
+    if (ev > 2) above2 += 1;
+    if (r > clipLinear || g > clipLinear || b > clipLinear) clipped += 1;
+  }
+  const denom = Math.max(1, n);
+  return {
+    above0Pct: (above0 / denom) * 100,
+    above2Pct: (above2 / denom) * 100,
+    clippedPct: (clipped / denom) * 100,
+    peakEv: Number.isFinite(peakEv) ? peakEv : 0,
+    minEv: Number.isFinite(minEv) ? minEv : HDR_MIN_STOP,
+    meanEv: n ? sumEv / denom : 0,
+    clipThresholdLinear: clipLinear,
+  };
+}
+
+export function computeHdrStopsHistogram(floatRgba, w, h, {
+  minStop = HDR_MIN_STOP,
+  maxStop = HDR_MAX_STOP,
+  bins = 256,
+} = {}) {
+  const H = [new Float32Array(bins), new Float32Array(bins), new Float32Array(bins), new Float32Array(bins)];
+  const n = w * h;
+  const span = Math.max(0.5, maxStop - minStop);
+  const toBin = (v) => {
+    const ev = linearToEv(Math.max(0, v));
+    return Math.max(0, Math.min(bins - 1, Math.floor(((ev - minStop) / span) * (bins - 1))));
+  };
+  for (let i = 0; i < n; i += 1) {
+    const o = i * 4;
+    const r = floatRgba[o], g = floatRgba[o + 1], b = floatRgba[o + 2];
+    const y = 0.2126 * Math.max(0, r) + 0.7152 * Math.max(0, g) + 0.0722 * Math.max(0, b);
+    H[0][toBin(r)] += 1;
+    H[1][toBin(g)] += 1;
+    H[2][toBin(b)] += 1;
+    H[3][toBin(y)] += 1;
+  }
+  return H;
+}
+
+export function computeHdrStopsWaveform(floatRgba, bw, bh, sw, hh, {
+  parade = true,
+  minStop = HDR_MIN_STOP,
+  maxStop = HDR_MAX_STOP,
+} = {}) {
+  const secs = parade ? 3 : 1;
+  const acc = new Float32Array(secs * sw * hh);
+  const span = Math.max(0.5, maxStop - minStop);
+  const toRow = (v) => {
+    const u = (linearToEv(Math.max(0, v)) - minStop) / span;
+    const clamped = Math.max(0, Math.min(1, u));
+    return hh - 1 - Math.round(clamped * (hh - 1));
+  };
+  for (let y = 0; y < bh; y += 1) {
+    for (let x = 0; x < bw; x += 1) {
+      const i = (y * bw + x) * 4;
+      const col = Math.min(sw - 1, Math.floor((x / Math.max(1, bw)) * sw));
+      if (parade) {
+        for (let c = 0; c < 3; c += 1) acc[(c * hh + toRow(floatRgba[i + c])) * sw + col] += 1;
+      } else {
+        const yv = 0.2126 * Math.max(0, floatRgba[i]) + 0.7152 * Math.max(0, floatRgba[i + 1]) + 0.0722 * Math.max(0, floatRgba[i + 2]);
+        acc[toRow(yv) * sw + col] += 1;
+      }
+    }
+  }
+  return { acc, secs, sw, hh };
+}
+
+export function ccDrawHdrStopsHistogram(ctx, w, h, H, mode = 'rgb', { minStop = HDR_MIN_STOP, maxStop = HDR_MAX_STOP, pad = 12 } = {}) {
+  ccDrawHistogram(ctx, w, h, H, mode, pad);
+  const span = Math.max(0.5, maxStop - minStop);
+  ctx.save();
+  ctx.font = '9px Inter, sans-serif';
+  for (const stop of [-2, 0, 2, 4, 6]) {
+    if (stop < minStop || stop > maxStop) continue;
+    const x = Math.round(((stop - minStop) / span) * w) + 0.5;
+    ctx.strokeStyle = stop === 0 ? 'rgba(255,220,120,0.45)' : stop === 6 ? 'rgba(255,90,90,0.45)' : 'rgba(255,255,255,0.14)';
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    ctx.fillStyle = stop === 0 ? 'rgba(255,220,120,0.85)' : 'rgba(255,255,255,0.45)';
+    ctx.fillText(`${stop > 0 ? `+${stop}` : stop}`, Math.min(w - 18, Math.max(2, x + 2)), 10);
+  }
+  ctx.restore();
+}
+
+export function ccDrawHdrStopsWaveform(ctx, w, h, floatRgba, bw, bh, mode = 'parade', dpr = 1, { minStop = HDR_MIN_STOP, maxStop = HDR_MAX_STOP } = {}) {
+  const parade = mode === 'parade';
+  const secs = parade ? 3 : 1;
+  const gap = parade ? Math.round(4 * dpr) : 0;
+  const sw = Math.max(1, Math.floor((w - gap * (secs - 1)) / secs));
+  const padT = Math.round(6 * dpr);
+  const padB = Math.round(6 * dpr);
+  const hh = Math.max(2, h - padT - padB);
+  const { acc } = computeHdrStopsWaveform(floatRgba, bw, bh, sw, hh, { parade, minStop, maxStop });
+  const im = ctx.createImageData(w, h);
+  const d = im.data;
+  for (let i = 0; i < d.length; i += 4) { d[i] = 9; d[i + 1] = 9; d[i + 2] = 11; d[i + 3] = 255; }
+  const norm = (bh / hh) * 0.9;
+  const tint = parade ? [[255, 80, 96], [70, 235, 140], [80, 150, 255]] : [[200, 240, 215]];
+  for (let s = 0; s < secs; s += 1) {
+    for (let r = 0; r < hh; r += 1) {
+      for (let c = 0; c < sw; c += 1) {
+        const a = acc[(s * hh + r) * sw + c];
+        if (!a) continue;
+        const k = Math.min(1, Math.sqrt(a / norm) * 0.55);
+        const o = ((r + padT) * w + s * (sw + gap) + c) * 4;
+        d[o] = Math.min(255, 9 + tint[s][0] * k);
+        d[o + 1] = Math.min(255, 9 + tint[s][1] * k);
+        d[o + 2] = Math.min(255, 11 + tint[s][2] * k);
+      }
+    }
+  }
+  ctx.putImageData(im, 0, 0);
+  const span = Math.max(0.5, maxStop - minStop);
+  ctx.font = `${Math.round(9 * dpr)}px Inter, sans-serif`;
+  for (const stop of [-4, -2, 0, 2, 4, 6]) {
+    if (stop < minStop || stop > maxStop) continue;
+    const y = Math.round(padT + (1 - (stop - minStop) / span) * (hh - 1)) + 0.5;
+    ctx.strokeStyle = stop === 0 ? 'rgba(255,220,120,0.4)' : stop === 6 ? 'rgba(255,90,90,0.4)' : 'rgba(255,255,255,0.10)';
+    ctx.fillStyle = stop === 0 ? 'rgba(255,220,120,0.8)' : 'rgba(255,255,255,0.38)';
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    ctx.fillText(`${stop > 0 ? `+${stop}` : stop} EV`, 3 * dpr, Math.max(10 * dpr, y - 2 * dpr));
+  }
+}

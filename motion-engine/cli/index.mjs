@@ -26,6 +26,8 @@
 //   npx greenlight-motion pod-serve [--port 8080]    a render part on a GPU machine you own, driven from your page (GL_POD_TOKEN; cli/podServe.mjs)
 //   A 3D Scene (a script's `world`) gets the 3D plugin by itself the first time (downloaded once); its folder plays from a local server
 //   (review), and check / stills / render serve it themselves.
+//   An HTML layer (a clip of mediaType "html", a script element of type "html": a page in assets/) is drawn by the browser itself,
+//   on the video's clock: Chrome 157 or newer (doctor says), nothing is recorded first.
 //
 // Needs Node 18+ and Chrome or Edge (the engine draws with WebGPU; a headless *shell* has no WebGPU, so the CLI
 // drives the real browser in its new headless mode). No ffmpeg: the page encodes the MP4 itself.
@@ -103,7 +105,9 @@ async function launch() {
   const chrome = findChrome();
   if (!chrome) fail('no Chrome or Edge found', 'install Google Chrome, or set GREENLIGHT_MOTION_CHROME to its executable');
   const { chromium } = require('playwright-core');
-  return chromium.launch({ executablePath: chrome, headless: true, args: ['--headless=new', '--enable-unsafe-webgpu'] });
+  // CanvasDrawElement: HTML-in-canvas, which draws an HTML layer's page (frontend/src/motionEngine/htmlPages.js). Chrome 157 and
+  // later have it without the flag; on an older one the flag turns it on for this headless browser (it only adds an API).
+  return chromium.launch({ executablePath: chrome, headless: true, args: ['--headless=new', '--enable-unsafe-webgpu', '--enable-blink-features=CanvasDrawElement'] });
 }
 
 // ── a project folder ──
@@ -152,7 +156,7 @@ const indexHtml = (title) => `<!doctype html>
 <script src="greenlight-motion.js"></script>
 <script src="project.js"></script>
 <script src="assets.js"></script>
-<script>GreenLightMotion.mountStudio(document.getElementById('app'), { project: window.GL_PROJECT, assets: window.GL_ASSETS });</script>
+<script>GreenLightMotion.mountStudio(document.getElementById('app'), { project: window.GL_PROJECT, assets: window.GL_ASSETS, camera: true });</script>
 `;
 // JSON inside a <script>: no "</script", no "<!--" (both escapes stay valid JSON and JS, so the app can read a page back)
 const scriptSafe = (s) => s.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\u0021--');
@@ -305,6 +309,8 @@ async function withPage(dir, fn) {
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e.message || e)));
+    // GL_PAGE_LOG=1: the page's own render lines ([export] …), e.g. how its motion blur drew the frames
+    if (process.env.GL_PAGE_LOG) page.on('console', (m) => { const t = m.text(); if (t.startsWith('[export]')) console.log(t); });
     await page.goto(served ? served.url : 'file://' + path.resolve(dir, 'index.html'));
     await page.waitForFunction(() => window.GreenLightMotion?.page?.ready, null, { timeout: 90000 });
     const duration = await page.evaluate(() => window.GreenLightMotion.page.duration);
@@ -316,6 +322,14 @@ async function withPage(dir, fn) {
     served?.close();
   }
 }
+// every html clip of a project, inside scenes too
+const htmlClips = (project, out = [], clips = project?.clips, depth = 0) => {
+  for (const c of Array.isArray(clips) ? clips : []) {
+    if (c?.mediaType === 'html' && typeof c.url === 'string') out.push(c);
+    else if (c?.sequence && depth < 8) htmlClips(project, out, c.sequence.clips, depth + 1);
+  }
+  return out;
+};
 const parseTimes = (duration) => {
   if (flags.at) return String(flags.at).split(',').map(Number).filter((t) => Number.isFinite(t) && t >= 0);
   const n = Math.max(1, Math.min(48, Number(flags.count) || 6));
@@ -325,7 +339,8 @@ const parseTimes = (duration) => {
 // ── commands ──
 async function doctor() {
   const checks = [];
-  const add = (name, ok, detail, fix) => checks.push({ name, ok, detail, fix: ok ? undefined : fix });
+  const add = (name, ok, detail, fix, optional = false) => checks.push({ name, ok, detail, fix: ok ? undefined : fix, ...(optional ? { optional: true } : {}) });
+  const ready = () => checks.every((c) => c.ok || c.optional);   // an optional line (HTML layers) is for the videos that use it
   const major = Number(process.versions.node.split('.')[0]);
   add('Node.js 18 or newer', major >= 18, process.versions.node, 'install Node.js 18+ from nodejs.org');
   const chrome = findChrome();
@@ -347,23 +362,31 @@ async function doctor() {
       const gpu = await page.evaluate(async () => {
         const a = await navigator.gpu?.requestAdapter();
         const h264 = typeof VideoEncoder === 'function' && (await VideoEncoder.isConfigSupported({ codec: 'avc1.640028', width: 1920, height: 1080, bitrate: 8e6, framerate: 30 })).supported;
+        let pages = false;
+        try { pages = typeof document.createElement('canvas').getContext('2d').drawElementImage === 'function'; } catch { /* no 2D canvas */ }
         return { webgpu: !!a, adapter: a?.info ? [a.info.vendor, a.info.architecture].filter(Boolean).join(' ') : '', h264,
-          storage: a?.limits?.maxStorageBuffersPerShaderStage || 0, maxBuffer: a?.limits?.maxBufferSize || 0 };
+          storage: a?.limits?.maxStorageBuffersPerShaderStage || 0, maxBuffer: a?.limits?.maxBufferSize || 0,
+          pages, chrome: (navigator.userAgent.match(/(?:Chrome|Edg)\/(\d+)/) || [])[1] || '' };
       });
       await browser.close();
       add('WebGPU (headless)', gpu.webgpu, gpu.adapter || (gpu.webgpu ? 'adapter' : 'no adapter'), 'update Chrome; on Linux servers WebGPU needs Vulkan or SwiftShader');
       add('H.264 encoding (WebCodecs)', gpu.h264, gpu.h264 ? 'supported' : 'not supported', 'use Google Chrome (open-source Chromium on Linux lacks H.264)');
       if (gpu.webgpu) add('WebGPU limits for a 3D Scene', gpu.storage >= 8, `${gpu.storage} storage buffers per stage, largest buffer ${Math.round(gpu.maxBuffer / 1048576)} MB`, 'a Final 3D Scene needs 8+ storage buffers per shader stage: update Chrome or the graphics driver');
+      // an HTML layer's page is drawn by the browser itself (HTML-in-canvas): stills and render here, and the page the user opens
+      add('HTML layers (HTML-in-canvas)', gpu.pages, gpu.pages
+        ? `Chrome ${gpu.chrome}${Number(gpu.chrome) < 157 ? ' (here, behind a flag; the page opened in the browser needs Chrome 157 or newer to show them)' : ''}`
+        : `Chrome ${gpu.chrome} cannot draw a page into a layer`,
+      'update Chrome to 157 or newer: until then a video with an HTML layer (a clip of "mediaType": "html", a script element of type "html") shows that layer empty', true);
     } catch (e) {
       add('browser starts headless', false, String(e.message || e).split('\n')[0], 'check that Chrome opens on this computer');
     }
   }
-  if (flags.json) console.log(JSON.stringify({ version: VERSION, ok: checks.every((c) => c.ok), checks, plugin3d: found3d ? { version: found3d.version, from: found3d.from, dir: found3d.world } : null, range3d: RANGE3D }, null, 2));
+  if (flags.json) console.log(JSON.stringify({ version: VERSION, ok: ready(), checks, plugin3d: found3d ? { version: found3d.version, from: found3d.from, dir: found3d.world } : null, range3d: RANGE3D }, null, 2));
   else {
-    for (const c of checks) console.log(`${c.ok ? 'ok  ' : 'FIX '} ${c.name.padEnd(28)} ${c.detail}${c.fix ? `\n      → ${c.fix}` : ''}`);
-    console.log(checks.every((c) => c.ok) ? '\nready' : '\nfix the lines marked FIX');
+    for (const c of checks) console.log(`${c.ok ? 'ok  ' : c.optional ? 'note' : 'FIX '} ${c.name.padEnd(28)} ${c.detail}${c.fix ? `\n      → ${c.fix}` : ''}`);
+    console.log(ready() ? '\nready' : '\nfix the lines marked FIX');
   }
-  process.exitCode = checks.every((c) => c.ok) ? 0 : 1;
+  process.exitCode = ready() ? 0 : 1;
 }
 
 function init() {
@@ -416,7 +439,7 @@ async function check() {
       : `the engine asked for ${r}: put it in assets/ (models/ for .glb presets, hdr/ for .hdr)` });
     for (const p of await page.evaluate((proj) => window.GreenLightMotion.checkTemplate(proj), project)) problems.push({ code: 'template', detail: p, fix: 'fix project.template.fields' });
     for (const p of await page.evaluate(async (proj) => window.GreenLightMotion.checkSoundCues(await window.GreenLightMotion.normalize(proj)), project)) {
-      problems.push({ code: 'sound', detail: p, fix: 'fix project.sounds (npx greenlight-motion schema sounds lists the library)' });
+      problems.push({ code: 'sound', detail: p, fix: 'fix or remove that cue in project.sounds (a new sound is an audio clip in assets/, not a cue)' });
     }
     // a track matte's source is hidden only while a layer that uses it is on screen; outside that it draws as itself
     for (const g of await page.evaluate((proj) => window.GreenLightMotion.matteGaps(proj), project)) {
@@ -439,6 +462,27 @@ async function check() {
       if (colours <= 1) blank.push(t);
     }
     if (blank.length) problems.push({ code: 'blank-frames', times: blank, fix: 'nothing is on screen at these times: check layer timing (items, trimStart/trimEnd) and opacity' });
+    // HTML layers: the browser draws the page of each one that has no recording of its own (`prerender`); one that has plays it.
+    const pages = htmlClips(project).filter((c) => !c.prerender?.url);
+    if (pages.length) {
+      const status = () => page.evaluate(() => (window.GreenLightMotion.htmlLayers ? window.GreenLightMotion.htmlLayers({ refs: true }) : null));
+      let st = await status();
+      // a page is loaded when its layer first comes on screen: look at more times until every page has been
+      if (st?.supported && pages.some((c) => !st.asked.includes(c.url))) {
+        for (let k = 0; k < 16; k += 1) await page.evaluate((x) => window.GreenLightMotion.page.renderFrame(x), (duration * (k + 0.5)) / 16);
+        st = await status();
+      }
+      for (const c of pages) {
+        if (!st?.supported) {
+          problems.push({ code: 'html-layer', ref: c.url, detail: `"${c.name || c.id}" is an HTML layer and this browser cannot draw a page into a layer, so it is empty`,
+            fix: 'update Chrome to 157 or newer (npx greenlight-motion doctor shows what this one can do)' });
+        }
+      }
+      for (const f of st?.failed || []) {
+        problems.push({ code: 'html-layer', ref: f.page, detail: `the page could not be drawn: ${f.why}`,
+          fix: 'open the page file by itself in Chrome and fix what its console says; it must be one HTML document, its own files beside it under assets/' });
+      }
+    }
     // plugins the page carries (assets/plugins/effects|transitions/): each one's own proof, as GreenLight Dash runs it
     await page.waitForTimeout(600);
     for (const p of await page.evaluate(() => window.GreenLightMotion.pluginStatus())) {
@@ -520,15 +564,34 @@ async function render() {
   if (res.frameGuard) console.log(`frames drawn again: ${res.frameGuard.retries} (${Object.entries(res.frameGuard.byReason || {}).map(([k, n]) => `${k} ${n}`).join(', ')}); frames ${[...new Set((res.frameGuard.events || []).map((e) => e.frame))].join(', ')}`);
 }
 
-function pack() {
+async function pack() {
   const dir = rest[0] || '.';
   const { project, assets, aliases, missing } = build(dir, { quiet: true });
   if (flags.glvideo) {
     // the project folder in one zip (cli/glvideo.mjs): project.json + every file under assets/
     const title = project.template?.title || project.name;
     const files = filesUnder(path.join(dir, 'assets')).map((rel) => ({ rel, data: readFileSync(path.join(dir, 'assets', ...rel.split('/'))) }));
+    // an HTML layer's page goes in with its own files written into it: GreenLight Dash takes over the files a project names
+    // (the page), not the ones a page names by a relative address (its pictures, scripts, styles); a page written into the
+    // project (an inline data: URL) goes in as a file of its own, which is how Dash opens an html clip
+    let packed = project;
+    const pages = new Set(htmlClips(project).map((c) => c.url).filter((u) => u.startsWith('asset:') || u.startsWith('data:text/html')));
+    if (pages.size) {
+      const S = await import(pathToFileURL(path.join(PKG, 'dist', 'greenlight-motion-script.mjs')).href);
+      const fileOf = (ref) => assets[ref] || assets[aliases[ref]] || null;
+      for (const f of files) {
+        if (!pages.has(`asset:${f.rel}`)) continue;
+        f.data = Buffer.from(await S.inlinePageFiles(f.data.toString('utf8'), `asset:${f.rel}`, fileOf), 'utf8');
+      }
+      const out = S.pagesToFiles(project);
+      packed = out.project;
+      for (const { rel, text } of out.files) {
+        if (files.some((f) => f.rel === rel)) continue;
+        files.push({ rel, data: Buffer.from(await S.inlinePageFiles(text, `asset:${rel}`, fileOf), 'utf8') });
+      }
+    }
     const out = path.resolve(String(typeof flags.out === 'string' ? flags.out : path.join(dir, `${(title || 'video').replace(/[^\w-]+/g, '-')}.glvideo`)));
-    const bytes = glvideoBytes({ title, project, files });
+    const bytes = glvideoBytes({ title, project: packed, files });
     writeFileSync(out, bytes);
     console.log(`packed ${out} — ${(bytes.length / 1048576).toFixed(1)} MB, ${files.length} file(s). Double-clicked, it opens in GreenLight Dash as a new video project.`);
     if (missing.length) console.log(`missing (not inside): ${missing.join(', ')}`);
@@ -653,6 +716,13 @@ async function script() {
 }
 async function scriptFile(S, dir, src) {
   const take = (bytes, name) => {
+    // an HTML layer's page (an element of type "html"): the engine reads it as text and draws it itself
+    if (/\.html?$/i.test(name)) {
+      const head = bytes.subarray(0, 2000).toString('utf8').trimStart().toLowerCase();
+      if (!(head.startsWith('<!doctype html') || head.startsWith('<html') || (head.includes('<body') && head.includes('</')))) throw new Error('not an HTML document (it starts with <!doctype html> or <html>)');
+      if (bytes.length > 20 * 1048576) throw new Error(`the page is ${Math.round(bytes.length / 1048576)} MB (up to 20 MB; keep its pictures beside it as files)`);
+      return { url: `asset:${name}`, kind: 'html', type: 'html', name };
+    }
     const type = S.sniff(bytes);
     if (!type) throw new Error('not a picture, video or sound the engine plays (PNG, JPEG, GIF, WebP, SVG, MP4, MOV, WebM, MP3, M4A, WAV, OGG)');
     const kind = S.KIND[type];

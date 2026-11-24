@@ -37,6 +37,7 @@ import {
   resolveCounterSettings,
 } from './textCounter.js';
 import { MORPH_DEFAULTS, layoutState, morphAt, morphPose, planMorph, restingGlyphs, stateOf } from './textMorph.js';
+import { RETYPE_DEFAULTS, RETYPE_EASES, createRetypeUnit } from './textRetype.js';
 
 const SENTINEL_BASE = 0xF0000;
 // High surrogate shared by every sentinel (U+F0000..U+F03FF): the cheap "might this
@@ -58,11 +59,15 @@ export const PLACEHOLDER_CATALOG = Object.freeze([
   },
   {
     id: 'CYCLE', label: 'Word cycle', example: '{{{CYCLE:fast|simple|yours}}}',
-    description: 'Words or phrases separated by | take turns in the sentence: each one holds, then rolls, fades or morphs to the next (Morph: the letters they share travel to their new place). Pace: add hold=2 (seconds each word stays) and duration=0.6 (seconds the change takes), or set Hold and Duration in its card.',
+    description: 'Words or phrases separated by | take turns in the sentence: each one holds, then rolls, fades, morphs (the letters they share travel to their new place) or is retyped (a caret erases it and types the next). Pace: add hold=2 (seconds each word stays) and duration=0.6 (seconds the change takes), or set Hold and Duration in its card.',
   },
   {
     id: 'MORPH', label: 'Text Morph', example: '{{{CYCLE:fast|simple|yours; style=morph; hold=1.2; duration=0.8}}}',
     description: 'A word cycle whose letters travel: the letters two words share slide to their new place, the others rise out and in. Pace: hold = seconds each word stays, duration = seconds the morph takes (Hold and Travel in its card). Whole lines instead of words: write each on its own line and turn on Each line is a state.',
+  },
+  {
+    id: 'RETYPE', label: 'Retype', example: '{{{CYCLE:fast|simple|yours; style=retype; hold=1.2; speed=1}}}',
+    description: 'A caret erases each word and types the next one. Pace: hold = seconds each word stays, speed = how fast it erases and types (2 = twice as fast; Hold and Speed in its card).',
   },
   {
     id: 'SCRAMBLE', label: 'Scramble', example: '{{{SCRAMBLE:Access granted}}}',
@@ -97,7 +102,7 @@ const num = (v, fallback, lo, hi) => {
 
 // ── Settings ──
 
-export const CYCLE_STYLES = ['roll', 'fade', 'blur', 'morph'];
+export const CYCLE_STYLES = ['roll', 'fade', 'blur', 'morph', 'retype'];
 export const CYCLE_DEFAULTS = Object.freeze({
   textCycleStyle: 'roll',
   textCycleDelay: 0,
@@ -165,6 +170,8 @@ const TIMECODE_FORMATS = ['hh:mm:ss:ff', 'hh:mm:ss', 'mm:ss:ff', 'mm:ss', 'ss:ff
 const VAR_NAME_RE = /^[\p{L}\p{N}_][\p{L}\p{N}_ .-]{0,39}$/u;
 const EASING_VALUE_RE = /^[a-z][a-z0-9_]{0,31}$/;
 const KF_ID_RE = /^[a-z0-9]{1,8}$/;
+// a colour option: #rgb / #rrggbb / #rrggbbaa or rgb()/rgba() (lower case, as options are)
+const COLOR_VALUE_RE = /^(#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})|rgba?\([0-9., %]+\))$/;
 
 // Option schemas. `num: [min, max]` numbers, `values` enums, `easing` a TransitionEasing
 // key written lowercase (cubic_out), `kf` a keyframe-track id. The same table drives
@@ -201,6 +208,30 @@ export const PLACEHOLDER_OPTIONS = Object.freeze({
     arc: { num: [0, 1] },
     leave: { values: ['mask', 'fade', 'blur', 'scale'] },
     order: { values: ['left', 'center', 'centre', 'all'] },
+    // Retype only (textRetype.js, MotionFast's Prompt Typewriter): the first line's words
+    // (`stagger` s apart, each `wordtime` s, sliding `slide` em), the caret (`lead` s before the
+    // words end, growing `grow` s, colour `caret`), the light (`wipe` s, `reach` of the line,
+    // `light` strength), the erase (`erase` characters/s on the `eraseease` curve, each fading
+    // `fade` s), the retype (`type` characters/s, `humanize` 0–1), where the typed line grows
+    // (`anchor`), the whole style's `speed`, and the first line's word tints.
+    wordtime: { num: [0.05, 5] },
+    slide: { num: [0, 5] },
+    lead: { num: [-2, 5] },
+    grow: { num: [0.02, 5] },
+    wipe: { num: [0.02, 5] },
+    reach: { num: [0, 1] },
+    light: { num: [0, 1] },
+    erase: { num: [1, 200] },
+    eraseease: { values: RETYPE_EASES },
+    fade: { num: [0.01, 5] },
+    type: { num: [1, 200] },
+    humanize: { num: [0, 1] },
+    anchor: { values: ['center', 'left'] },
+    speed: { num: [0.05, 10] },
+    caret: { color: true },
+    tint1: { color: true },
+    tint2: { color: true },
+    tint3: { color: true },
   },
   scramble: {
     start: { num: [0, 3600] },
@@ -218,6 +249,7 @@ function cleanOption(schema, raw) {
   if (schema.values) return schema.values.includes(v) ? v : null;
   if (schema.easing) return EASING_VALUE_RE.test(v) ? v : null;
   if (schema.kf) return KF_ID_RE.test(v) ? v : null;
+  if (schema.color) return COLOR_VALUE_RE.test(v) ? v : null;
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
   const c = clamp(n, schema.num[0], schema.num[1]);
@@ -412,6 +444,7 @@ export function resolveUnitSettings(unit, item) {
       arc: o.arc ?? MORPH_DEFAULTS.arc,
       leave: o.leave ?? MORPH_DEFAULTS.leave,
       order: o.order === 'centre' ? 'center' : (o.order ?? MORPH_DEFAULTS.order),
+      ...(style === 'retype' ? { retype: resolveRetype(o) } : null),
     };
   }
   if (unit.type === 'scramble') {
@@ -426,6 +459,30 @@ export function resolveUnitSettings(unit, item) {
     };
   }
   return {};
+}
+
+// Retype's own settings (textRetype.js), MotionFast's defaults for every left-out option.
+function resolveRetype(o) {
+  const d = RETYPE_DEFAULTS;
+  return {
+    stagger: o.stagger ?? d.stagger,
+    wordTime: o.wordtime ?? d.wordTime,
+    slide: o.slide ?? d.slide,
+    lead: o.lead ?? d.lead,
+    grow: o.grow ?? d.grow,
+    wipe: o.wipe ?? d.wipe,
+    reach: o.reach ?? d.reach,
+    light: o.light ?? d.light,
+    erase: o.erase ?? d.erase,
+    eraseEase: o.eraseease ?? d.eraseEase,
+    fade: o.fade ?? d.fade,
+    type: o.type ?? d.type,
+    humanize: o.humanize ?? d.humanize,
+    anchor: o.anchor ?? d.anchor,
+    speed: o.speed ?? d.speed,
+    caret: o.caret ?? d.caret,
+    tints: [o.tint1, o.tint2, o.tint3].filter(Boolean),
+  };
 }
 
 // Keyframed number units read `ph:<id>` tracks (keyframeProps.js PLACEHOLDER_KF_PREFIX).
@@ -575,8 +632,10 @@ export function parsePlaceholderText(text) {
 // direction, match, case, stagger, arc, leave, order }. Only `style` is required; a
 // left-out option plays its default. Absent / null = off (the lines are just lines).
 
-export const LINE_STATE_STYLES = Object.freeze(['morph', 'roll', 'fade', 'blur']);
-const LINE_STATE_KEYS = ['start', 'hold', 'duration', 'easing', 'width', 'direction', 'match', 'case', 'stagger', 'arc', 'leave', 'order'];
+export const LINE_STATE_STYLES = Object.freeze(['morph', 'roll', 'fade', 'blur', 'retype']);
+const LINE_STATE_KEYS = ['start', 'hold', 'duration', 'easing', 'width', 'direction', 'match', 'case', 'stagger', 'arc', 'leave', 'order',
+  'wordtime', 'slide', 'lead', 'grow', 'wipe', 'reach', 'light', 'erase', 'eraseease', 'fade', 'type', 'humanize', 'anchor', 'speed',
+  'caret', 'tint1', 'tint2', 'tint3'];
 
 /**
  * The stored form of `textLineStates`, or null (off). `isEasing(KEY)` may narrow the
@@ -858,6 +917,7 @@ function createMorphUnit(unit, s, clock, transform) {
 
 function createCycleUnit(unit, s, clock, index, transform) {
   if (s.style === 'morph') return createMorphUnit(unit, s, clock, transform);
+  if (s.style === 'retype') return createRetypeUnit(unit.words.map(transform), s, clock);
   const words = unit.words.map(transform);
   const n = words.length;
   const ease = clock.easeFor ? clock.easeFor(s.easing) : (p) => p;
@@ -1132,10 +1192,11 @@ export function buildPlaceholderRun(parsed, item, clock) {
       return u.glyphs(ctx, ls, metricsFor(ctx, measurePlain));
     },
     // drawPlain(str, x, y) paints a plain run with letter spacing; glyph(ch, x, y)
-    // paints one glyph — both in the caller's current style (fill or stroke).
-    paint(ctx, text, x, y, ls, measurePlain, drawPlain, glyph) {
+    // paints one glyph — both in the caller's current style (fill or stroke); pass = which
+    // ('fill' | 'stroke'), for a unit that draws something only once (Retype's caret).
+    paint(ctx, text, x, y, ls, measurePlain, drawPlain, glyph, pass = 'fill') {
       const M = metricsFor(ctx, measurePlain);
-      const paint = { glyph, text: (str, px, py) => drawPlain(str, px, py) };
+      const paint = { glyph, text: (str, px, py) => drawPlain(str, px, py), pass };
       let cursor = x;
       walk(
         text,

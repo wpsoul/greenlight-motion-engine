@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.5.9 (2026-11-24)
+
+The engine inside is the Video Editor of GreenLight Dash 16.6.80 (0.5.8's was 16.5.94's). It takes the 3D plugin
+greenlight-motion-3d 0.1.5 (`~0.1.5`): characters that speak, screens that look like their page, Final at 32 samples.
+
+**HTML layers, drawn live**
+- **An HTML page is a layer the engine draws itself.** A clip `{ "mediaType": "html", "url": "asset:<page>.html" }`, or a
+  scene script element of type `html`, runs the page inside the engine and the browser draws it into the layer
+  (HTML-in-canvas). The page is stepped on the video's clock frame by frame: CSS animations, `requestAnimationFrame`,
+  timers and `performance.now()` follow the playhead, so the preview, `stills` and `render` show the same picture. No
+  recording of the page first, and no Python, Playwright or ffmpeg for it.
+- **It needs Chrome 157 or newer** (HTML-in-canvas shipped there). `doctor` has a line for it; `check` reports a page
+  that could not be drawn, or a browser that cannot draw pages.
+- **A clip that carries a recording keeps playing it** (`prerender`: films made before, projects from GreenLight Dash):
+  nothing changes for them. Only a clip with no recording is drawn live.
+- **A page's own files** (pictures, scripts, styles beside it in `assets/`, named by a relative address, or any file of the
+  folder as `asset:<name>`) are found. `pack --glvideo` and the page's Save for GreenLight Dash write them into the page, so
+  it opens whole in GreenLight Dash.
+- **A page written into the script**: `{ "type": "html", "html": "<!doctype html>…" }` (up to 512 KB) is kept in the
+  project as a data: URL, the way SVG art is; a `.glvideo` carries it as a file (`assets/pages/<clip id>.html`).
+- **Pages without scripts**: `GreenLightMotion.setHtmlPageScripts(false)` before mounting runs no script of any page (a
+  page in a frame has its host page's origin: in a chat its script could speak to the chat as the video page). Its CSS
+  animations, SVG animation and videos are then set to the video's time from outside. The GreenLight Motion connector's
+  pages (the chat, a shared link) use it. `GreenLightMotion.htmlLayers()` says whether pages are drawn here, reachable and
+  with scripts, and which failed.
+
+**Scene scripts**
+- **No sound unless the script names one.** `sound` defaults to `"none"` and the guide lists no library sounds: a film's
+  sounds and music are files, chosen as the design rules say (the user's, their library, generated or from an open source).
+  The cues of films made earlier keep playing.
+- An element at a negative `z` in a scene with no camera of its own no longer disappears behind the scene's backdrop: the
+  backdrop stays a 2D layer at the bottom, and a scene with depth gets a still camera.
+
+**Text animators**
+- **Font size, Font weight and Italic** are effects of their own (group Font): a word or a letter gets its own size, weight
+  or slant, and the line makes room for it.
+- **Wiggle ▸ Pick** selects an exact share of the units by its seed, so a colour, a weight or italic lands on chosen words.
+- **Highlight box**: a border on the box's own radius, and a see-through colour.
+- The classic presets that carry a plate (Pill Grow, Lower Third, Drop Bar …) grow it as a Highlight box under the words;
+  the randomizer presets (Random Pop, Chaos Letters, Random Rise, Ransom Note, Editorial Typer) style words with the new
+  effects.
+
+**Camera**
+- **Four more moves:** Push In, Orbit Hold, Rise & Reveal and Whip. Quiet Push and Corkscrew are on Smooth.
+- Zooms on a camera ease in and out by their own times, and two zooms with targets no longer jump between targets.
+
+**Layers made from templates**
+- The layer templates of GreenLight Dash play here: Carousel, Image Trail, Tumble, Toss, 3D Grid, Media Orbit, Card Fan,
+  Card Rail, Flicker, Stacking and Unstacking Cards, Scatter Cards, Tiled Gallery, and the text ones (Sliced Rolling Text,
+  Kinetic Perspective Type, Cascading Ticker …), built from ordinary layers when the project opens.
+
+**Pictures**
+- **Depth Matte**: a layer cut by the depth of a video.
+- Motion blur takes as many sub-frames as each frame's on-screen travel needs.
+- A still shows the right frame of a video inside a sequence; a picture cut to a box by a plain Layer Mask is drawn in one
+  pass.
+
+**The film's page**
+- Draft 3D | Final 3D is in the preview bar; the page opens in Draft, and Render, stills and the Final limit follow the
+  film's own 3D mode.
+- The Camera layer has the app's camera controls on the page (`build`, `review`); a Path camera has Add point; the
+  Camera and 3D Scene rows come first, and the timeline lists rows in the app's order.
+- Dragging a number in the inspector no longer stops after one step.
+- `GL_PAGE_LOG=1` prints the page's own render lines (`render`, `stills`).
+
 ## 0.5.8 (2026-11-21)
 
 **The free film workflow**

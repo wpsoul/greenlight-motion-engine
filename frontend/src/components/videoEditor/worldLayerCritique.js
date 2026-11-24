@@ -189,14 +189,19 @@ export function worldPathReport() {
  * (camlayer) The Camera layer's move over the Scene clip shown at `time`, checked with no render, as worldPathReport checks a Scene camera's:
  * the Camera layer's shot (cameraLayerShot.js) at `samples` times across the clip and at the still's own, against each object's box (where
  * its keys carry it then). Every object wholly in shot now that is not at some sample: when, and how much of its box stays in. Null when
- * the Scene films from its own camera, or there is no world yet. `camera: "layer"` says whose move it is.
+ * there is no world yet. `camera: "layer"` says whose move it is.
+ * (screensharp2) A Scene that films from its own camera is checked here too when a Camera layer clip steers it: cameraLayerShot then gives
+ * that camera steered as the world films it (`camera: "steered"`). The Scene camera alone (worldPathReport) left the steer out, so the
+ * check named a shot the render does not film.
  */
 export function cameraLayerPathReport({ channels, clips, videoSize, time, samples = 17 }) {
   const t0 = performance.now();
   const facts = worldObjectFacts();
-  if (!facts?.freeCamera) return null;
+  if (!facts) return null;
   const data = { channels, clips, videoSize };
   const tl = cameraTimeline(data);
+  // a Scene's own camera is the Camera layer's to check only while a camera clip steers it (else worldPathReport checks it alone)
+  if (!facts.freeCamera && !cameraLayerShot(data, [time], { tl })[0]?.steered) return null;
   const at = sceneAtTime(tl.channels, tl.clipsMap, tl.layoutFor, time);
   if (!at) return null;
   const start = time - at.sceneTime, end = start + (at.span ?? at.sceneTime);
@@ -222,6 +227,6 @@ export function cameraLayerPathReport({ channels, clips, videoSize, time, sample
       if (worst) leaves.push(worst);
     }
   }
-  return { camera: 'layer', moves, now: r2(time), from: r2(start), to: r2(end), samples: times.length, checked: shot.map((o) => o.id), leaves,
+  return { camera: facts.freeCamera ? 'layer' : 'steered', moves, now: r2(time), from: r2(start), to: r2(end), samples: times.length, checked: shot.map((o) => o.id), leaves,
     ms: Math.round((performance.now() - t0) * 10) / 10 };
 }

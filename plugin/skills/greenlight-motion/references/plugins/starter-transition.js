@@ -8,10 +8,16 @@
 // below is for: declare it and the editor refuses it on the other engine by
 // name instead of rendering an empty frame.
 //
-// `fragment` is a FUNCTION that returns a node — it is called once when the
-// package is installed, with the TSL builders and this package's uniforms in
-// scope. That means a broken shader is caught at install, with a message,
-// instead of drawing an empty frame at playback.
+// `fragment` is a FUNCTION that returns a node — it is called once, when
+// createShaderMaterial runs inside createInstance (the first time the editor
+// draws the transition), with the TSL builders and this package's uniforms in
+// scope. That means a broken shader throws there, with a message the console
+// prints with the package's name, instead of drawing an empty frame.
+//
+// The clip plates arrive premultiplied, so the output is premultiplied too and
+// composites with the premultiplied "over" (usePremultipliedOver below): the
+// project background and the lower channels then show wherever neither clip
+// covers the frame.
 import {
   clamp01, createShaderMaterial, createFullscreenPlane, replacePlaneGeometry,
 } from './transition-sdk';
@@ -45,6 +51,19 @@ const fragment = ({ tsl, uniforms }) => {
   return mix(a, b, smoothstep(0.0, 1.0, p));
 };
 
+// Premultiplied "over", the editor's own compositing: src + dst × (1 − src.a).
+// Factors rather than `premultipliedAlpha`, which on a node material would also
+// multiply the colour by alpha in the shader and darken every soft edge twice.
+function usePremultipliedOver(material, THREE) {
+  material.transparent = true;
+  material.blending = THREE.CustomBlending;
+  material.blendEquation = THREE.AddEquation;
+  material.blendSrc = THREE.OneFactor;
+  material.blendDst = THREE.OneMinusSrcAlphaFactor;
+  material.blendSrcAlpha = THREE.OneFactor;
+  material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+}
+
 export function createInstance({ root, width, height, sdk }) {
   // Uniforms are TSL uniform nodes, and `.value` assignment in render() below
   // works the same way a ShaderMaterial's uniforms do.
@@ -56,6 +75,7 @@ export function createInstance({ root, width, height, sdk }) {
     uIntensity: uniform(1),
   };
   const material = createShaderMaterial({ fragment, uniforms });
+  usePremultipliedOver(material, sdk.THREE);
   // Layer order: never set renderOrder on root/meshes, and keep mesh z within
   // ±0.05 of root — otherwise the transition draws above higher timeline
   // channels. createFullscreenPlane's default z (0.02) is already correct.

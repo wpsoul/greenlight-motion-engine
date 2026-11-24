@@ -7,6 +7,7 @@
 //   validateProject(data) → the same for every Scene layer of a project, plus `scenes`
 //   fieldHelp({ path, op, q }) → type, range, default, what it does, an example, related fields
 import { envStrengthShadowed } from './envStrength.js';
+import { lipsyncProblem } from '../lipsync.js';
 import SCHEMA from '../../../../skills/greenlight-dash/references/video/world3d-schema.json' with { type: 'json' };
 
 export const schema = SCHEMA;
@@ -335,13 +336,25 @@ function checkMotion(ctx, scene, path) {
   for (const [name, c] of Object.entries(clocks)) {
     const cp = join(join(path, 'clocks'), name);
     if (!isObj(c)) continue;
-    if (!Array.isArray(c.keys) || !c.keys.length) ctx.add('error', 'missing_required', cp, `clock "${name}" needs \`keys\`: [{ t, v, ease }]`, { name: 'keys' });
-    else c.keys.forEach((k, i) => { if (isObj(k) && 'v' in k && !isNum(k.v)) ctx.add('error', 'bad_type', join(join(join(cp, 'keys'), i), 'v'), `a clock's value is a number, not ${String(JSON.stringify(k.v)).slice(0, 40)}`, { name: 'v' }); });
+    const hasKeys = Array.isArray(c.keys) && c.keys.length > 0;
+    const hasAudio = isObj(c.audio);
+    if (!hasKeys && !hasAudio) ctx.add('error', 'missing_required', cp, `clock "${name}" needs \`keys\`: [{ t, v, ease }] or \`audio\``, { name: 'keys' });
+    if (hasKeys) c.keys.forEach((k, i) => { if (isObj(k) && 'v' in k && !isNum(k.v)) ctx.add('error', 'bad_type', join(join(join(cp, 'keys'), i), 'v'), `a clock's value is a number, not ${String(JSON.stringify(k.v)).slice(0, 40)}`, { name: 'v' }); });
+    if (hasAudio && !c.audio.url && !c.audio.clipId && !c.audio.source && !isObj(c.envelope)) {
+      ctx.add('error', 'missing_required', join(cp, 'audio'), `audio clock "${name}" needs \`url\`, \`clipId\`, or \`source: "timeline"\``, { name: 'url' });
+    }
     checkFxOne(ctx, c.filter, join(cp, 'filter'));
+    // (lipsync) the voice's mouth shapes: a track this app reads, on the clock that plays the voice
+    if (c.lipsync !== undefined) {
+      const why = lipsyncProblem(c.lipsync);
+      if (why) ctx.add('error', 'bad_value', join(cp, 'lipsync'), `clock "${name}": ${why}`, { name: 'lipsync' });
+      if (!hasAudio) ctx.add('warning', 'unused', join(cp, 'lipsync'), `clock "${name}" has a lipsync but no \`audio\`: its voice is read as starting at the Scene's 0; give it the voice clip (\`audio.clipId\`) so the mouth follows where the clip plays`, { name: 'lipsync' });
+    }
   }
   const items = [];
   (Array.isArray(scene.objects) ? scene.objects : []).forEach((o, i) => items.push([o, join(join(path, 'objects'), i)]));
   if (isObj(scene.camera)) items.push([scene.camera, join(path, 'camera')]);
+  if (isObj(scene.env?.sky)) items.push([scene.env.sky, join(join(path, 'env'), 'sky')]);
   (Array.isArray(scene.layers2d) ? scene.layers2d : []).forEach((l, i) => items.push([l, join(join(path, 'layers2d'), i)]));
   for (const [item, ip] of items) {
     if (!isObj(item)) continue;
@@ -580,6 +593,146 @@ function checkRecipeValue(ctx, recipe, k, v, def, path) {
   }
 }
 
+function simKeyedOk(v, allowedTypes) {
+  if (!isObj(v)) return false;
+  const keys = v.keys;
+  if (!Array.isArray(keys) || !keys.length) return false;
+  return keys.every((k) => isObj(k) && isNum(k.t) && 'v' in k && allowedTypes.some((t) => typeOk(k.v, t)));
+}
+
+function simDrivenOk(v) {
+  if (Array.isArray(v)) return v.length > 0 && v.every((t) => simDrivenOk(t));
+  if (!isObj(v)) return false;
+  if ('drive' in v) return simDrivenOk(v.drive);
+  return (typeof v.clock === 'string' && v.clock.length > 0) || (typeof v.expr === 'string' && v.expr.length > 0);
+}
+
+function checkSimOpParam(ctx, opName, k, v, p, path) {
+  const allowedTypes = typesOf(p);
+  const values = p.values;
+  if (Array.isArray(values) && (typeof v === 'string' || typeof v === 'boolean')) {
+    if (!values.some((a) => typeof a === typeof v && a === v)) {
+      const strVals = values.filter((a) => typeof a === 'string');
+      const hint = typeof v === 'string' && strVals.length ? didYouMean(v, strVals) : [];
+      const allowedDesc = values.map((a) => (typeof a === 'boolean' ? JSON.stringify(a) : String(a))).join(', ');
+      ctx.add('error', 'bad_value', path, `${opName}.${k} is ${JSON.stringify(v)}; it takes ${allowedDesc}`,
+        { name: k, op: opName, value: short(v), allowed: values, didYouMean: hint });
+      return;
+    }
+  }
+  if (p.keyable && (isObj(v) || (Array.isArray(v) && v.some(isObj)))) {
+    if (simDrivenOk(v)) return;
+    if (!isObj(v) || !('keys' in v) || !simKeyedOk(v, allowedTypes)) {
+      const words = allowedTypes.map((x) => TYPE_WORDS[x] || x).join(' or ');
+      ctx.add('error', 'bad_type', path, `${opName}.${k} is ${words}, or { "keys": [{ "t": 0, "v": … }] }, not ${String(JSON.stringify(v)).slice(0, 60)}`,
+        { name: k, op: opName, expected: [...allowedTypes, 'keys'], value: short(v) });
+    }
+    return;
+  }
+  if (!allowedTypes.some((t) => typeOk(v, t))) {
+    const words = allowedTypes.map((x) => TYPE_WORDS[x] || x).join(' or ');
+    ctx.add('error', 'bad_type', path, `${opName}.${k} is ${words}, not ${String(JSON.stringify(v)).slice(0, 60)}`,
+      { name: k, op: opName, expected: allowedTypes, value: short(v) });
+    return;
+  }
+  checkParamRange(ctx, opName, k, v, p, path);
+}
+
+function checkSimOps(ctx, ops, path, sims, present = false) {
+  if (ops == null) {
+    if (present) ctx.add('error', 'bad_type', path, '`ops` is a list of sim op objects', { name: 'ops' });
+    return;
+  }
+  if (!Array.isArray(ops)) { ctx.add('error', 'bad_type', path, '`ops` is a list of sim op objects', { name: 'ops' }); return; }
+  const opNames = sims.ops || [];
+  const opSchemas = sims.opSchemas || {};
+  const common = new Set(sims.opCommonKeys || ['op', 'set', 'id', 'enabled', 'after', 'note', 'comment']);
+  ops.forEach((op, i) => {
+    const opPath = join(path, i);
+    if (!isObj(op)) { ctx.add('error', 'bad_type', opPath, 'a sim op is { "op": "…", "set": "…", … }', { name: 'op' }); return; }
+    const opName = op.op;
+    if (!opNames.includes(opName)) {
+      ctx.add('error', 'unknown_op', join(opPath, 'op'), `unknown sim op "${opName}"`,
+        { name: opName, didYouMean: didYouMean(String(opName), opNames) });
+      return;
+    }
+    const spec = opSchemas[opName] || {};
+    const params = spec.params || {};
+    if (op.enabled !== false && !('set' in op)) {
+      ctx.add('error', 'missing_required', opPath, `${opName} needs \`set\``, { name: 'set', op: opName });
+    }
+    for (const [k, v] of Object.entries(op)) {
+      const kp = join(opPath, k);
+      if (common.has(k)) {
+        if (k === 'set' && (typeof v !== 'string' || !v)) {
+          ctx.add('error', 'bad_type', kp, `${opName}.set must be a set name string`, { name: 'set', op: opName, expected: ['string'], value: short(v) });
+        } else if (k === 'enabled' && typeof v !== 'boolean') {
+          ctx.add('error', 'bad_type', kp, `${opName}.enabled must be true or false`, { name: 'enabled', op: opName, expected: ['bool'], value: short(v) });
+        } else if ((k === 'id' || k === 'note' || k === 'comment') && typeof v !== 'string') {
+          ctx.add('error', 'bad_type', kp, `${opName}.${k} must be a string`, { name: k, op: opName, expected: ['string'], value: short(v) });
+        } else if (k === 'after' && !(typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string')))) {
+          ctx.add('error', 'bad_type', kp, `${opName}.after must be an op id string or list of strings`, { name: 'after', op: opName, expected: ['string', 'array'], value: short(v) });
+        }
+        continue;
+      }
+      if (Object.hasOwn(params, k)) {
+        checkSimOpParam(ctx, opName, k, v, params[k], kp);
+        continue;
+      }
+      const hint = didYouMean(k, Object.keys(params));
+      ctx.add('error', 'unknown_param', kp, `${opName} has no parameter \`${k}\`${hint.length ? `: did you mean \`${hint[0]}\`?` : ''}`,
+        { name: k, op: opName, didYouMean: hint, allowed: Object.keys(params).sort() });
+    }
+    for (const [k, p] of Object.entries(params)) {
+      if (p.required && op[k] == null) {
+        ctx.add('error', 'missing_required', opPath, `${opName} needs \`${k}\``, { name: k, op: opName });
+      }
+    }
+    const oneOfSeen = new Map();
+    for (const p of Object.values(params)) {
+      if (Array.isArray(p.requiredOneOf) && p.requiredOneOf.length) oneOfSeen.set(p.requiredOneOf.join('\0'), p.requiredOneOf);
+    }
+    const oneOf = [...oneOfSeen.values()].sort((a, b) => a.join('\0').localeCompare(b.join('\0')));
+    for (const group of oneOf) {
+      if (!group.some((g) => op[g] != null)) {
+        ctx.add('error', 'missing_required', opPath, `${opName} needs one of ${group.map((g) => `\`${g}\``).join(', ')}`,
+          { name: group[0], op: opName, allowed: [...group] });
+      }
+    }
+  });
+}
+
+function simSizeOk(v) {
+  if (isNum(v)) return v >= 0;
+  const keys = isObj(v) ? v.keys : null;
+  return Array.isArray(keys) && keys.length > 0 && keys.every((k) => isObj(k) && isNum(k.t) && isNum(k.v) && k.v >= 0);
+}
+
+function checkSimColliders(ctx, cols, path, shapes) {
+  if (cols == null) return;
+  if (!Array.isArray(cols)) { ctx.add('error', 'bad_type', path, 'colliders is a list of { "shape": …, … } (the sim fails to build)', { name: 'colliders' }); return; }
+  cols.forEach((c, i) => {
+    const cp = join(path, i);
+    if (!isObj(c)) { ctx.add('error', 'bad_type', cp, 'a collider is { "shape": …, … } (the sim fails to build)', { name: 'collider' }); return; }
+    if (shapes.length && !shapes.includes(c.shape)) {
+      ctx.add('error', 'bad_value', join(cp, 'shape'), `a collider's shape is one of ${shapes.join(', ')} (the sim fails to build)`,
+        { name: 'shape', value: short(c.shape), allowed: [...shapes], didYouMean: didYouMean(String(c.shape), [...shapes]) });
+    }
+    for (const k of ['radius', 'length', 'round', 'major', 'minor', 'blend']) {
+      if (k in c && !simSizeOk(c[k])) {
+        ctx.add('error', 'bad_type', join(cp, k), `a collider's \`${k}\` is a number >= 0, or keys of them ({ "keys": [{ "t": 0, "v": 0.1 }, …] }): the sim fails to build`,
+          { name: k, value: short(c[k]) });
+      }
+    }
+    const size = c.size;
+    if (c.shape === 'box' && size != null && !(Array.isArray(size) && size.length === 3 && size.every(isNum))
+      && !(isObj(size) && Array.isArray(size.keys))) {
+      ctx.add('error', 'bad_type', join(cp, 'size'), 'a box collider\'s `size` is [x, y, z] metres, or keys of them: the sim fails to build',
+        { name: 'size', value: short(size) });
+    }
+  });
+}
+
 function checkSim(ctx, value, path) {
   const sims = SCHEMA.sims;
   if (!isObj(value)) { ctx.add('error', 'bad_type', path, 'a sim is { "recipe": name, …params } or a sim/1 graph', { name: 'sim' }); return; }
@@ -606,9 +759,8 @@ function checkSim(ctx, value, path) {
       ctx.add('error', 'unknown_field', join(path, k), `a sim graph has no \`${k}\`${hint.length ? `: did you mean \`${hint[0]}\`?` : ''}`, { name: k, didYouMean: hint, allowed: sims.topKeys });
     }
   }
-  (Array.isArray(value.ops) ? value.ops : []).forEach((op, i) => {
-    if (isObj(op) && !sims.ops.includes(op.op)) ctx.add('error', 'unknown_op', join(join(join(path, 'ops'), i), 'op'), `unknown sim op "${op.op}"`, { name: op.op, didYouMean: didYouMean(String(op.op), sims.ops) });
-  });
+  checkSimOps(ctx, value.ops, join(path, 'ops'), sims, 'ops' in value);
+  checkSimColliders(ctx, value.colliders, join(path, 'colliders'), sims.colliderShapes || []);
 }
 
 function checkMedia(ctx, value, path) {
@@ -782,31 +934,134 @@ export function* poseItems(data) {
   }
 }
 
+/** [path, item] for every timeline model layer item, sequences included. */
+export function* modelItems(data, parentModelClipIds = null) {
+  if (!isObj(data)) return;
+  const clipIds = parentModelClipIds || new Set(
+    (Array.isArray(data.clips) ? data.clips : []).filter((c) => isObj(c) && c.mediaType === 'model3d' && c.id != null).map((c) => String(c.id)),
+  );
+  for (const [ci, ch] of (data.channels || []).entries()) {
+    if (!isObj(ch)) continue;
+    for (const [ii, it] of (ch.items || []).entries()) {
+      if (isObj(it) && (isObj(it.model3dConfig) || ch.kind === 'model3d' || ch.mediaType === 'model3d' || it.mediaType === 'model3d' || (it.clipId != null && clipIds.has(String(it.clipId))))) {
+        yield [`channels[${ci}].items[${ii}]`, it];
+      }
+    }
+  }
+  for (const [k, clip] of (data.clips || []).entries()) {
+    const seq = isObj(clip) ? clip.sequence : null;
+    if (isObj(seq)) for (const [p, it] of modelItems(seq, clipIds)) yield [`clips[${k}].sequence.${p}`, it];
+  }
+}
+
+function collectModelIds(data, parentModelClipIds = null) {
+  const ids = new Set();
+  if (!isObj(data)) return ids;
+  const clipIds = parentModelClipIds || new Set(
+    (Array.isArray(data.clips) ? data.clips : []).filter((c) => isObj(c) && c.mediaType === 'model3d' && c.id != null).map((c) => String(c.id)),
+  );
+  for (const ch of data.channels || []) {
+    if (!isObj(ch)) continue;
+    let chHasModel = false;
+    for (const it of ch.items || []) {
+      if (isObj(it) && (isObj(it.model3dConfig) || ch.kind === 'model3d' || ch.mediaType === 'model3d' || it.mediaType === 'model3d' || (it.clipId != null && clipIds.has(String(it.clipId))))) {
+        chHasModel = true;
+        if (it.id != null) ids.add(String(it.id));
+      }
+    }
+    if (chHasModel && typeof ch.name === 'string' && ch.name) ids.add(ch.name);
+  }
+  for (const clip of data.clips || []) {
+    const seq = isObj(clip) ? clip.sequence : null;
+    if (isObj(seq)) for (const id of collectModelIds(seq, clipIds)) ids.add(id);
+  }
+  return ids;
+}
+
 /** (pose) Every problem in a model layer's `model3dConfig.pose`: the schema's fields, then what each control needs to name. `schema: false`
  *  skips the fields (a Scene object's pose, whose fields the Scene's own check has read). */
-export function validatePose(pose, { path = 'model3dConfig.pose', sceneIds = null, schema = true } = {}) {
+export function validatePose(pose, { path = 'model3dConfig.pose', sceneIds = null, modelIds = null, schema = true, clockNames = null } = {}) {
   const ctx = makeCtx(null);
   if (schema) check(ctx, pose, SCHEMA.roots.pose, path, 'pose');
+  // (lipsync) `speech` reads a clock of the Scene
+  if (isObj(pose) && isObj(pose.speech) && pose.speech.on !== false) {
+    const sp = join(path, 'speech');
+    if (typeof pose.speech.clock !== 'string' || !pose.speech.clock) ctx.add('error', 'missing_required', sp, 'speech needs `clock`: the Scene clock that plays the voice (scene.clocks.<name> = { "audio": { "clipId": "<voice clip>", "band": "speech" } })', { name: 'clock' });
+    else if (clockNames && !clockNames.has(pose.speech.clock)) {
+      ctx.add('error', 'unknown_ref', join(sp, 'clock'), clockNames.size ? `no clock "${pose.speech.clock}" in the Scene's clocks (it has ${[...clockNames].sort().join(', ')}): the mouth does not move`
+        : `no clock "${pose.speech.clock}": write it in scene.clocks, an audio clock on the voice clip, or POST /api/world3d/lipsync with \`clip\` makes it`, { name: pose.speech.clock, didYouMean: didYouMean(pose.speech.clock, [...clockNames].sort()) });
+    }
+  }
   if (isObj(pose)) {
     const order = ['clips', 'morphs', 'bones', 'constraints', 'world'];
     if (Array.isArray(pose.order) && pose.order.join() !== order.join()) ctx.add('warning', 'bad_value', join(path, 'order'), `the pose's order is always ${order.join(', ')}; this one is ignored`, { name: 'order', allowed: order });
     const parts = [[pose, path], ...(Array.isArray(pose.layers) ? pose.layers.map((L, i) => [L, join(join(path, 'layers'), i)]) : [])];
+    const checkTargetRef = (ref, cp) => {
+      if (typeof ref === 'string') {
+        if (!sceneIds && !modelIds) return;
+        const id = ref.replace(/^@/, '');
+        const ok = (sceneIds && sceneIds.has(id)) || (ref.startsWith('@') && modelIds && modelIds.has(id));
+        if (!ok) {
+          const all = [...new Set([...(sceneIds || []), ...(ref.startsWith('@') && modelIds ? modelIds : [])])].sort();
+          ctx.add('error', 'unknown_ref', cp, `names Scene object "${id}", which does not exist`, { name: id, didYouMean: didYouMean(id, all) });
+        }
+      } else if (isObj(ref)) {
+        if (typeof ref.model === 'string') {
+          const mid = ref.model.replace(/^@/, '');
+          if (modelIds && !modelIds.has(mid)) ctx.add('error', 'unknown_ref', cp, `names model layer "${ref.model}", which does not exist`, { name: ref.model, didYouMean: didYouMean(mid, [...modelIds].sort()) });
+        } else if (!Object.keys(ref).length) {
+          ctx.add('error', 'missing_required', cp, 'a target object needs `bone` or `model`', { name: 'target' });
+        }
+      }
+    };
     for (const [L, lp] of parts) {
       if (!isObj(L)) continue;
       (Array.isArray(L.clips) ? L.clips : []).forEach((c, i) => { if (isObj(c) && typeof c.clip !== 'string') ctx.add('error', 'missing_required', join(join(lp, 'clips'), i), 'a clip needs `clip`, the animation\'s name', { name: 'clip' }); });
       (Array.isArray(L.constraints) ? L.constraints : []).forEach((c, i) => {
         if (!isObj(c)) return;
         const cp = join(join(lp, 'constraints'), i);
-        if (typeof c.bone !== 'string') ctx.add('error', 'missing_required', cp, `a ${c.type || 'constraint'} needs \`bone\``, { name: 'bone' });
-        if (c.type === 'attach' && typeof c.object !== 'string') ctx.add('error', 'missing_required', cp, 'attach needs `object`, a Scene object\'s id', { name: 'object' });
+        if (c.type === 'splineIk') {
+          const hasBones = Array.isArray(c.bones) && c.bones.length >= 2 && c.bones.every((b) => typeof b === 'string');
+          if (typeof c.bone !== 'string' && !hasBones) {
+            ctx.add('error', 'missing_required', cp, 'splineIk needs `bone` or `bones` (2+ bone names)', { name: 'bone' });
+          }
+          if (!(Array.isArray(c.path) && c.path.length >= 2)) {
+            ctx.add('error', 'missing_required', cp, 'splineIk needs `path`, two points or more', { name: 'path' });
+          }
+        } else if (typeof c.bone !== 'string') {
+          ctx.add('error', 'missing_required', cp, `a ${c.type || 'constraint'} needs \`bone\``, { name: 'bone' });
+        }
+        if (c.type === 'attach' && typeof c.object !== 'string') ctx.add('error', 'missing_required', cp, 'attach needs `object`, a Scene object or model layer id', { name: 'object' });
+        if (c.type === 'pinch' && typeof c.object !== 'string' && !(isObj(c.object) && typeof c.object.model === 'string')) ctx.add('error', 'missing_required', cp, 'pinch needs `object`, a Scene object or model layer id', { name: 'object' });
         if (['lookAt', 'ik', 'parent'].includes(c.type) && c.target === undefined && !c.keys?.target) ctx.add('error', 'missing_required', cp, `${c.type} needs \`target\``, { name: 'target' });
         if (c.type === 'path' && !(Array.isArray(c.path) && c.path.length >= 2)) ctx.add('error', 'missing_required', cp, 'path needs `path`, two points or more', { name: 'path' });
-        // a Scene object a constraint names must be in the project's Scene
-        if (sceneIds) for (const ref of [c.target, c.pole, c.object, ...(Array.isArray(c.path) ? c.path : [])]) {
-          if (typeof ref !== 'string') continue;
-          const id = ref.replace(/^@/, '');
-          if (!sceneIds.has(id)) ctx.add('error', 'unknown_ref', cp, `names Scene object "${id}", which does not exist`, { name: id, didYouMean: didYouMean(id, [...sceneIds].sort()) });
+        // a Scene object or model layer a constraint names must exist in the project
+        if (c.type === 'attach' || c.type === 'pinch') {
+          if (typeof c.object === 'string') {
+            const id = c.object.replace(/^@/, '');
+            if (sceneIds || modelIds) {
+              const ok = (sceneIds && sceneIds.has(id)) || (modelIds && modelIds.has(id));
+              if (!ok) {
+                const all = [...new Set([...(sceneIds || []), ...(modelIds || [])])].sort();
+                const what = c.object.startsWith('@') ? 'Scene object' : 'Scene object or model layer';
+                ctx.add('error', 'unknown_ref', cp, `names ${what} "${id}", which does not exist`, { name: id, didYouMean: didYouMean(id, all) });
+              }
+            }
+          } else if (isObj(c.object) && typeof c.object.model === 'string') {
+            const mid = c.object.model.replace(/^@/, '');
+            if (modelIds && !modelIds.has(mid)) {
+              ctx.add('error', 'unknown_ref', cp, `names model layer "${c.object.model}", which does not exist`, { name: c.object.model, didYouMean: didYouMean(mid, [...modelIds].sort()) });
+            }
+          }
         }
+        const refs = [c.target, c.pole, ...(Array.isArray(c.path) ? c.path : []), ...(isObj(c.orient) && c.orient.aim !== undefined ? [c.orient.aim] : [])];
+        for (const ref of refs) checkTargetRef(ref, cp);
+      });
+      (Array.isArray(L.correctives) ? L.correctives : []).forEach((r, i) => {
+        if (!isObj(r)) return;
+        const crp = join(join(lp, 'correctives'), i);
+        if (typeof r.bone !== 'string' || !r.bone) ctx.add('error', 'missing_required', crp, 'a corrective needs `bone`', { name: 'bone' });
+        if (typeof r.morph !== 'string' || !r.morph) ctx.add('error', 'missing_required', crp, 'a corrective needs `morph`', { name: 'morph' });
       });
     }
   }
@@ -919,7 +1174,8 @@ function checkCameraItems(data, sceneIds, scenesWithCamera) {
   }
   for (const p of scenesWithCamera) {
     issues.push({ path: `${p}.rig.scene.camera`, code: 'scene_camera', severity: 'warning',
-      message: "the Scene films from its own camera, which the editor's Camera layer cannot show or edit (its keys, path, rig and zoom have no say). Film it with the Camera layer (POST /api/world3d/camera-layer turns this camera into one) unless the shot needs what only scene.camera has: an orthographic or fisheye projection, lens shift, tilt-shift, auto exposure and the camera-device fields." });
+      // (screensharp2) the Camera layer steers a Scene's own camera (world3dLayer.js worldSteer, WorldRenderer.applyTime); it did not "have no say"
+      message: "the Scene films from its own camera (its at, target and keys); a Camera layer that has moved off its rest (pan, dolly, tilt, roll, zoom, a path, a rig, their keys) steers that camera from where it stands, so the render films the two together (POST …/camera-shot says where, `films: \"scene\"`). Film it with the Camera layer alone (POST /api/world3d/camera-layer turns this camera into one) unless the shot needs what only scene.camera has: an orthographic or fisheye projection, lens shift, tilt-shift, auto exposure and the camera-device fields." });
   }
   return issues;
 }
@@ -928,11 +1184,14 @@ export function validateProject(data, { mediaExists = null } = {}) {
   const issues = [];
   let scenes = 0;
   const sceneIds = new Set();
+  const clockNames = new Set();
+  const modelIds = collectModelIds(data);
   for (const [p, item] of rigItems(data)) {
     scenes += 1;
     const r = validateRig(item.rig, { path: `${p}.rig`, mediaExists });
     for (const i of [...r.errors, ...r.warnings]) { if (i.item === undefined) i.item = item.id; issues.push(i); }
     for (const o of Array.isArray(item.rig?.scene?.objects) ? item.rig.scene.objects : []) if (isObj(o) && o.id != null) sceneIds.add(String(o.id));
+    if (isObj(item.rig?.scene?.clocks)) for (const k of Object.keys(item.rig.scene.clocks)) clockNames.add(k);
   }
   // (rigging) a Scene object's skeleton and pose: their fields were read with the Scene, what they name is checked here
   let skeletons = 0;
@@ -943,7 +1202,7 @@ export function validateProject(data, { mediaExists = null } = {}) {
       const found = [];
       if (o.skeleton !== undefined) { skeletons += 1; const r = validateSkeleton(o.skeleton, { path: `${op}.skeleton`, schema: false }); found.push(...r.errors, ...r.warnings); }
       if (o.pose !== undefined) {
-        const r = validatePose(o.pose, { path: `${op}.pose`, sceneIds, schema: false });
+        const r = validatePose(o.pose, { path: `${op}.pose`, sceneIds, modelIds, schema: false, clockNames: new Set(isObj(item.rig.scene?.clocks) ? Object.keys(item.rig.scene.clocks) : []) });
         found.push(...r.errors, ...r.warnings);
         if (o.skeleton === undefined && o.model === undefined) found.push({ path: `${op}.pose`, code: 'unused', severity: 'warning', message: 'a pose moves joints: give the object a `skeleton`' });
       }
@@ -966,7 +1225,7 @@ export function validateProject(data, { mediaExists = null } = {}) {
   let poses = 0;
   for (const [p, item] of poseItems(data)) {
     poses += 1;
-    const r = validatePose(item.model3dConfig.pose, { path: `${p}.model3dConfig.pose`, sceneIds });
+    const r = validatePose(item.model3dConfig.pose, { path: `${p}.model3dConfig.pose`, sceneIds, modelIds, clockNames: scenes ? clockNames : null });
     for (const i of [...r.errors, ...r.warnings]) { if (i.item === undefined) i.item = item.id; issues.push(i); }
   }
   return { ...summary(issues), scenes, ...(poses ? { poses } : {}), ...(skeletons ? { skeletons } : {}) };

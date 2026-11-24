@@ -4,7 +4,7 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Grid layers
+# GLEA — Grid layers
 
 > Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts. Load only the sections needed for the task.
 
@@ -222,8 +222,6 @@ Rules:
   masks and transitions work as on any layer, but motion blur on the grid item does not see the
   grid's own transform — animate the camera or the layout for blurred motion. `mirrorH/V` flip the
   picture, not the arrangement.
-- **PRO at render.** Free to build and preview; a project containing a non-empty grid needs a PRO
-  licence to render, the same policy as PRO motion templates (every effect is free).
 - **Grouping existing layers is non-destructive** when the grid is created with `"mode": "current"`
   + `"fit": "none"` — nothing moves or resizes until a layout type is chosen. Write both
   explicitly: a missing `mode` is `rect`, which rearranges the members at once. That pairing is also

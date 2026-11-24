@@ -69,7 +69,7 @@ export const sameRenderProfile = (a, b) => JSON.stringify(sanitizeRenderProfile(
 // The trace settings the preview Final and a render both take, with the defaults each falls back to (fields.js RENDER, the
 // player bar's own starting options).
 const TRACE_KEYS = [
-  ['spp', 64, 'samples'],
+  ['spp', 32, 'samples'],
   ['bounces', 8, 'bounces'],
   ['transparentBounces', 5, 'transparent bounces'],
   ['diffuseBounces', null, 'diffuse bounces'],

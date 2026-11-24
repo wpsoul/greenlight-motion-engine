@@ -7,8 +7,9 @@
  *   1. clips        the GLB's animations, stacked: the first is the base, each next one is laid over what is below by its weight
  *                   (a crossfade is a weight that rises while the one before stays), each with its own time, speed, loop and offset,
  *                   root motion as the clip has it, in place, or carried on from loop to loop
- *   2. morphs       morph target weights by name (replace or add)
- *   3. bones        local transform overrides by bone name: added to what the clips made, or replacing it
+ *   2. morphs       morph target weights by name (replace or add); then `speech`'s mouth shapes, added (lipsync)
+ *   3. bones        local transform overrides by bone name: added to what the clips made, or replacing it; then `speech`'s jaw
+ *                   and head nod, added (lipsync)
  *   4. constraints  look-at, two-bone IK, parent (a bone held by a target), follow path; and attach (another object held by a bone),
  *                   solved against the layer's world transform of this frame
  *   5. world        the layer's transform and its floor (model3dLayer.js poseModel; the floor is found on the pose before step 4, so
@@ -22,11 +23,14 @@
  * Nothing here draws or allocates per frame beyond a few scratch objects; the source clips are read, never written.
  */
 import * as THREE from 'three';
-import { sampleTrack, sampleField, objectPose, isAnimated } from '../../world3d/keys.js';
+import { sampleTrack, sampleQuatTrack, sampleStep, sampleField, objectPose, isAnimated, clockAt } from '../../world3d/keys.js';
+import { audioClockSongTime } from '../../world3d/audioClock.js';
+import { VISEMES, NOD_DEGREES, EYE_DEGREES, lipsyncAt, lipsyncProblem, openFromLevel, emphasisFromLevel, speechTargets, speechWeights } from '../../world3d/lipsync.js';
+import { applyHandShapes, evaluateSkinnedExtremalPoint, pointClearanceFromShape, solvePinchConstraint } from './handPose.js';
 
 export const POSE_ORDER = ['clips', 'morphs', 'bones', 'constraints', 'world'];
 export const ROOT_MODES = ['normal', 'inPlace', 'accumulate'];
-export const CONSTRAINT_TYPES = ['lookAt', 'ik', 'parent', 'path', 'attach'];
+export const CONSTRAINT_TYPES = ['lookAt', 'ik', 'splineIk', 'parent', 'path', 'attach', 'pinch'];
 
 const DEG = Math.PI / 180;
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -43,8 +47,14 @@ const _s = new THREE.Vector3();
 /** A control's value at t: its track in `keys` when it has one, else its own field, else `fallback`. */
 export function controlValue(control, field, t, fallback) {
   if (!control || typeof control !== 'object') return fallback;
-  const v = sampleTrack(control.keys?.[field], t);
-  if (v !== undefined) return v;
+  const track = control.keys?.[field];
+  if (Array.isArray(track) && track.length) {
+    const first = track[0]?.v;
+    const v = typeof first === 'string' || typeof first === 'boolean'
+      ? sampleStep(track, t)
+      : (field === 'quat' ? sampleQuatTrack(track, t) : sampleTrack(track, t));
+    if (v !== undefined) return v;
+  }
   return control[field] !== undefined ? control[field] : fallback;
 }
 
@@ -337,8 +347,20 @@ export function applyPose(rig, pose, t, ctx = {}, fallbackClip = null) {
       if (!found) warn('unknown_morph', `pose: no morph target "${name}" in this model`);
     }
   }
+  // 2b. (lipsync) the voice a Scene clock plays, as this model's mouth, on top of the morphs above
+  const speech = pose.speech && typeof pose.speech === 'object' && pose.speech.on !== false ? speechFrame(rig, pose.speech, t, ctx, warn) : null;
+  if (speech) {
+    for (const [name, w] of speech.morphs) {
+      for (const m of rig.morphMeshes) {
+        const k = m.morphTargetDictionary?.[name];
+        if (k === undefined || (pose.speech.mesh && ![m.name, m.parent?.name].some((x) => x === pose.speech.mesh || x === sanitized(pose.speech.mesh)))) continue;
+        m.morphTargetInfluences[k] += w;
+      }
+    }
+  }
 
-  // 3. bones
+  // 3. bones (hand presets first, so explicit bone overrides refine on top)
+  applyHandShapes(rig, pose, layers, t, warn);
   for (const L of layers) {
     const bones = L.spec.bones && typeof L.spec.bones === 'object' ? L.spec.bones : null;
     if (!bones) continue;
@@ -349,8 +371,11 @@ export function applyPose(rig, pose, t, ctx = {}, fallbackClip = null) {
       const w = clamp01(num(Number(controlValue(control, 'weight', t, 1)), 1)) * L.weight;
       if (!(w > 0)) continue;
       const add = control.mode !== 'replace';
-      const rot = controlValue(control, 'rot', t, null), at = controlValue(control, 'at', t, null), sc = controlValue(control, 'scale', t, null);
-      if (Array.isArray(rot) && maskAllows(rig, L.mask, n, 'q')) {
+      const quat = controlValue(control, 'quat', t, null), rot = controlValue(control, 'rot', t, null), at = controlValue(control, 'at', t, null), sc = controlValue(control, 'scale', t, null);
+      if (Array.isArray(quat) && quat.length >= 4 && maskAllows(rig, L.mask, n, 'q')) {
+        _q1.set(num(quat[0], 0), num(quat[1], 0), num(quat[2], 0), num(quat[3], 1)).normalize();
+        if (add) { _q2.identity().slerp(_q1, w); n.quaternion.multiply(_q2); } else n.quaternion.slerp(_q1, w);
+      } else if (Array.isArray(rot) && maskAllows(rig, L.mask, n, 'q')) {
         _q1.setFromEuler(_e.set(num(rot[0], 0) * DEG, num(rot[1], 0) * DEG, num(rot[2], 0) * DEG, 'XYZ'));
         if (add) { _q2.identity().slerp(_q1, w); n.quaternion.multiply(_q2); } else n.quaternion.slerp(_q1, w);
       }
@@ -364,6 +389,9 @@ export function applyPose(rig, pose, t, ctx = {}, fallbackClip = null) {
       }
     }
   }
+
+  // 3b. (lipsync) the jaw opens and the head nods on the voice's accents, on top of the bones above
+  if (speech) speechBones(rig, pose.speech, speech);
 
   // world (the layer's transform) is already on the nodes' ancestors: the caller placed `outer` and `inner` before this call, and it puts
   // the model on its floor now, on this pose, before the constraints (ctx.beforeConstraints)
@@ -384,6 +412,7 @@ export function applyPose(rig, pose, t, ctx = {}, fallbackClip = null) {
       }
     }
   }
+  applyCorrectives(rig, layers, t, warn);
   return { warnings, rootMotionNode: rootNode };
 }
 
@@ -408,17 +437,25 @@ function measureKept(rig, pose, ctx) {
 
 // ── constraints ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** A target as a world point (the editor's 3D space: one unit per composition pixel). `{ bone }` is one of this model's own. */
+/** A target as a world point (the editor's 3D space: one unit per composition pixel). `{ bone }` without `model` is one of this model's own. */
 function targetPoint(rig, ref, t, ctx, out, warn) {
-  if (ref && typeof ref === 'object' && !Array.isArray(ref) && ref.bone) {
+  if (ref && typeof ref === 'object' && !Array.isArray(ref) && ref.bone && !ref.model) {
     const n = nodeByName(rig, ref.bone);
     if (!n) { warn('unknown_bone', `pose: no bone "${ref.bone}" for a target`); return null; }
+    if (Array.isArray(ref.point) && ref.point.length >= 3) {
+      const scale = ctx?.metresToSpace ?? ctx?.unitsPerMetre ?? 1000;
+      boneFrame(n, _m2);
+      return out.set(num(ref.point[0], 0) * scale, num(ref.point[1], 0) * scale, num(ref.point[2], 0) * scale).applyMatrix4(_m2);
+    }
     n.updateWorldMatrix(true, false);
     return out.setFromMatrixPosition(n.matrixWorld);
   }
   const p = ctx.resolve?.(ref, t);
-  if (!p) { warn('unknown_target', `pose: target ${JSON.stringify(ref)} not found`); return null; }
-  return out.copy(p);
+  if (p) return out.copy(p);
+  const m = ctx.resolveMatrix?.(ref, t);
+  if (m) return out.setFromMatrixPosition(m);
+  warn('unknown_target', `pose: target ${JSON.stringify(ref)} not found`);
+  return null;
 }
 
 /** A node's world rotation set to `q`, through its parent (the local rotation that gives it), blended from the current one by w. */
@@ -490,14 +527,16 @@ const SOLVE = {
 
   /** Two-bone IK: `bone` is the end (a wrist, an ankle); its parent and grandparent bend so that it reaches the target, the middle joint
    *  toward `pole` (a point; left out, the bend the pose already has). `tip` (a bone under the end: a knuckle, a toe) reaches instead
-   *  of the end's own origin: the hand then lands on what it reaches rather than through it. */
+   *  of the end's own origin: the hand then lands on what it reaches rather than through it. Optional `orient` / `rot` orient `end`, and
+   *  `surface` / `contact: 'surface'` iterates using live skinned support vertices so the skin pad kisses the target plane. */
   ik(rig, c, t, w, L, ctx, warn) {
     const end = nodeByName(rig, c.bone);
     if (!end) { warn('unknown_bone', `pose: ik bone "${c.bone}" not found`); return; }
     const mid = end.parent, top = mid?.parent;
     if (!mid || !top || !rig.index.has(top)) { warn('ik_chain', `pose: ik bone "${c.bone}" needs a parent and a grandparent`); return; }
     if (!maskAllows(rig, L.mask, top, 'q') && !maskAllows(rig, L.mask, mid, 'q')) return;
-    const target = targetPoint(rig, controlValue(c, 'target', t, null), t, ctx, new THREE.Vector3(), warn);
+    const targetRef = controlValue(c, 'target', t, null);
+    const target = targetPoint(rig, targetRef, t, ctx, new THREE.Vector3(), warn);
     if (!target) return;
     let tip = null;
     if (c.tip) {
@@ -508,56 +547,424 @@ const SOLVE = {
     }
     const poleRef = controlValue(c, 'pole', t, null);
     const pole = poleRef !== null && poleRef !== undefined ? targetPoint(rig, poleRef, t, ctx, new THREE.Vector3(), warn) : null;
-    // the end aims where the tip must land, less the tip's offset from the end as the hand is held now; with a tip that offset turns
-    // with the forearm, so it is solved again a few times (each pass on the pose the last one made)
-    const passes = tip ? 6 : 1;
+
+    const orientVal = controlValue(c, 'orient', t, undefined);
+    const rotVal = controlValue(c, 'rot', t, null);
+    const hasOrient = orientVal !== undefined && orientVal !== false && orientVal !== null;
+    const hasRot = Array.isArray(rotVal) && rotVal.length >= 3;
+    const wantsEndOrient = (hasOrient || hasRot) && maskAllows(rig, L.mask, end, 'q');
+    const qRotLocal = hasRot
+      ? new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(num(rotVal[0], 0) * DEG, num(rotVal[1], 0) * DEG, num(rotVal[2], 0) * DEG, 'XYZ'),
+      )
+      : null;
+    const endBaseLocalQ = end.quaternion.clone();
+
+    // Resolve optional aim target point once if orient.aim is a target ref
+    let aimPt = null;
+    if (hasOrient && typeof orientVal === 'object' && !Array.isArray(orientVal) && orientVal.aim && !Array.isArray(orientVal.aim)) {
+      aimPt = targetPoint(rig, orientVal.aim, t, ctx, new THREE.Vector3(), warn);
+    }
+
+    const computeEndQuat = () => {
+      if (!hasOrient) return null;
+      let qBase = null;
+      if (orientVal === true) {
+        if (targetRef && typeof targetRef === 'object' && !Array.isArray(targetRef) && targetRef.bone && !targetRef.model) {
+          const tn = nodeByName(rig, targetRef.bone);
+          qBase = tn ? worldQuat(tn, new THREE.Quaternion()) : worldQuat(end, new THREE.Quaternion());
+        } else {
+          const tm = ctx.resolveMatrix?.(targetRef, t);
+          if (tm) {
+            qBase = new THREE.Quaternion();
+            tm.decompose(_v5, qBase, _s);
+          } else {
+            qBase = worldQuat(end, new THREE.Quaternion());
+          }
+        }
+      } else if (Array.isArray(orientVal) && orientVal.length >= 3) {
+        qBase = new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(num(orientVal[0], 0) * DEG, num(orientVal[1], 0) * DEG, num(orientVal[2], 0) * DEG, 'XYZ'),
+        );
+      } else if (typeof orientVal === 'object') {
+        const aimDir = Array.isArray(orientVal.aim) && orientVal.aim.length >= 3
+          ? new THREE.Vector3(num(orientVal.aim[0], 0), num(orientVal.aim[1], 0), num(orientVal.aim[2], 1))
+          : (aimPt ? aimPt.clone().sub(worldPos(end, new THREE.Vector3())) : target.clone().sub(worldPos(end, new THREE.Vector3())));
+        if (aimDir.lengthSq() > 1e-12) aimDir.normalize();
+        else aimDir.set(0, 0, 1);
+
+        const localAxis = aimAxis(rig, end, { axis: orientVal.axis, forward: orientVal.forward }).clone();
+        const curQ = worldQuat(end, new THREE.Quaternion());
+
+        if (Array.isArray(orientVal.up) && orientVal.up.length >= 3) {
+          const worldUp = new THREE.Vector3(num(orientVal.up[0], 0), num(orientVal.up[1], 1), num(orientVal.up[2], 0));
+          if (worldUp.lengthSq() > 1e-12) worldUp.normalize();
+          else worldUp.set(0, 1, 0);
+
+          const wRight = new THREE.Vector3().crossVectors(worldUp, aimDir);
+          if (wRight.lengthSq() > 1e-10) {
+            wRight.normalize();
+            const wUp = new THREE.Vector3().crossVectors(aimDir, wRight).normalize();
+            let localUp = aimAxis(rig, end, { axis: orientVal.upAxis, forward: [0, 1, 0] }).clone();
+            if (Math.abs(localUp.dot(localAxis)) > 0.98) {
+              localUp = aimAxis(rig, end, { forward: Math.abs(localAxis.y) < 0.9 ? [0, 1, 0] : [1, 0, 0] }).clone();
+            }
+            const lRight = new THREE.Vector3().crossVectors(localUp, localAxis).normalize();
+            const lUp = new THREE.Vector3().crossVectors(localAxis, lRight).normalize();
+            const mW = new THREE.Matrix4().makeBasis(wRight, wUp, aimDir);
+            const mL = new THREE.Matrix4().makeBasis(lRight, lUp, localAxis);
+            qBase = new THREE.Quaternion().setFromRotationMatrix(mW.multiply(mL.transpose()));
+          } else {
+            const curAim = localAxis.clone().applyQuaternion(curQ).normalize();
+            qBase = new THREE.Quaternion().setFromUnitVectors(curAim, aimDir).multiply(curQ);
+          }
+        } else {
+          const curAim = localAxis.clone().applyQuaternion(curQ).normalize();
+          qBase = new THREE.Quaternion().setFromUnitVectors(curAim, aimDir).multiply(curQ);
+        }
+      }
+      return qBase && qRotLocal ? qBase.clone().multiply(qRotLocal) : qBase;
+    };
+
+    const surfaceVal = controlValue(c, 'surface', t, undefined);
+    const wantsSurface = Boolean(surfaceVal) || c.contact === 'surface';
+    const metresToSpace = ctx?.metresToSpace ?? ctx?.unitsPerMetre ?? 1000;
+    const spaceToMm = 1000 / metresToSpace;
+    let surfaceNormal = null;
+    let clearanceSpace = 0;
+    let surfaceTarget = target;
+    if (wantsSurface) {
+      const topNormal = controlValue(c, 'surfaceNormal', t, null);
+      const nRaw = (surfaceVal && typeof surfaceVal === 'object' && Array.isArray(surfaceVal.normal))
+        ? surfaceVal.normal
+        : (Array.isArray(topNormal) ? topNormal : (Array.isArray(c.normal) ? c.normal : null));
+      if (nRaw && nRaw.length >= 3) {
+        surfaceNormal = new THREE.Vector3(num(nRaw[0], 0), num(nRaw[1], 1), num(nRaw[2], 0));
+      } else if (hasOrient && typeof orientVal === 'object' && Array.isArray(orientVal.aim) && orientVal.aim.length >= 3) {
+        surfaceNormal = new THREE.Vector3(-num(orientVal.aim[0], 0), -num(orientVal.aim[1], 0), -num(orientVal.aim[2], 1));
+      } else {
+        surfaceNormal = worldPos(top, new THREE.Vector3()).sub(target);
+      }
+      if (surfaceNormal.lengthSq() > 1e-12) surfaceNormal.normalize();
+      else surfaceNormal.set(0, 1, 0);
+      const clM = num(Number(surfaceVal && typeof surfaceVal === 'object' ? surfaceVal.clearance : c.clearance), 0);
+      clearanceSpace = clM * metresToSpace;
+
+      const hasExplicitPoint = Array.isArray(targetRef)
+        || (targetRef && typeof targetRef === 'object' && !Array.isArray(targetRef) && Array.isArray(targetRef.point));
+      const refKey = typeof targetRef === 'string' ? targetRef.replace(/^@/, '') : targetRef;
+      const targetShape = !hasExplicitPoint && refKey
+        ? (ctx?.resolveShape?.(refKey, t) || ctx?.resolveShape?.(targetRef, t) || null)
+        : null;
+      if (targetShape) {
+        const sd0 = pointClearanceFromShape(target, targetShape);
+        if (Number.isFinite(sd0) && sd0 < 0) {
+          let lo = 0;
+          let hi = Math.max(1e-3 * metresToSpace, -sd0);
+          const maxReach = Math.max(4 * metresToSpace, Math.abs(sd0) * 4);
+          while (hi < maxReach && pointClearanceFromShape(_v5.copy(target).addScaledVector(surfaceNormal, hi), targetShape) < 0) {
+            lo = hi;
+            hi *= 2;
+          }
+          if (pointClearanceFromShape(_v5.copy(target).addScaledVector(surfaceNormal, hi), targetShape) >= 0) {
+            for (let it = 0; it < 20; it += 1) {
+              const mid = 0.5 * (lo + hi);
+              if (pointClearanceFromShape(_v5.copy(target).addScaledVector(surfaceNormal, mid), targetShape) < 0) lo = mid;
+              else hi = mid;
+            }
+            surfaceTarget = target.clone().addScaledVector(surfaceNormal, 0.5 * (lo + hi));
+          }
+        }
+      }
+    }
+
+    // the end aims where the tip must land, less the tip's offset from the end as the hand is held now; with a tip or surface contact
+    // that offset turns with the forearm and skin, so it is solved iteratively
+    const passes = wantsSurface ? 8 : (tip ? (wantsEndOrient ? 8 : 6) : 1);
     let l1 = 0, l2 = 0, tLen = 0;
-    const goal = target.clone();
+    if (passes > 1) rig.ikFrom = [top.quaternion.clone(), mid.quaternion.clone(), endBaseLocalQ.clone()];
+    // Orient end before pass 0 so tip/skin offset already matches the target orientation
+    if (wantsEndOrient && (tip || wantsSurface)) {
+      if (hasOrient) {
+        const q0Target = computeEndQuat();
+        if (q0Target) setWorldQuaternion(end, q0Target, 1);
+      } else if (qRotLocal) {
+        end.quaternion.copy(endBaseLocalQ).multiply(qRotLocal);
+        end.updateWorldMatrix(true, true);
+      }
+    }
+
+    const goal = surfaceTarget.clone();
     if (tip) goal.sub(worldPos(tip, new THREE.Vector3()).sub(worldPos(end, new THREE.Vector3())));
+    let lastEndTargetQ = null;
+
+    const limits = c.limits && typeof c.limits === 'object' ? c.limits : null;
+    const minBendRaw = limits?.minBend ?? c.minBend;
+    const maxBendRaw = limits?.maxBend ?? c.maxBend;
+    const minBendDeg = Number.isFinite(Number(minBendRaw)) && minBendRaw !== null ? Math.max(0, Math.min(180, Number(minBendRaw))) : null;
+    const maxBendDeg = Number.isFinite(Number(maxBendRaw)) && maxBendRaw !== null ? Math.max(0, Math.min(180, Number(maxBendRaw))) : null;
+    const poleAngleDeg = num(Number(controlValue(c, 'poleAngle', t, 0)), 0);
+    let clamped = false;
+    let lastBendAngleDeg = 0;
+
     for (let pass = 0; pass < passes; pass += 1) {
-      // after a pass the tip is off by what the turned hand moved it: the end's goal moves by that much
-      if (pass > 0) goal.add(target.clone().sub(worldPos(tip, new THREE.Vector3())));
+      if (pass > 0) {
+        if (wantsSurface) {
+          const ext = evaluateSkinnedExtremalPoint(rig, tip || end, surfaceTarget, surfaceNormal);
+          if (ext) {
+            const errN = ext.signedDistance - clearanceSpace;
+            const tol = 1e-5 * Math.max(1, metresToSpace / 1000);
+            if (Math.abs(errN) < tol && ext.tangentialError < tol) break;
+            const delta = surfaceTarget.clone().addScaledVector(surfaceNormal, clearanceSpace).sub(ext.point);
+            const gain = pass === 1 ? 1.0 : 0.85;
+            const maxStep = Math.max(1e-3, (l1 + l2) * 0.5);
+            if (delta.length() > maxStep) delta.setLength(maxStep);
+            goal.addScaledVector(delta, gain);
+          } else if (tip) {
+            goal.add(surfaceTarget.clone().sub(worldPos(tip, new THREE.Vector3())));
+          }
+        } else if (tip) {
+          goal.add(surfaceTarget.clone().sub(worldPos(tip, new THREE.Vector3())));
+        }
+      }
       const a = worldPos(top, new THREE.Vector3()), b = worldPos(mid, new THREE.Vector3()), e = worldPos(end, new THREE.Vector3());
       l1 = a.distanceTo(b); l2 = b.distanceTo(e);
       if (!(l1 > 1e-9) || !(l2 > 1e-9)) return;
       const toT = goal.clone().sub(a);
       tLen = toT.length();
-      const d = Math.min(Math.max(tLen, Math.abs(l1 - l2) + 1e-6), (l1 + l2) * 0.99999);
+      let dMin = Math.abs(l1 - l2) + 1e-6;
+      let dMax = (l1 + l2) * 0.99999;
+      if (maxBendDeg !== null) {
+        const dFromMaxBend = Math.sqrt(Math.max(1e-12, l1 * l1 + l2 * l2 + 2 * l1 * l2 * Math.cos(maxBendDeg * DEG)));
+        if (dFromMaxBend > dMin) { dMin = Math.min(dMax, dFromMaxBend); }
+      }
+      if (minBendDeg !== null) {
+        const dFromMinBend = Math.sqrt(Math.max(1e-12, l1 * l1 + l2 * l2 + 2 * l1 * l2 * Math.cos(minBendDeg * DEG)));
+        if (dFromMinBend < dMax) { dMax = Math.max(dMin, dFromMinBend); }
+      }
+      const d = Math.min(Math.max(tLen, dMin), dMax);
+      if (d !== Math.min(Math.max(tLen, Math.abs(l1 - l2) + 1e-6), (l1 + l2) * 0.99999)) clamped = true;
       const dir = toT.lengthSq() > 1e-18 ? toT.normalize() : e.clone().sub(a).normalize();
-      // the bend: toward the pole, or the side the middle joint is on now
+      // the bend: toward the pole, or the side the middle joint is on now (stable fallback avoids flips near full extension)
       const bend = pole ? pole.clone().sub(a) : b.clone().sub(a);
       bend.addScaledVector(dir, -bend.dot(dir));
-      if (bend.lengthSq() < 1e-18) bend.set(0, 1, 0).addScaledVector(dir, -dir.y);
+      if (bend.lengthSq() < 1e-10) {
+        bend.copy(b).sub(a).addScaledVector(dir, -b.clone().sub(a).dot(dir));
+      }
+      if (bend.lengthSq() < 1e-10) {
+        const fb = Math.abs(dir.z) < 0.9 ? _v1.set(0, 0, 1) : _v1.set(0, 1, 0);
+        bend.copy(fb).addScaledVector(dir, -fb.dot(dir));
+      }
       bend.normalize();
-      const cosA = (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d);
+      if (Math.abs(poleAngleDeg) > 1e-6) bend.applyQuaternion(_q1.setFromAxisAngle(dir, poleAngleDeg * DEG)).normalize();
+      const cosA = THREE.MathUtils.clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
       const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
       const want = a.clone().addScaledVector(dir, l1 * cosA).addScaledVector(bend, l1 * sinA);
       const reach = a.clone().addScaledVector(dir, d);
+      lastBendAngleDeg = Math.acos(THREE.MathUtils.clamp((d * d - l1 * l1 - l2 * l2) / (2 * l1 * l2), -1, 1)) / DEG;
       // the weight blends once, on the last pass; the passes before it solve at full weight
       const ww = pass === passes - 1 ? w : 1;
-      if (pass === 0 && passes > 1) rig.ikFrom = [top.quaternion.clone(), mid.quaternion.clone()];
       // top bone: its child (the middle joint) onto `want`
       if (maskAllows(rig, L.mask, top, 'q')) {
         const turn = new THREE.Quaternion().setFromUnitVectors(b.clone().sub(a).normalize(), want.clone().sub(a).normalize());
         setWorldQuaternion(top, turn.multiply(worldQuat(top, new THREE.Quaternion())), passes > 1 ? 1 : ww);
+        if (limits?.top && clampLocalLimits(rig, top, limits.top)) clamped = true;
       }
       // middle bone: the end onto the reach point
       if (maskAllows(rig, L.mask, mid, 'q')) {
         const b2 = worldPos(mid, new THREE.Vector3()), e2 = worldPos(end, new THREE.Vector3());
         const turn = new THREE.Quaternion().setFromUnitVectors(e2.sub(b2).normalize(), reach.sub(b2).normalize());
         setWorldQuaternion(mid, turn.multiply(worldQuat(mid, new THREE.Quaternion())), passes > 1 ? 1 : ww);
+        if (limits?.mid && clampLocalLimits(rig, mid, limits.mid)) clamped = true;
+      }
+      if (wantsEndOrient) {
+        if (hasOrient) {
+          lastEndTargetQ = computeEndQuat();
+          if (lastEndTargetQ) setWorldQuaternion(end, lastEndTargetQ, passes > 1 ? 1 : ww);
+        } else if (qRotLocal) {
+          _q2.identity().slerp(qRotLocal, passes > 1 ? 1 : ww);
+          end.quaternion.copy(endBaseLocalQ).multiply(_q2);
+          end.updateWorldMatrix(false, true);
+          lastEndTargetQ = worldQuat(end, new THREE.Quaternion());
+        }
+        if (limits?.end && clampLocalLimits(rig, end, limits.end)) clamped = true;
       }
     }
     if (passes > 1 && w < 1) {
       // part of the way: from the pose before the IK to the solved one
-      const [q0, q1] = rig.ikFrom;
+      const [q0, q1, q2] = rig.ikFrom;
       top.quaternion.copy(q0.slerp(top.quaternion, w));
       mid.quaternion.copy(q1.slerp(mid.quaternion, w));
+      if (wantsEndOrient) end.quaternion.copy(q2.slerp(end.quaternion, w));
       top.updateWorldMatrix(false, true);
     }
-    // the effector's distance from the target, in the editor's units (a millimetre each), and how far it could reach
-    rig.solved.push({ type: 'ik', bone: c.bone, ...(tip ? { tip: c.tip } : {}), weight: +w.toFixed(4),
-      distance: +worldPos(tip || end, new THREE.Vector3()).distanceTo(target).toFixed(4), reach: +(l1 + l2).toFixed(4), targetDistance: +tLen.toFixed(4) });
+
+    const report = {
+      type: 'ik',
+      bone: c.bone,
+      ...(tip ? { tip: c.tip } : {}),
+      weight: +w.toFixed(4),
+      distance: +worldPos(tip || end, new THREE.Vector3()).distanceTo(surfaceTarget).toFixed(4),
+      reach: +(l1 + l2).toFixed(4),
+      targetDistance: +tLen.toFixed(4),
+      bendAngleDeg: +lastBendAngleDeg.toFixed(2),
+      ...(clamped ? { clamped: true } : {}),
+    };
+    if (wantsEndOrient && lastEndTargetQ) {
+      const qCur = worldQuat(end, new THREE.Quaternion());
+      report.orientErrorDeg = +(2 * Math.acos(Math.min(1, Math.abs(lastEndTargetQ.dot(qCur)))) / DEG).toFixed(4);
+    }
+    if (wantsSurface) {
+      const extF = evaluateSkinnedExtremalPoint(rig, tip || end, surfaceTarget, surfaceNormal);
+      if (extF) {
+        const desired = surfaceTarget.clone().addScaledVector(surfaceNormal, clearanceSpace);
+        report.skinError = +extF.point.distanceTo(desired).toFixed(4);
+        report.penetrationMm = +(extF.penetration * spaceToMm).toFixed(4);
+      }
+    }
+    rig.solved.push(report);
+  },
+
+  /** Spline IK: fits a chain of bones (`bones` or `chain` ancestors from `bone`) along a `path` spline with parallel-transport up & twist. */
+  splineIk(rig, c, t, w, L, ctx, warn) {
+    let chain = [];
+    if (Array.isArray(c.bones) && c.bones.length >= 2) {
+      for (const bn of c.bones) {
+        const node = nodeByName(rig, bn);
+        if (!node) { warn('unknown_bone', `pose: splineIk bone "${bn}" not found`); return; }
+        chain.push(node);
+      }
+    } else {
+      const end = nodeByName(rig, c.bone);
+      if (!end) { warn('unknown_bone', `pose: splineIk bone "${c.bone}" not found`); return; }
+      const count = Math.max(2, Math.min(64, Math.round(num(Number(c.chain), 4))));
+      for (let p = end; p && chain.length < count && p !== rig.root; p = p.parent) chain.unshift(p);
+    }
+    if (chain.length < 2) { warn('spline_ik_chain', `pose: splineIk needs at least 2 bones`); return; }
+    const pts = Array.isArray(c.path) ? c.path.map((p) => targetPoint(rig, p, t, ctx, new THREE.Vector3(), warn)).filter(Boolean) : [];
+    if (pts.length < 2) { warn('path_points', 'pose: splineIk needs a `path` of at least two points'); return; }
+
+    const closed = !!c.closed;
+    const curve = new THREE.CatmullRomCurve3(pts, closed, 'centripetal');
+    const curveLen = Math.max(1e-6, curve.getLength());
+    const startU = clamp01(num(Number(controlValue(c, 'start', t, 0)), 0));
+    const endU = clamp01(num(Number(controlValue(c, 'end', t, 1)), 1));
+    const progress = clamp01(num(Number(controlValue(c, 'progress', t, 0)), 0));
+    const stretchVal = controlValue(c, 'stretch', t, false);
+    const stretchAmt = typeof stretchVal === 'boolean' ? (stretchVal ? 1 : 0) : clamp01(num(Number(stretchVal), 0));
+    const twistVal = controlValue(c, 'twist', t, 0);
+    const twist0 = Array.isArray(twistVal) ? num(twistVal[0], 0) : 0;
+    const twist1 = Array.isArray(twistVal) ? num(twistVal[1], twist0) : num(Number(twistVal), 0);
+    const jointLimitRad = Number.isFinite(Number(c.limit)) && c.limit !== null ? Math.max(0, Number(c.limit)) * DEG : Infinity;
+
+    const worldPtsBefore = chain.map((b) => worldPos(b, new THREE.Vector3()));
+    const segLens = [];
+    for (let k = 0; k < chain.length - 1; k += 1) segLens.push(Math.max(1e-6, worldPtsBefore[k].distanceTo(worldPtsBefore[k + 1])));
+
+    const uBase = clamp01(startU + progress);
+    const spanU = Math.max(1e-4, endU - startU);
+    const splinePts = [];
+    const tangents = [];
+    let cumArc = uBase * curveLen;
+    for (let k = 0; k < chain.length; k += 1) {
+      if (k > 0) cumArc += segLens[k - 1];
+      const uFixed = closed ? ((cumArc / curveLen) % 1 + 1) % 1 : Math.min(1, cumArc / curveLen);
+      const frac = k / Math.max(1, chain.length - 1);
+      const uStretch = closed ? ((uBase + spanU * frac) % 1 + 1) % 1 : Math.min(1, uBase + spanU * frac);
+      const uk = uFixed + (uStretch - uFixed) * stretchAmt;
+      splinePts.push(curve.getPointAt(uk));
+      tangents.push(curve.getTangentAt(uk).normalize());
+    }
+
+    const upRaw = Array.isArray(c.up) && c.up.length === 3 ? new THREE.Vector3(num(c.up[0], 0), num(c.up[1], 1), num(c.up[2], 0)) : new THREE.Vector3(0, 1, 0);
+    if (upRaw.lengthSq() < 1e-10) upRaw.set(0, 1, 0);
+    upRaw.normalize();
+
+    const ups = [];
+    const u0 = upRaw.clone().addScaledVector(tangents[0], -upRaw.dot(tangents[0]));
+    if (u0.lengthSq() < 1e-10) {
+      const alt = Math.abs(tangents[0].z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+      u0.copy(alt).addScaledVector(tangents[0], -alt.dot(tangents[0]));
+    }
+    ups.push(u0.normalize());
+    for (let k = 1; k < chain.length; k += 1) {
+      const tr = new THREE.Quaternion().setFromUnitVectors(tangents[k - 1], tangents[k]);
+      ups.push(ups[k - 1].clone().applyQuaternion(tr).normalize());
+    }
+
+    // Move chain root to spline start unless keepRoot is explicitly requested
+    const rootBone = chain[0];
+    if (c.keepRoot !== true && rootBone.parent && maskAllows(rig, L.mask, rootBone, 'p')) {
+      rootBone.parent.updateWorldMatrix(true, false);
+      const localTarget = rootBone.parent.matrixWorld.clone().invert();
+      const ptLocal = splinePts[0].clone().applyMatrix4(localTarget);
+      rootBone.position.lerp(ptLocal, w);
+      rootBone.updateWorldMatrix(false, true);
+    }
+
+    for (let k = 0; k < chain.length; k += 1) {
+      const bone = chain[k];
+      if (!maskAllows(rig, L.mask, bone, 'q')) continue;
+      if (k > 0 && stretchAmt > 0 && bone.parent && maskAllows(rig, L.mask, bone, 'p')) {
+        const desiredDist = segLens[k - 1] + (splinePts[k].distanceTo(splinePts[k - 1]) - segLens[k - 1]) * stretchAmt;
+        const ri = rig.index.get(bone);
+        const dirL = ri !== undefined && rig.rest[ri].p.lengthSq() > 1e-12 ? rig.rest[ri].p.clone().normalize() : new THREE.Vector3(0, 1, 0);
+        bone.position.lerp(dirL.multiplyScalar(desiredDist), w);
+        bone.updateWorldMatrix(false, true);
+      }
+      const frac = k / Math.max(1, chain.length - 1);
+      const aimWorld = k < chain.length - 1
+        ? splinePts[k + 1].clone().sub(worldPos(bone, new THREE.Vector3()))
+        : tangents[k].clone();
+      if (aimWorld.lengthSq() < 1e-12) aimWorld.copy(tangents[k]);
+      aimWorld.normalize();
+
+      const twistAngle = (twist0 + (twist1 - twist0) * frac) * DEG;
+      const upWorld = ups[k].clone().addScaledVector(aimWorld, -ups[k].dot(aimWorld));
+      if (upWorld.lengthSq() < 1e-10) upWorld.copy(ups[0]);
+      upWorld.normalize().applyQuaternion(_q1.setFromAxisAngle(aimWorld, twistAngle));
+      const sideWorld = new THREE.Vector3().crossVectors(upWorld, aimWorld).normalize();
+      const orthoUpWorld = new THREE.Vector3().crossVectors(aimWorld, sideWorld).normalize();
+
+      // Determine bone local primary axis toward child
+      let localAim = null;
+      if (k < chain.length - 1) {
+        const ci = rig.index.get(chain[k + 1]);
+        if (ci !== undefined && rig.rest[ci].p.lengthSq() > 1e-12) localAim = rig.rest[ci].p.clone().normalize();
+      } else {
+        const tipChild = bone.children.find((ch) => rig.index.has(ch) && rig.rest[rig.index.get(ch)].p.lengthSq() > 1e-12);
+        if (tipChild) localAim = rig.rest[rig.index.get(tipChild)].p.clone().normalize();
+      }
+      if (!localAim) {
+        const bi = rig.index.get(bone);
+        localAim = bi !== undefined && rig.rest[bi].p.lengthSq() > 1e-12 ? rig.rest[bi].p.clone().normalize() : new THREE.Vector3(0, 1, 0);
+      }
+      let localUp = new THREE.Vector3(0, 1, 0);
+      if (Math.abs(localUp.dot(localAim)) > 0.98) localUp.set(0, 0, 1);
+      const localSide = new THREE.Vector3().crossVectors(localUp, localAim).normalize();
+      const localOrthoUp = new THREE.Vector3().crossVectors(localAim, localSide).normalize();
+
+      const mW = new THREE.Matrix4().makeBasis(sideWorld, orthoUpWorld, aimWorld);
+      const mL = new THREE.Matrix4().makeBasis(localSide, localOrthoUp, localAim);
+      let qTarget = new THREE.Quaternion().setFromRotationMatrix(mW.multiply(mL.transpose()));
+      if (Number.isFinite(jointLimitRad)) {
+        const qCur = worldQuat(bone, new THREE.Quaternion());
+        const diff = qCur.angleTo(qTarget);
+        if (diff > jointLimitRad && diff > 1e-6) {
+          qTarget = qCur.clone().slerp(qTarget, jointLimitRad / diff);
+        }
+      }
+      setWorldQuaternion(bone, qTarget, w);
+    }
+
+    const tipPt = worldPos(chain[chain.length - 1], new THREE.Vector3());
+    rig.solved.push({
+      type: 'splineIk',
+      bone: c.bone,
+      bones: chain.map((b) => b.name),
+      tipError: +tipPt.distanceTo(splinePts[splinePts.length - 1]).toFixed(4),
+      weight: +w.toFixed(4),
+    });
   },
 
   /** A bone held by a target: its world position (and rotation, with `orient`) follows the target, `at` and `rot` the offset in the
@@ -595,8 +1002,9 @@ const SOLVE = {
     holdNode(rig, L, n, m, w, !!c.orient);
   },
 
-  /** Another object held by a bone (a cup in a hand): the object's world matrix is the bone's times `at`/`rot`, handed out through
-   *  ctx.attach (the world places it), blended from the object's own place by the weight: key it 0 → 1 to pick the object up. */
+  /** Another object held by a bone (a cup in a hand): the object's world matrix is the bone's times `at`/`rot` (anchored at optional local
+   *  `point`), handed out through ctx.attach (the world places it), blended from the object's own place by the weight: key it 0 → 1 to
+   *  pick the object up. */
   attach(rig, c, t, w, L, ctx, warn) {
     const n = nodeByName(rig, c.bone);
     if (!n) { warn('unknown_bone', `pose: attach bone "${c.bone}" not found`); return; }
@@ -605,12 +1013,136 @@ const SOLVE = {
     // `keep`: the object stays where it was against the bone at the moment it is picked up (rig.kept, measured by applyPose first)
     const kept = c.keep ? rig.kept?.get(c) : null;
     if (c.keep && !kept) { warn('attach_keep', `pose: attach "${id}" could not measure where the hand held it`); return; }
+    const scale = ctx?.metresToSpace ?? ctx?.unitsPerMetre ?? 1000;
     const m = boneFrame(n, new THREE.Matrix4());
     if (kept) m.multiply(kept);
-    else m.multiply(offsetMatrix(controlValue(c, 'at', t, null), controlValue(c, 'rot', t, null), _m2));
-    if (!ctx.attach?.(id, m, w)) warn('attach_object', `pose: attach object "${c.object}" is not a Scene object`);
+    else {
+      m.multiply(offsetMatrix(controlValue(c, 'at', t, null), controlValue(c, 'rot', t, null), _m2, scale));
+      const pt = controlValue(c, 'point', t, null);
+      if (Array.isArray(pt) && pt.length >= 3) {
+        m.multiply(new THREE.Matrix4().makeTranslation(-num(pt[0], 0) * scale, -num(pt[1], 0) * scale, -num(pt[2], 0) * scale));
+      }
+    }
+    if (!ctx.attach?.(id, m, w, { point: c.point, rawObject: c.object })) warn('attach_object', `pose: attach object "${c.object}" is not a Scene object`);
+  },
+
+  /** Finger pinch against a Scene object's shape or fallback box at target clearance without skin penetration. */
+  pinch(rig, c, t, w, L, ctx, warn) {
+    solvePinchConstraint(rig, c, t, w, L, ctx, warn);
   },
 };
+
+/** Clamps a node's local rotation relative to its rest pose against `{ x, y, z, swing, twist }`. */
+function clampLocalLimits(rig, node, lim) {
+  const ri = rig.index.get(node);
+  if (ri === undefined || !lim || typeof lim !== 'object') return false;
+  const restQ = rig.rest[ri].q;
+  const relQ = restQ.clone().invert().multiply(node.quaternion);
+  if (relQ.w < 0) relQ.set(-relQ.x, -relQ.y, -relQ.z, -relQ.w);
+  let changed = false;
+  if (['x', 'y', 'z'].some((a) => Array.isArray(lim[a]) && lim[a].length === 2)) {
+    const e = new THREE.Euler().setFromQuaternion(relQ, 'XYZ');
+    for (const ax of ['x', 'y', 'z']) {
+      if (!Array.isArray(lim[ax]) || lim[ax].length !== 2) continue;
+      const a = Number(lim[ax][0]), b = Number(lim[ax][1]);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+      const lo = Math.min(a, b) * DEG, hi = Math.max(a, b) * DEG;
+      const clamped = THREE.MathUtils.clamp(e[ax], lo, hi);
+      if (Math.abs(clamped - e[ax]) > 1e-6) { e[ax] = clamped; changed = true; }
+    }
+    if (changed) relQ.setFromEuler(e);
+  }
+  if (Number.isFinite(Number(lim.swing)) || Number.isFinite(Number(lim.twist))) {
+    const child = node.children.find((ch) => rig.index.has(ch));
+    const axis = child && child.position.lengthSq() > 1e-10 ? child.position.clone().normalize() : new THREE.Vector3(0, 1, 0);
+    const proj = relQ.x * axis.x + relQ.y * axis.y + relQ.z * axis.z;
+    const twistQ = new THREE.Quaternion(axis.x * proj, axis.y * proj, axis.z * proj, relQ.w);
+    const tl = twistQ.length();
+    if (tl > 1e-9) twistQ.multiplyScalar(1 / tl); else twistQ.set(0, 0, 0, 1);
+    const swingQ = relQ.clone().multiply(twistQ.clone().invert());
+    if (twistQ.w < 0) twistQ.set(-twistQ.x, -twistQ.y, -twistQ.z, -twistQ.w);
+    if (swingQ.w < 0) swingQ.set(-swingQ.x, -swingQ.y, -swingQ.z, -swingQ.w);
+    if (Number.isFinite(Number(lim.twist))) {
+      const maxT = Math.max(0, Number(lim.twist)) * DEG;
+      const ang = 2 * Math.acos(Math.min(1, twistQ.w));
+      if (ang > maxT + 1e-6) { twistQ.slerp(new THREE.Quaternion(), 1 - maxT / ang).normalize(); changed = true; }
+    }
+    if (Number.isFinite(Number(lim.swing))) {
+      const maxS = Math.max(0, Number(lim.swing)) * DEG;
+      const ang = 2 * Math.acos(Math.min(1, swingQ.w));
+      if (ang > maxS + 1e-6) { swingQ.slerp(new THREE.Quaternion(), 1 - maxS / ang).normalize(); changed = true; }
+    }
+    if (changed) relQ.copy(swingQ).multiply(twistQ).normalize();
+  }
+  if (changed) {
+    node.quaternion.copy(restQ).multiply(relQ).normalize();
+    node.updateWorldMatrix(false, true);
+  }
+  return changed;
+}
+
+/** Step 4b (4A.2): angle-driven corrective morphs evaluated from final bone deltas after constraints. */
+function applyCorrectives(rig, layers, t, warn) {
+  if (!rig.morphMeshes.length) return;
+  for (const L of layers) {
+    const list = Array.isArray(L.spec.correctives) ? L.spec.correctives : null;
+    if (!list?.length) continue;
+    for (const rule of list) {
+      if (!rule || typeof rule !== 'object' || rule.on === false || controlValue(rule, 'on', t, true) === false) continue;
+      const w = clamp01(num(Number(controlValue(rule, 'weight', t, 1)), 1)) * L.weight;
+      if (!(w > 0)) continue;
+      if (!rule.bone || !rule.morph) continue;
+      if (!maskAllowsMorph(L.mask, rule.morph)) continue;
+      const node = nodeByName(rig, rule.bone);
+      if (!node) { warn('unknown_bone', `pose: corrective bone "${rule.bone}" not found`); continue; }
+      const ri = rig.index.get(node);
+      if (ri === undefined) continue;
+      const qRel = rig.rest[ri].q.clone().invert().multiply(node.quaternion);
+      if (qRel.w < 0) qRel.set(-qRel.x, -qRel.y, -qRel.z, -qRel.w);
+
+      const axSpec = rule.axis || 'bend';
+      let angleDeg = 0;
+      if (axSpec === 'bend') {
+        angleDeg = (2 * Math.acos(Math.min(1, qRel.w))) / DEG;
+      } else if (axSpec === 'twist') {
+        const child = node.children.find((ch) => rig.index.has(ch));
+        const ax = child && child.position.lengthSq() > 1e-10 ? child.position.clone().normalize() : new THREE.Vector3(0, 1, 0);
+        angleDeg = (2 * Math.atan2(qRel.x * ax.x + qRel.y * ax.y + qRel.z * ax.z, qRel.w)) / DEG;
+      } else if (axSpec === 'x' || axSpec === 'y' || axSpec === 'z') {
+        _e.setFromQuaternion(qRel, 'XYZ');
+        angleDeg = _e[axSpec] / DEG;
+      } else if (Array.isArray(axSpec) && axSpec.length === 3) {
+        const ax = new THREE.Vector3(num(axSpec[0], 0), num(axSpec[1], 1), num(axSpec[2], 0));
+        if (ax.lengthSq() > 1e-12) ax.normalize(); else ax.set(0, 1, 0);
+        angleDeg = (2 * Math.atan2(qRel.x * ax.x + qRel.y * ax.y + qRel.z * ax.z, qRel.w)) / DEG;
+      } else {
+        angleDeg = (2 * Math.acos(Math.min(1, qRel.w))) / DEG;
+      }
+
+      const fromDeg = num(Number(rule.from), 0);
+      const toDeg = num(Number(rule.to), 90);
+      const span = toDeg - fromDeg;
+      const u = span !== 0 ? clamp01((angleDeg - fromDeg) / span) : (angleDeg >= fromDeg ? 1 : 0);
+      const shaped = rule.curve === 'linear' ? u : (rule.curve === 'easeIn' ? u * u : smooth(u));
+      const minW = num(Number(controlValue(rule, 'min', t, 0)), 0);
+      const maxW = num(Number(controlValue(rule, 'max', t, 1)), 1);
+      const val = (minW + (maxW - minW) * shaped) * w;
+
+      let found = false;
+      for (const m of rig.morphMeshes) {
+        const k = m.morphTargetDictionary?.[rule.morph];
+        if (k === undefined) continue;
+        if (rule.mesh && ![m.name, m.parent?.name].some((x) => x === rule.mesh || x === sanitized(rule.mesh))) continue;
+        found = true;
+        const inf = m.morphTargetInfluences;
+        if (rule.mode === 'max') inf[k] = Math.max(inf[k], val);
+        else if (rule.mode === 'replace') inf[k] = inf[k] + (minW + (maxW - minW) * shaped - inf[k]) * w;
+        else inf[k] += val;
+      }
+      if (!found) warn('unknown_morph', `pose: corrective morph "${rule.morph}" not found in this model`);
+    }
+  }
+}
 
 /** A bone's world frame without its scale (a file in centimetres never scales what the bone holds or what follows it). */
 function boneFrame(n, out) {
@@ -632,20 +1164,23 @@ export function grabTime(c) {
 const worldScale = (n, out) => { n.updateWorldMatrix(true, false); n.matrixWorld.decompose(_v5, _q3, out); return out; };
 
 /** An offset as a matrix in the editor's 3D space: `at` in metres (one composition px is a millimetre there), `rot` degrees XYZ. */
-function offsetMatrix(at, rot, out) {
-  const p = Array.isArray(at) ? _v1.set(num(at[0], 0), num(at[1], 0), num(at[2], 0)).multiplyScalar(1000) : _v1.set(0, 0, 0);
+function offsetMatrix(at, rot, out, scale = 1000) {
+  const p = Array.isArray(at) ? _v1.set(num(at[0], 0), num(at[1], 0), num(at[2], 0)).multiplyScalar(scale) : _v1.set(0, 0, 0);
   const q = Array.isArray(rot) ? _q1.setFromEuler(_e.set(num(rot[0], 0) * DEG, num(rot[1], 0) * DEG, num(rot[2], 0) * DEG, 'XYZ')) : _q1.identity();
   return out.compose(p, q, _s.set(1, 1, 1));
 }
 
-/** A target's world matrix: a bone of this model, or what ctx.resolveMatrix says (a Scene object), or a point (no turn). */
+/** A target's world matrix: a bone of this model (`{ bone }` without `model`), or what ctx.resolveMatrix says (a Scene object), or a point (no turn). */
 function targetMatrix(rig, ref, t, ctx, warn) {
-  if (ref && typeof ref === 'object' && !Array.isArray(ref) && ref.bone) {
+  if (ref && typeof ref === 'object' && !Array.isArray(ref) && ref.bone && !ref.model) {
     const n = nodeByName(rig, ref.bone);
     if (!n) { warn('unknown_bone', `pose: no bone "${ref.bone}" for a target`); return null; }
-    n.updateWorldMatrix(true, false);
-    n.matrixWorld.decompose(_v1, _q1, _s);
-    return new THREE.Matrix4().compose(_v1, _q1, _s.set(1, 1, 1));
+    const m = boneFrame(n, new THREE.Matrix4());
+    if (Array.isArray(ref.point) && ref.point.length >= 3) {
+      const scale = ctx?.metresToSpace ?? ctx?.unitsPerMetre ?? 1000;
+      m.multiply(new THREE.Matrix4().makeTranslation(num(ref.point[0], 0) * scale, num(ref.point[1], 0) * scale, num(ref.point[2], 0) * scale));
+    }
+    return m;
   }
   const m = ctx.resolveMatrix?.(ref, t);
   if (m) return m.clone();
@@ -664,13 +1199,140 @@ function holdNode(rig, L, n, m, w, orient) {
   n.updateWorldMatrix(false, true);
 }
 
+// ── (lipsync) a pose's `speech` ────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** The model's morph and bone names, for speechTargets: morphs of every morph mesh (or of `mesh`), bones first (skinned meshes' bones
+ *  and Bone nodes), then any other node. */
+function speechNames(rig, mesh) {
+  const morphs = new Set();
+  for (const m of rig.morphMeshes) {
+    if (mesh && ![m.name, m.parent?.name].some((x) => x === mesh || x === sanitized(mesh))) continue;
+    for (const k of Object.keys(m.morphTargetDictionary || {})) morphs.add(k);
+  }
+  const bones = new Set();
+  rig.root.traverse((n) => { if (n.isSkinnedMesh) for (const b of n.skeleton?.bones || []) if (b.name) bones.add(b.name); if (n.isBone && n.name) bones.add(n.name); });
+  const others = rig.nodes.filter((n) => n !== rig.root && n.name && !n.isMesh && !bones.has(n.name)).map((n) => n.name);
+  return { morphs: [...morphs], bones: [...bones, ...others] };
+}
+
+/** A bone's axis, in its own frame, for a turn about the model's side-to-side axis (up × forward, the file's +X for a model facing +Z):
+ *  a positive turn about it drops what is in front of the bone (a jaw opens, a head nods). From the rest pose, so it moves with the head. */
+function lateralAxis(rig, n, forward) {
+  const f = new THREE.Vector3(...(Array.isArray(forward) && forward.length === 3 ? forward.map((v) => num(Number(v), 0)) : [0, 0, 1]));
+  f.y = 0;
+  if (f.lengthSq() < 1e-9) f.set(0, 0, 1);
+  const side = new THREE.Vector3(0, 1, 0).cross(f.normalize()).normalize();
+  return side.applyQuaternion(restRotation(rig, n, new THREE.Quaternion()).invert()).normalize();
+}
+
+/** What a model speaks with for this `speech` (lipsync.js speechTargets), its jaw and head nodes and their axes: once per rig and spec. */
+function speechSetup(rig, spec) {
+  const key = JSON.stringify([spec.jaw ?? null, spec.head ?? null, spec.morphs ?? null, spec.mesh ?? null, spec.forward ?? null, spec.jawAxis ?? null]);
+  if (rig.speechSetup?.key === key) return rig.speechSetup;
+  const names = speechNames(rig, spec.mesh);
+  const targets = speechTargets(names.morphs, names.bones, spec);
+  const jawNode = targets.useJaw ? nodeByName(rig, targets.jaw) : null;
+  const headNode = targets.head ? nodeByName(rig, targets.head) : null;
+  const jawAxis = jawNode ? (Array.isArray(spec.jawAxis) && spec.jawAxis.length === 3 ? new THREE.Vector3(...spec.jawAxis.map((v) => num(Number(v), 0))).normalize() : lateralAxis(rig, jawNode, spec.forward)) : null;
+  // (quality) eye bones (when the model has no eyeLook shapes): turned about the model's up axis (a dart left / right) and its side axis
+  const eyes = (targets.eyeBones || []).map((b) => nodeByName(rig, b)).filter(Boolean).map((node) => ({
+    node, up: new THREE.Vector3(0, 1, 0).applyQuaternion(restRotation(rig, node, new THREE.Quaternion()).invert()).normalize(), side: lateralAxis(rig, node, spec.forward),
+  }));
+  rig.speechSetup = { key, targets, jawNode, headNode, jawAxis, headAxis: headNode ? lateralAxis(rig, headNode, spec.forward) : null, eyes };
+  return rig.speechSetup;
+}
+
+const AA = VISEMES.indexOf('aa');
+
+/**
+ * This frame's mouth for `speech` (at the pose's time t; the clock is read at the Scene's time, ctx.sceneTime): { morphs: [[name,
+ * weight]], open, emphasis }, or null (said in the warnings) when there is no clock or nothing on the model to speak with.
+ */
+function speechFrame(rig, spec, t, ctx, warn) {
+  const clocks = ctx.sceneRef?.clocks && typeof ctx.sceneRef.clocks === 'object' ? ctx.sceneRef.clocks : null;
+  const name = typeof spec.clock === 'string' ? spec.clock : '';
+  const def = name && clocks ? clocks[name] : null;
+  if (!def || typeof def !== 'object') {
+    warn('speech_no_clock', !name ? 'pose.speech needs `clock`: the Scene clock that plays the voice (scene.clocks.<name>.audio on its clip)'
+      : `pose.speech: no clock "${name}" in the Scene's clocks (${clocks ? `it has ${Object.keys(clocks).join(', ') || 'none'}` : 'the model is in no 3D Scene'}): the mouth stays as the pose has it`);
+    return null;
+  }
+  const setup = speechSetup(rig, spec);
+  if (!setup.targets.set && !setup.jawNode) {
+    warn('speech_no_mouth', `pose.speech: this model has no jaw bone and no mouth morphs to speak with (it looks for a bone named jaw, and jawOpen, mouthOpen, viseme_*, vrc.v_*, aa ih ou ee oh, Fcl_MTH_*): name the model's own in speech.jaw or speech.morphs`);
+    return null;
+  }
+  const st = typeof ctx.sceneTime === 'function' ? ctx.sceneTime(t) : t;
+  const mouth = rig.speechMouth ||= { open: 0, w: new Float32Array(VISEMES.length), emphasis: 0, blink: 0, lookX: 0, lookY: 0 };
+  const track = def.lipsync;
+  const problem = track ? lipsyncProblem(track) : 'none';
+  if (track && !problem) {
+    const s = def.audio && typeof def.audio === 'object' ? audioClockSongTime(def.audio, st) : st;
+    lipsyncAt(track, s === null ? NaN : s, mouth);
+    const env = def._envelope || def.envelope;
+    const dur = Number(env?.duration), made = Number(track.source?.duration);
+    if (dur > 0 && made > 0 && Math.abs(dur - made) > 0.1) warn('speech_stale', `pose.speech: clock "${name}"'s lipsync was made from a sound of ${made} s and the clock plays one of ${+dur.toFixed(2)} s: make it again (POST /api/world3d/lipsync)`);
+  } else {
+    if (track) warn('speech_track', `pose.speech: clock "${name}"'s lipsync cannot be read (${problem}): the jaw follows the voice's loudness`);
+    const gate = num(Number(spec.gate), 0.08);
+    const at = (x) => openFromLevel(clockAt(clocks, name, x) ?? 0, gate);
+    mouth.w.fill(0);
+    mouth.w[AA] = 1;
+    mouth.open = at(st);
+    mouth.emphasis = emphasisFromLevel(at, st);
+    // (quality) the face's life (blinks, eye darts) comes from a lipsync's track: none from loudness alone
+    mouth.blink = 0;
+    mouth.lookX = 0;
+    mouth.lookY = 0;
+  }
+  const amount = Math.max(0, num(Number(controlValue(spec, 'amount', t, 1)), 1));
+  const emphasis = Math.max(0, num(Number(controlValue(spec, 'emphasis', t, 1)), 1));
+  return speechWeights(setup.targets, mouth, amount, emphasis, { blink: spec.blink, eyes: spec.eyes, brows: spec.brows, cheeks: spec.cheeks });
+}
+
+/** The jaw turned open (`jawAngle` degrees at a full opening, 18 by default) and the head nodded (NOD_DEGREES at a full accent). */
+function speechBones(rig, spec, frame) {
+  const s = rig.speechSetup;
+  if (!s) return;
+  if (s.jawNode && frame.open > 0) {
+    _q1.setFromAxisAngle(s.jawAxis, frame.open * num(Number(spec.jawAngle), 18) * DEG);
+    s.jawNode.quaternion.multiply(_q1);
+  }
+  if (s.headNode && frame.emphasis > 0) {
+    _q1.setFromAxisAngle(s.headAxis, frame.emphasis * NOD_DEGREES * DEG);
+    s.headNode.quaternion.multiply(_q1);
+  }
+  // (quality) an eye dart: + x the character's own left, + y up
+  if (s.eyes && s.eyes.length && (frame.lookX || frame.lookY)) {
+    for (const e of s.eyes) {
+      _q1.setFromAxisAngle(e.up, (frame.lookX || 0) * EYE_DEGREES * DEG);
+      e.node.quaternion.multiply(_q1);
+      _q1.setFromAxisAngle(e.side, -(frame.lookY || 0) * EYE_DEGREES * DEG);
+      e.node.quaternion.multiply(_q1);
+    }
+  }
+}
+
+/** (lipsync) What this model speaks with (pose.speech): its jaw bone, head bone and mouth morph set, or nulls. */
+export function mouthInfo(rig, spec = null) {
+  // (realface) the pose's own speech (its `morphs` map, `jaw`, `head`) as it last posed the model, else the names found by default
+  const t = !spec && rig.speechSetup ? rig.speechSetup.targets : (() => {
+    const names = speechNames(rig, spec?.mesh);
+    return speechTargets(names.morphs, names.bones, spec || {});
+  })();
+  const morphs = t.set === 'oculus' || t.set === 'vrchat' ? Object.values(t.visemes) : t.set === 'vowels' ? Object.values(t.five)
+    : t.set === 'arkit' ? [t.open, ...(t.close ? [t.close] : []), ...Object.values(t.arkit)] : t.set === 'custom' ? Object.values(t.custom) : t.open ? [t.open] : [];
+  // (quality) and its life: the lids that blink, whether its eyes can dart (ARKit eyeLook*), the smile / cheek on the accents
+  return { set: t.set, jaw: t.jaw, jawTurns: t.useJaw, head: t.head, morphs: [...new Set(morphs)], brows: t.brows, blink: t.blink || [], eyes: !!(t.look || t.eyeBones), cheeks: t.cheeks || [] };
+}
+
 /** What an agent needs to write a pose for a file: its clips (name, seconds), morph names, and the node tree with which are bones. */
 export function poseInfo(rig) {
   const bones = new Set();
   rig.root.traverse((n) => { if (n.isSkinnedMesh) for (const b of n.skeleton.bones) bones.add(b); if (n.isBone) bones.add(n); });
   const tree = rig.nodes.filter((n) => n !== rig.root).map((n) => ({ name: n.name, parent: n.parent && n.parent !== rig.root ? n.parent.name : null, bone: bones.has(n), mesh: !!n.isMesh }));
   const morphs = [...new Set(rig.morphMeshes.flatMap((m) => Object.keys(m.morphTargetDictionary || {})))];
-  return { clips: [...rig.clips.values()].map((e) => ({ name: e.clip.name, duration: +e.clip.duration.toFixed(4) })), morphs, nodes: tree };
+  return { clips: [...rig.clips.values()].map((e) => ({ name: e.clip.name, duration: +e.clip.duration.toFixed(4) })), morphs, nodes: tree, mouth: mouthInfo(rig) };
 }
 
 /**
@@ -678,17 +1340,28 @@ export function poseInfo(rig) {
  * plays there (weight above 0 at either end, a speed or a keyed time), any keyed control whose value differs across the span, or a
  * constraint aimed at something outside the model (a Scene object may move). Errs toward "moves".
  */
-export function poseMayMove(pose, a, b) {
+export function poseMayMove(pose, a, b, { speech = null } = {}) {
   if (!pose || typeof pose !== 'object') return false;
   const m = (a + b) / 2;
+  const sampleVal = (track, x) => {
+    const first = track[0]?.v;
+    return typeof first === 'string' || typeof first === 'boolean' ? sampleStep(track, x) : sampleTrack(track, x);
+  };
   const keyedMoves = (control) => {
     for (const track of Object.values(control?.keys || {})) {
       if (!Array.isArray(track) || !track.length) continue;
-      const va = JSON.stringify(sampleTrack(track, a));
-      if (va !== JSON.stringify(sampleTrack(track, b)) || va !== JSON.stringify(sampleTrack(track, m))) return true;
+      const va = JSON.stringify(sampleVal(track, a));
+      if (va !== JSON.stringify(sampleVal(track, b)) || va !== JSON.stringify(sampleVal(track, m))) return true;
     }
     return false;
   };
+  // (lipsync) a speaking mouth moves while its voice's mouth changes: `speech(spec, a, b)` (the export's, which knows where the voice
+  // plays) says whether it does; without it, or when it cannot tell (undefined), the mouth counts as moving
+  if (pose.speech && typeof pose.speech === 'object' && pose.speech.on !== false) {
+    if (keyedMoves(pose.speech)) return true;
+    if ((typeof speech === 'function' ? speech(pose.speech, a, b) : undefined) !== false) return true;
+  }
+  const externalRef = (r) => typeof r === 'string' || (r && typeof r === 'object' && typeof r.model === 'string');
   const layers = [pose, ...(Array.isArray(pose.layers) ? pose.layers : [])];
   for (const L of layers) {
     if (!L || typeof L !== 'object') continue;
@@ -700,12 +1373,17 @@ export function poseMayMove(pose, a, b) {
       if (playing && (c.keys?.time || Number(controlValue(c, 'speed', a, 1)) !== 0)) return true;
     }
     for (const v of Object.values(L.morphs || {})) if (v && typeof v === 'object' && keyedMoves(v)) return true;
+    const handEntries = Array.isArray(L.hands) ? L.hands : (L.hands && typeof L.hands === 'object' ? Object.values(L.hands) : []);
+    for (const h of handEntries) if (h && typeof h === 'object' && keyedMoves(h)) return true;
     for (const v of Object.values(L.bones || {})) if (keyedMoves(v)) return true;
     for (const c of Array.isArray(L.constraints) ? L.constraints : []) {
       if (!c || c.on === false) continue;
       if (keyedMoves(c)) return true;
-      const refs = [c.target, c.pole, ...(Array.isArray(c.path) ? c.path : [])];
-      if (refs.some((r) => typeof r === 'string')) return true;
+      const refs = [c.target, c.pole, c.object, ...(Array.isArray(c.path) ? c.path : [])];
+      if (refs.some(externalRef)) return true;
+    }
+    for (const cr of Array.isArray(L.correctives) ? L.correctives : []) {
+      if (cr && cr.on !== false && keyedMoves(cr)) return true;
     }
   }
   return false;

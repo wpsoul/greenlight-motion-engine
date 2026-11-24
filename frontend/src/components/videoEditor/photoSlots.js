@@ -50,43 +50,134 @@ export function defaultPhotoSlot(clip, item) {
   return { fill: art ? 'fit' : 'cover', focus: [0.5, 0.5], takes: 'image', series: !art, note: '' };
 }
 
-/** The picture layers of CHANNELS (top level) in the order they start playing: [{ item, clip, start, channelId }]. */
-export function pictureLayers(channels, clips) {
-  const byId = new Map((clips || []).map((c) => [c.id, c]));
+/** The picture layers of CHANNELS (top level) in the order they start playing: [{ item, clip, start, channelId }].
+ *  { deep: true } also walks into sequence clips (any depth): an inner picture starts at its sequence item's start +
+ *  its own start inside (minus the item's in-point) and carries `container` = { itemId, clipId } — the TOP-LEVEL item
+ *  that plays it — and `path` (the sequence items above it, outermost first). Inside an Essential template only its
+ *  photo-slot layers are listed (essential.recipe.slots): the builder's other copies of a picture are not slots. */
+export function pictureLayers(channels, clips, { deep = false } = {}) {
   const out = [];
-  (channels || []).forEach((ch, chIndex) => {
-    const items = Array.isArray(ch?.items) ? ch.items : [];
-    const layout = getTimelineLayout(items, { unsnapped: ch.unsnapped });
-    items.forEach((item, i) => {
-      const clip = byId.get(item?.clipId);
-      if (clip?.mediaType !== 'image') return;
-      out.push({ item, clip, start: layout[i]?.startTime ?? 0, channelId: ch.id, chIndex });
+  const walk = (chans, clipList, offset, container, path, seen) => {
+    const byId = new Map((clipList || []).map((c) => [c.id, c]));
+    (chans || []).forEach((ch, chIndex) => {
+      const items = Array.isArray(ch?.items) ? ch.items : [];
+      const layout = getTimelineLayout(items, { unsnapped: ch.unsnapped });
+      items.forEach((item, i) => {
+        const clip = byId.get(item?.clipId);
+        const start = offset + (layout[i]?.startTime ?? 0);
+        if (clip?.mediaType === 'image') {
+          if (container?.only && !container.only.has(item.id)) return;
+          out.push({ item, clip, start, channelId: ch.id, chIndex, depth: path.length, ...(container ? { container: { itemId: container.itemId, clipId: container.clipId }, path } : {}) });
+        } else if (deep && clip?.mediaType === 'sequence' && clip.sequence && !seen.has(clip.id) && path.length < 4) {
+          const rec = clip.essential?.recipe;
+          const only = rec && rec.slots && typeof rec.editId === 'string'
+            ? new Set(Object.values(rec.slots).map((sl) => sl && sl.itemId).filter(Boolean)) : null;
+          const top = container || { itemId: item.id, clipId: clip.id };
+          walk(clip.sequence.channels, clip.sequence.clips, start - (Number(item.trimStart) || 0), { ...top, only }, [...path, item.id], new Set([...seen, clip.id]));
+        } else if (deep && clip?.mediaType === 'grid' && clip.sequence && container?.only && !seen.has(clip.id) && path.length < 4) {
+          // a Grid a script template made (PLANS/ESSENTIAL_TEMPLATES.md §13): its members are the template's slots too
+          walk(clip.sequence.channels, clip.sequence.clips, start - (Number(item.trimStart) || 0), container, [...path, item.id], new Set([...seen, clip.id]));
+        }
+      });
     });
-  });
-  // play order; at the same moment the upper track first (the timeline lists the last channel on top)
-  return out.sort((a, b) => (a.start - b.start) || (b.chIndex - a.chIndex));
+  };
+  walk(channels, clips, 0, null, [], new Set());
+  // play order; at the same moment the upper track first (the timeline lists the last channel on top), outer first
+  return out.sort((a, b) => (a.start - b.start) || (a.depth - b.depth) || (b.chIndex - a.chIndex));
 }
 
 /** The slots of CHANNELS in play order: [{ item, clip, start, slot, n?, of? }] — n / of number the series. */
-export function photoSlotLayers(channels, clips, slotOf = (item) => sanitizePhotoSlot(item?.photoSlot)) {
-  const list = pictureLayers(channels, clips).map((p) => ({ ...p, slot: slotOf(p.item) })).filter((p) => p.slot);
+export function photoSlotLayers(channels, clips, slotOf = (item) => sanitizePhotoSlot(item?.photoSlot), { deep = false } = {}) {
+  const list = pictureLayers(channels, clips, { deep }).map((p) => ({ ...p, slot: slotOf(p.item) })).filter((p) => p.slot);
   const series = list.filter((p) => p.slot.series);
   series.forEach((p, i) => { p.n = i + 1; p.of = series.length; });
   return list;
 }
 
-/** item id → { text, title } for the timeline's SLOT badges. */
+/** item id → { text, title } for the timeline's SLOT badges. Slots inside a sequence (an Essential template's photo
+ *  slots) badge the top-level item that plays them: "SLOTS 3–8". */
 export function photoSlotBadges(channels, clips, settings) {
   const label = sanitizePhotoSlotSettings(settings).label;
   const out = new Map();
-  for (const p of photoSlotLayers(channels, clips)) {
+  const inner = new Map();   // container item id → [slot layers]
+  for (const p of photoSlotLayers(channels, clips, undefined, { deep: true })) {
+    if (p.container) { if (!inner.has(p.container.itemId)) inner.set(p.container.itemId, []); inner.get(p.container.itemId).push(p); continue; }
     const where = p.n ? ` ${p.n} of ${p.of} in “${label}”` : ' on its own';
     out.set(p.item.id, {
       text: p.n ? `SLOT ${p.n}` : 'SLOT',
       title: `Photo slot${where} — people can put their own photo here (set in Export for agents). Deleting this layer removes the slot.`,
     });
   }
+  for (const [itemId, list] of inner) {
+    const ns = list.map((p) => p.n).filter(Boolean);
+    const lo = ns.length ? Math.min(...ns) : 0, hi = ns.length ? Math.max(...ns) : 0;
+    const text = list.length === 1 ? (lo ? `SLOT ${lo}` : 'SLOT') : (lo ? `SLOTS ${lo}–${hi}` : `${list.length} SLOTS`);
+    out.set(itemId, {
+      text,
+      title: `${list.length === 1 ? 'A photo slot' : `${list.length} photo slots`} inside this sequence${lo ? ` (${lo === hi ? lo : `${lo}–${hi}`} of ${list[0].of} in “${label}”)` : ''} — people can put their own photos there (set in Export for agents).`,
+    });
+  }
   return out;
+}
+
+/**
+ * Write photo-slot marks (item id → mark, or null = not a slot) on picture layers at any depth → { channels, clips,
+ * changed }: top-level layers in place; a layer inside a sequence through a NEW version of that sequence (and of every
+ * sequence above it), so it is one history step and undo restores the old clips. Inside an Essential template the
+ * marks are written on its layers and the template is rebuilt (`rebuild(clip) → clip`: its recipe.slots takes them,
+ * and the photo is fitted again around a moved focus point). createId names the new versions of plain sequences.
+ */
+export function writePhotoSlotMarks(channels, clips, marks, { rebuild = null, createId } = {}) {
+  const ids = new Set(Object.keys(marks || {}));
+  const added = [];
+  let changed = false;
+  const setMark = (it) => {
+    if (!ids.has(it.id)) return it;
+    const slot = marks[it.id];
+    if (slot) { if (JSON.stringify(slot) === JSON.stringify(it.photoSlot)) return it; changed = true; return { ...it, photoSlot: slot }; }
+    if (!it.photoSlot) return it;
+    changed = true;
+    const { photoSlot: _dropped, ...rest } = it;
+    return rest;
+  };
+  // a sequence clip with the marks written inside it (null when nothing inside changed)
+  const intoSequence = (clip, depth, inTemplate = false) => {
+    if (!clip?.sequence || depth > 4) return null;
+    const before = changed;
+    changed = false;
+    const innerClips = clip.sequence.clips || [];
+    const template = inTemplate || !!clip.essential?.recipe?.editId;
+    let innerAdded = [];
+    const chans = (clip.sequence.channels || []).map((ch) => ({ ...ch, items: (ch.items || []).map((it) => {
+      const c = innerClips.find((x) => x.id === it.clipId);
+      // a Grid inside a script template (§13) holds slots too
+      if (c?.mediaType === 'sequence' || (c?.mediaType === 'grid' && template)) {
+        const nc = intoSequence(c, depth + 1, template);
+        if (nc) { innerAdded.push(nc); changed = true; return { ...it, clipId: nc.id }; }
+      }
+      return setMark(it);
+    }) }));
+    const mine = changed;
+    changed = before || mine;
+    if (!mine) return null;
+    // a Grid inside a template keeps its id (ids there are the template's own; the template gets a new version)
+    const keepId = inTemplate && clip.mediaType === 'grid';
+    let next = { ...clip, sequence: { clips: [...innerAdded.filter((n) => !innerClips.some((x) => x.id === n.id)), ...innerClips.map((x) => innerAdded.find((n) => n.id === x.id) || x)], channels: chans } };
+    delete next.prerender;
+    if (next.essential?.recipe?.editId && typeof rebuild === 'function') next = rebuild(next);
+    else if (!keepId) next = { ...next, id: createId() };
+    return next;
+  };
+  const byId = new Map((clips || []).map((c) => [c.id, c]));
+  const nextChannels = (channels || []).map((ch) => ({ ...ch, items: (ch.items || []).map((it) => {
+    const c = byId.get(it.clipId);
+    if (c?.mediaType === 'sequence') {
+      const nc = intoSequence(c, 1);
+      if (nc) { added.push(nc); return { ...it, clipId: nc.id }; }
+    }
+    return setMark(it);
+  }) }));
+  return { channels: nextChannels, clips: added, changed: changed || added.length > 0 };
 }
 
 /** Where a picture layer sits in a W×H frame at rest (its static Position and Scale): { x, y, w, h } in px. An

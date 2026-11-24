@@ -17,26 +17,26 @@ The agent writes the video as data: a `project.json` and its files. The engine t
 ## Quick start
 
 ```bash
-npx greenlight-motion@0.5.8 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
-npx greenlight-motion@0.5.8 init my-video   # a working starter: index.html, project.json, assets/
+npx greenlight-motion@0.5.9 doctor          # Node 18+, Chrome or Edge, WebGPU, H.264: what's missing and how to fix it
+npx greenlight-motion@0.5.9 init my-video   # a working starter: index.html, project.json, assets/
 # edit my-video/project.json, put pictures / video / sound in my-video/assets/
 # or: write my-video/script.json (a scene script, skill/references/scene-script.md), then
-npx greenlight-motion@0.5.8 script my-video # script.json → project.json with the Video Editor's own presets
-npx greenlight-motion@0.5.8 check my-video  # what to fix: missing files, template mistakes, blank frames, broken plugins
-npx greenlight-motion@0.5.8 stills my-video # frames + a labelled contact sheet, to look at
-npx greenlight-motion@0.5.8 render my-video --fps 60 --motion-blur
-npx greenlight-motion@0.5.8 pack my-video   # everything in ONE html file
-npx greenlight-motion@0.5.8 pack my-video --glvideo   # ONE .glvideo: double-clicked, it opens in GreenLight Dash
+npx greenlight-motion@0.5.9 script my-video # script.json → project.json with the Video Editor's own presets
+npx greenlight-motion@0.5.9 check my-video  # what to fix: missing files, template mistakes, blank frames, broken plugins
+npx greenlight-motion@0.5.9 stills my-video # frames + a labelled contact sheet, to look at
+npx greenlight-motion@0.5.9 render my-video --fps 60 --motion-blur
+npx greenlight-motion@0.5.9 pack my-video   # everything in ONE html file
+npx greenlight-motion@0.5.9 pack my-video --glvideo   # ONE .glvideo: double-clicked, it opens in GreenLight Dash
 ```
 
 For the user's review, on this computer only (127.0.0.1):
 
 ```bash
-npx greenlight-motion@0.5.8 review my-video          # the page with Edit, Notes and Highlight for one film; Save for
+npx greenlight-motion@0.5.9 review my-video          # the page with Edit, Notes and Highlight for one film; Save for
                                                      # agent writes my-video/review/ (NOTES.md, notes.json, pictures)
-npx greenlight-motion@0.5.8 review v1 v2 v3 --titles "Bold,Calm,Neon"   # ONE page for several versions: Notes,
+npx greenlight-motion@0.5.9 review v1 v2 v3 --titles "Bold,Calm,Neon"   # ONE page for several versions: Notes,
                                                      # Highlight and a Pick across them; Save writes v1/review/ (NOTES.md)
-npx greenlight-motion@0.5.8 pick stills/             # choose among generated pictures (stills/<frame>/*.png):
+npx greenlight-motion@0.5.9 pick stills/             # choose among generated pictures (stills/<frame>/*.png):
                                                      # a take and extras per frame; Save writes stills/PICKS.md
 ```
 
@@ -94,7 +94,7 @@ The engine is one classic script, so it runs from a double-clicked file, a CDN o
 
 ```html
 <div id="app"></div>
-<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.5.8/dist/greenlight-motion.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/greenlight-motion@0.5.9/dist/greenlight-motion.js"></script>
 <script>
   GreenLightMotion.mountStudio(document.getElementById('app'), {
     project: { /* project.json */ },
@@ -109,7 +109,12 @@ Its review (notes with drawings, highlights, changes) is text to copy for your a
 (`config.save`). In a narrow frame — a chat's column, a card — pass `chat: { height, full, onExpand }`: up to 900 px
 wide it becomes the mobile editor in a box `height` px tall (the whole frame with `full: true`), the timeline across the
 width with its panels as sheets over it; wider, the full studio. `onExpand(full)` puts a Full screen button in the app
-bar for a host that can go full screen; the returned studio's `chat.set({ height, full })` follows the host. The mobile
+bar for a host that can go full screen; the returned studio's `chat.set({ height, full })` follows the host. `camera: true`
+gives a Camera layer GreenLight Dash's camera controls (Free · Path · Rig · Zoom with the camera map, Capture keys and Add
+point, the lens and its focus, moving the camera in the preview, zooms on the camera layer) and draws the Camera and 3D
+Scene rows in the app's colours; the page `greenlight-motion build` writes, the app's Export for agents and the CLI's
+review page pass it. The timeline lists its rows in GreenLight Dash's order on every page: the top of the stack first,
+the Camera and then the 3D Scene's row on top. The mobile
 editor has Undo / Redo in its app bar and Go to start / end in its play row. On a touch device the page keeps memory low
 (a preview at most 960 px long, pictures at the size they are drawn, only the scene on screen and the next held), renders
 the seconds a phone plays too slowly into a cache of its own (a line over the ruler, a status beside the time; the files
@@ -139,7 +144,7 @@ path-traced Final; not open source, see its licence). You never install it by ha
   never loads a byte of it. A page that serves the plugin's `dist/world3d/` itself names the folder before mounting:
 
 ```js
-GreenLightMotion.setWorldBase('https://cdn.jsdelivr.net/npm/greenlight-motion-3d@0.1.4/dist/world3d/');   // or your own copy
+GreenLightMotion.setWorldBase('https://cdn.jsdelivr.net/npm/greenlight-motion-3d@0.1.5/dist/world3d/');   // or your own copy
 await GreenLightMotion.world3d.load();          // a "Download 3D plugin" button: get it before any Scene
 GreenLightMotion.world3d.status();              // { state: 'idle' | 'loading' | 'ready' | 'failed', version, bytes, error }
 const { png, hints, objects, lights } = await engine.critique(2);   // the frame at 2 s and what its shot shows, with hints
@@ -175,20 +180,19 @@ Dash** imports it as a new project. The editor's **Export for agents** works the
 `.glvideo` file to open in a Claude chat, or a ready folder with this page for an agent. MotionFast templates and effect packages with their own image or video files
 play in GreenLight Dash only. The page shows such layers but leaves them out.
 
+## What's new in 0.5.9
+
+- **HTML layers, drawn live:** an interface or any HTML page is a layer the engine draws itself on the video's clock
+  (Chrome 157+), from a file in `assets/` or written into a scene script; no recording first.
+- The Video Editor of GreenLight Dash 16.6.80: Font size, weight and italic in text animators, four more camera moves, the
+  app's layer templates (carousels, card stacks, galleries), Depth Matte, motion blur by on-screen travel.
+- A scene script adds no sound unless it names one.
+- It takes the 3D plugin greenlight-motion-3d 0.1.5 (characters that speak, screens that look like their page).
+
 ## What's new in 0.5.8
 
 - A video you ask for in your own words runs as the free **Motion Design ▸ Custom** workflow: the plugin connects
   GreenLight's workflows server, with no account and no sign-in (above). The engine is the same as 0.5.7's.
-
-## What's new in 0.5.7
-
-- Several versions of a video in ONE review page (`review v1 v2 v3`): Highlight, Notes and a Pick across them, saved for
-  the agent; `pick <folder>` lets the user choose among generated pictures.
-- The Camera layer films a 3D Scene the way the Scene's own camera does (look at, follow, a path, focus, zoom), and Camera
-  Rigs go the way their names say.
-- Titles moving over a path-traced 3D Scene render about ten times faster.
-- It takes the 3D plugin greenlight-motion-3d 0.1.4 (cloth tied to moving objects, cloth with a thickness, a camera that
-  acts like a real device) and gets it by itself.
 
 Every change: [CHANGELOG.md](CHANGELOG.md).
 

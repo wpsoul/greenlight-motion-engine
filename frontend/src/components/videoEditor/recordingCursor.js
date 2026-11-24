@@ -1,4 +1,4 @@
-// The drawn cursor of a screen recording (PLANS/SCREEN_RECORDER_SMOOTH_MOTION_PLAN.md, Phase 3).
+// The drawn cursor of a screen recording.
 //
 // A native macOS take (desktop/src/native-capture.js) has NO cursor in the picture: `clip.recordingMeta.cursorInVideo
 // === false`. The editor draws one back from the hand's full path (the .glcursor file at `clip.recordingTrackUrl`,

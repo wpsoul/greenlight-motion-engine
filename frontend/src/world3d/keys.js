@@ -1,5 +1,5 @@
-// Keyframes for scene values. A track is [{ t, v, ease }]; v is a number or an array of numbers, and ease shapes the
-// segment that starts at that key. Hold before the first key and after the last, as the editor's tracks do.
+// Keyframes for scene values. A track is [{ t, v, ease }]; v is a number, an array of numbers or a plain object of numbers, and ease
+// shapes the segment that starts at that key. Hold before the first key and after the last, as the editor's tracks do.
 //
 // (smallfix) `ease` is one of the world's own six below, one of the Video Editor's keyframe easings (the very curve the editor
 // plays, components/videoEditor/appEases.js: by its id, `aeSmooth`, or by the name the editor's keys write, `AE Smooth`; `hold`
@@ -23,6 +23,7 @@ import { TransitionEasing } from '../components/videoEditor/types.js';
 import { fxConfigOf, fxAtSeconds } from '../components/videoEditor/keyframeFxCore.js';
 import { stringSeed, compileExpression, evaluateAst } from '../components/videoEditor/keyframeExpr.js';
 import { pathAt, quatAlong, quatFromEulerDeg, quatMul } from './followPath.js';
+import { audioClockValue, isAudioClock } from './audioClock.js';
 
 const EASE = {
   linear: (x) => x,
@@ -81,7 +82,16 @@ export function easeOf(ease) {
   return (Object.hasOwn(EASE, ease) ? EASE[ease] : APP.get(ease)) || EASE.inOut;
 }
 
-const lerp = (a, b, k) => (Array.isArray(a) ? a.map((v, i) => v + (b[i] - v) * k) : a + (b - a) * k);
+const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+// (posefix) a plain object of numbers (a hand's `curl` as { thumb, index, … }) blends key by key: a key whose value is a number on both
+// sides blends, any other holds the earlier side's value (the later's when only it has the key)
+const lerpObject = (a, b, k) => {
+  const out = { ...b, ...a };
+  for (const key of Object.keys(out)) if (typeof a[key] === 'number' && typeof b[key] === 'number') out[key] = a[key] + (b[key] - a[key]) * k;
+  return out;
+};
+const lerp = (a, b, k) => (Array.isArray(a) ? a.map((v, i) => v + (b[i] - v) * k)
+  : isPlain(a) && isPlain(b) ? lerpObject(a, b, k) : a + (b - a) * k);
 
 export function sampleTrack(track, t) {
   if (!track?.length) return undefined;
@@ -93,6 +103,45 @@ export function sampleTrack(track, t) {
   const a = track[i], b = track[i + 1];
   const k = (t - a.t) / Math.max(1e-6, b.t - a.t);
   return lerp(a.v, b.v, easeOf(a.ease)(k));
+}
+
+/** Shortest-arc unit quaternion [x, y, z, w] track interpolation with eased slerp. */
+export function sampleQuatTrack(track, t) {
+  if (!track?.length) return undefined;
+  const norm = (q) => {
+    const x = Number(q?.[0]) || 0, y = Number(q?.[1]) || 0, z = Number(q?.[2]) || 0, w = Number(q?.[3] ?? 1);
+    const l = Math.hypot(x, y, z, w) || 1;
+    return [x / l, y / l, z / l, w / l];
+  };
+  if (t <= track[0].t) return norm(track[0].v);
+  const last = track[track.length - 1];
+  if (t >= last.t) return norm(last.v);
+  let i = 0;
+  while (i < track.length - 2 && t >= track[i + 1].t) i += 1;
+  const a = track[i], b = track[i + 1];
+  const u = easeOf(a.ease)((t - a.t) / Math.max(1e-6, b.t - a.t));
+  const qa = norm(a.v);
+  let qb = norm(b.v);
+  let dot = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
+  if (dot < 0) { qb = [-qb[0], -qb[1], -qb[2], -qb[3]]; dot = -dot; }
+  if (dot > 0.9995) {
+    return norm([
+      qa[0] + (qb[0] - qa[0]) * u,
+      qa[1] + (qb[1] - qa[1]) * u,
+      qa[2] + (qb[2] - qa[2]) * u,
+      qa[3] + (qb[3] - qa[3]) * u,
+    ]);
+  }
+  const theta0 = Math.acos(Math.min(1, Math.max(-1, dot)));
+  const sin0 = Math.sin(theta0);
+  const s0 = Math.sin((1 - u) * theta0) / sin0;
+  const s1 = Math.sin(u * theta0) / sin0;
+  return [
+    qa[0] * s0 + qb[0] * s1,
+    qa[1] * s0 + qb[1] * s1,
+    qa[2] * s0 + qb[2] * s1,
+    qa[3] * s0 + qb[3] * s1,
+  ];
 }
 
 /** (smallfix) A track that switches rather than moves (an object's `visible`): the value of the last key at or before t, the first
@@ -181,23 +230,43 @@ export function sampleTrackFx(track, cfg, t, seedKey = '', opts = {}) {
 }
 
 const clockCache = new WeakMap();
-/** A clock's value at t (`scene.clocks[name]`: its keys, then its `filter`), or undefined when the scene has no such clock. */
+const AUDIO_FILTER_SEED = [{ t: 0, v: 0 }];
+/** A clock's value at t (`scene.clocks[name]`: its keys or `audio` envelope, then its `filter`), or undefined when the scene has no such clock. */
 export function clockAt(clocks, name, t) {
   if (!clocks || typeof clocks !== 'object' || typeof name !== 'string') return undefined;
   const def = clocks[name];
   if (!def || typeof def !== 'object') return undefined;
+  const audio = isAudioClock(def);
+  const env = audio ? (def._envelope || def.envelope || null) : null;
   let byName = clockCache.get(clocks);
   if (!byName) { byName = new Map(); clockCache.set(clocks, byName); }
   let c = byName.get(name);
-  if (!c || c.def !== def || c.keys !== def.keys || c.filter !== def.filter) {
+  if (!c || c.def !== def || c.keys !== def.keys || c.filter !== def.filter || c.audio !== def.audio || c.env !== env) {
     const keys = Array.isArray(def.keys) && def.keys.length ? def.keys : null;
-    c = { def, keys: def.keys, filter: def.filter, track: keys, cfg: keys ? fxOf(def.filter, 'u') : null };
+    c = {
+      def, keys: def.keys, filter: def.filter, audio: def.audio, isAudio: audio, env,
+      track: keys,
+      cfg: (keys || audio) ? fxOf(def.filter, 'u') : null,
+    };
     byName.set(name, c);
   }
-  if (!c.track) return undefined;
-  let v = c.cfg ? sampleTrackFx(c.track, c.cfg, t, `clock|${name}`) : sampleTrack(c.track, t);
+  let v;
+  if (c.isAudio) {
+    const rawAt = (s) => audioClockValue(def, s);
+    const base = rawAt(t);
+    v = c.cfg ? fxAtSeconds(c.cfg, { keys: AUDIO_FILTER_SEED, valueAt: rawAt, t, base, seed: stringSeed(`clock|${name}`) }) : base;
+  } else {
+    if (!c.track) return undefined;
+    v = c.cfg ? sampleTrackFx(c.track, c.cfg, t, `clock|${name}`) : sampleTrack(c.track, t);
+  }
   if (Array.isArray(v)) v = Number(v[0]);
   return Number.isFinite(v) ? v : undefined;
+}
+
+/** Deterministic audio-clock helper: reads `scene.clocks[clockName]` at time `t` (0 when missing). */
+export function sampleSound(scene, clockName, t) {
+  const clocks = scene?.clocks && typeof scene.clocks === 'object' ? scene.clocks : scene;
+  return clockAt(clocks, clockName, t) ?? 0;
 }
 
 const mapCache = new WeakMap();

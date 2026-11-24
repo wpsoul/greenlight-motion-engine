@@ -1,10 +1,11 @@
-// (chatswitch) Draft or Final for a film's 3D Scene on the engine's page: the studio's Draft | Final switch (studio/worldSwitch.js),
-// owner 2026-11-15: "same logic as in app. Draft in preview play. Final will show only if switcher is set to final and only on pause."
+// (chatswitch) Draft or Final for a film's 3D Scene on the engine's page, owner 2026-11-15: "same logic as in app. Draft in preview
+// play. Final will show only if switcher is set to final and only on pause." — and 2026-11-24: the switch in the preview, Draft by
+// default, the preview's only (the lab html/INTERFACE/standalone-3d-switch-lab, "A and 1").
 //
-// The film's own mode is its Scene's rig.render.mode (a chat's script sets it: world.render.mode, Draft by default). The viewer's
-// switch, once set, wins on the page: what the page plays, renders (Render MP4, renderVideo, the Final cap), draws as stills (the
-// chat's contact sheet) and critiques is the film with every Scene in that mode (withWorldMode); the preview follows the app's
-// own Final (world3dLayer setWorldFinal: it traces only on pause). The switch is kept per film in the browser (the studio's storeKey).
+// The film's own mode is its Scene's rig.render.mode (a chat's script sets it: world.render.mode, Draft by default). What the page
+// renders (Render MP4, renderVideo, the Final cap), draws as stills (the chat's contact sheet) and critiques is the film in that mode,
+// or in the one the viewer picked in the Render pane's 3D (withWorldMode). The preview's Draft 3D | Final 3D (studio/worldSwitch.js)
+// is the app's own Final (world3dLayer setWorldFinal: it traces only on pause): it starts in Draft and changes nothing that renders.
 // Pure data: Node runs it in the unit tests.
 import { hasWorld } from './world3dContract.js';
 
@@ -72,17 +73,7 @@ export function worldTraceOptions(render, normalize) {
   return trace;
 }
 
-/** The switch's mode on the page: the viewer's own (STORED, kept per film) when it is one, else the film's own (OWN); null for a film
- *  with no 3D Scene (no switch). */
-export function pickWorldMode({ stored = null, own = null } = {}) {
-  if (!isMode(own)) return null;
-  return isMode(stored) ? stored : own;
-}
-
-/** Where the switch is kept: beside the studio's own storage for this film (RV_CONFIG.storeKey: a chat's build, a shared link's film). */
-export const worldModeKey = (storeKey) => `${storeKey || 'glm-studio'}-3d`;
-
-/** The words for the trace's progress beside the switch (the app's player bar): "12 of 64 spp", then "64 spp · 3.2 s". */
+/** The words for the trace's progress beside the preview's toggle (the app's player bar): "12 of 32 spp", then "32 spp · 3.2 s". */
 export function traceProgressText(status) {
   if (!status) return '';
   return status.done ? `${status.target} spp · ${Number(status.seconds || 0).toFixed(1)} s` : `${status.spp} of ${status.target} spp`;

@@ -1369,10 +1369,37 @@ export const CLASSIC_PRESETS = [
   "id": "classic-pill-grow",
   "name": "Pill Grow",
   "cat": "classic-bar",
-  "description": "Words rise, then a dot pops at their left and stretches into a pill behind them",
+  "description": "Words rise one by one onto a pill that grows with them; it shrinks away as they leave",
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Plate",
+    "range": {
+     "basedOn": "words",
+     "order": "forward",
+     "stagger": 0.07,
+     "mask": false,
+     "spread": false,
+     "drive": "time",
+     "animate": "inOut",
+     "duration": 0.2,
+     "curve": "Ease Out"
+    },
+    "effects": [
+     [
+      "box",
+      {
+       "color": "#2f6bff",
+       "behind": "revealed",
+       "shape": "block",
+       "padX": 40,
+       "padY": 20,
+       "radius": 200
+      }
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -1434,39 +1461,45 @@ export const CLASSIC_PRESETS = [
   ],
   "classicOf": "pill-grow",
   "layerProps": {
-   "textBgEnabled": true,
-   "textBgColor": "#2f6bff",
-   "textBgPaddingX": 40,
-   "textBgPaddingY": 20,
-   "textBgRadius": 200,
-   "textBorderEnabled": false,
-   "textBgInType": "mask-right",
-   "textBgInStyle": "grow",
-   "textBgInDuration": 0.55,
-   "textBgInEasing": "Expo Out",
-   "textBgInDelay": 0.15,
-   "textBgInGrowStart": 0,
-   "textBgInGrowAppear": "scale-in",
-   "textBgInGrowAppearDuration": 0.25,
-   "textBgInGrowAppearEasing": "Back Out",
-   "textBgOutType": "mask-right",
-   "textBgOutStyle": "grow",
-   "textBgOutDuration": 0.3,
-   "textBgOutEasing": "Ease In",
-   "textBgOutGrowStart": 0,
-   "textBgOutGrowAppear": "scale-in",
-   "textBgOutGrowAppearDuration": 0.15,
-   "textBgOutGrowAppearEasing": "Ease In"
+   "textBgEnabled": false,
+   "textBorderEnabled": false
   }
  },
  {
   "id": "classic-lower-third",
   "name": "Lower Third",
   "cat": "classic-bar",
-  "description": "The bar slides in behind a mask while each word slides out of its own box; exits the same way",
+  "description": "Each word slides out of its own box while the dark bar grows to take it; the bar shrinks back as the words leave",
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Plate",
+    "range": {
+     "basedOn": "words",
+     "order": "forward",
+     "stagger": 0.06,
+     "mask": false,
+     "spread": false,
+     "drive": "time",
+     "animate": "inOut",
+     "duration": 0.2,
+     "curve": "Ease Out"
+    },
+    "effects": [
+     [
+      "box",
+      {
+       "color": "#0a0a0ee0",
+       "behind": "revealed",
+       "shape": "block",
+       "padX": 34,
+       "padY": 18,
+       "radius": 6
+      }
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -1522,31 +1555,45 @@ export const CLASSIC_PRESETS = [
   ],
   "classicOf": "lower-third",
   "layerProps": {
-   "textBgEnabled": true,
-   "textBgColor": "rgba(10,10,14,0.88)",
-   "textBgPaddingX": 34,
-   "textBgPaddingY": 18,
-   "textBgRadius": 6,
-   "textBorderEnabled": false,
-   "textBgInType": "mask-right",
-   "textBgInStyle": "slide",
-   "textBgInDuration": 0.55,
-   "textBgInEasing": "Expo Out",
-   "textBgInDelay": 0,
-   "textBgOutType": "mask-right",
-   "textBgOutStyle": "slide",
-   "textBgOutDuration": 0.45,
-   "textBgOutEasing": "Expo In"
+   "textBgEnabled": false,
+   "textBorderEnabled": false
   }
  },
  {
   "id": "classic-drop-bar",
   "name": "Drop Bar",
   "cat": "classic-bar",
-  "description": "Bar and words drop in from above behind masks, and fall away below",
+  "description": "Words drop in from above behind masks onto a bar that grows with them, then fall away below as it shrinks",
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Plate",
+    "range": {
+     "basedOn": "words",
+     "order": "forward",
+     "stagger": 0.05,
+     "mask": false,
+     "spread": false,
+     "drive": "time",
+     "animate": "inOut",
+     "duration": 0.2,
+     "curve": "Ease Out"
+    },
+    "effects": [
+     [
+      "box",
+      {
+       "color": "#7c5cff",
+       "behind": "revealed",
+       "shape": "block",
+       "padX": 34,
+       "padY": 16,
+       "radius": 10
+      }
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -1602,31 +1649,47 @@ export const CLASSIC_PRESETS = [
   ],
   "classicOf": "drop-bar",
   "layerProps": {
-   "textBgEnabled": true,
-   "textBgColor": "#7c5cff",
-   "textBgPaddingX": 34,
-   "textBgPaddingY": 16,
-   "textBgRadius": 10,
-   "textBorderEnabled": false,
-   "textBgInType": "mask-down",
-   "textBgInStyle": "slide",
-   "textBgInDuration": 0.5,
-   "textBgInEasing": "Expo Out",
-   "textBgInDelay": 0,
-   "textBgOutType": "mask-down",
-   "textBgOutStyle": "slide",
-   "textBgOutDuration": 0.4,
-   "textBgOutEasing": "Expo In"
+   "textBgEnabled": false,
+   "textBorderEnabled": false
   }
  },
  {
   "id": "classic-outline-tag",
   "name": "Outline Tag",
   "cat": "classic-bar",
-  "description": "An outline draws itself open to the right while the letters slide in",
+  "description": "Letters slide in while an outline grows around them; it shrinks back as they fade out",
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Plate",
+    "range": {
+     "basedOn": "chars",
+     "order": "forward",
+     "stagger": 0.022,
+     "mask": false,
+     "spread": false,
+     "drive": "time",
+     "animate": "inOut",
+     "duration": 0.2,
+     "curve": "Ease Out"
+    },
+    "effects": [
+     [
+      "box",
+      {
+       "color": "#00000000",
+       "behind": "revealed",
+       "shape": "block",
+       "padX": 36,
+       "padY": 18,
+       "radius": 14,
+       "border": 3,
+       "borderColor": "#33efab"
+      }
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -1682,41 +1745,46 @@ export const CLASSIC_PRESETS = [
   "classicOf": "outline-tag",
   "layerProps": {
    "textBgEnabled": false,
-   "textBgColor": "rgba(0,0,0,0.6)",
-   "textBgPaddingX": 36,
-   "textBgPaddingY": 18,
-   "textBgRadius": 14,
-   "textBorderEnabled": true,
-   "textBorderColor": "#33efab",
-   "textBorderWidth": 3,
-   "textBorderStyle": "solid",
-   "textBgInType": "mask-right",
-   "textBgInStyle": "grow",
-   "textBgInDuration": 0.6,
-   "textBgInEasing": "Cubic Out",
-   "textBgInDelay": 0,
-   "textBgInGrowStart": 0,
-   "textBgInGrowAppear": "fade",
-   "textBgInGrowAppearDuration": 0.2,
-   "textBgInGrowAppearEasing": "Ease Out",
-   "textBgOutType": "mask-right",
-   "textBgOutStyle": "grow",
-   "textBgOutDuration": 0.4,
-   "textBgOutEasing": "Ease In",
-   "textBgOutGrowStart": 0,
-   "textBgOutGrowAppear": "none",
-   "textBgOutGrowAppearDuration": 0.4,
-   "textBgOutGrowAppearEasing": "Ease In"
+   "textBorderEnabled": false
   }
  },
  {
   "id": "classic-prompt-field",
   "name": "Prompt Field",
   "cat": "classic-bar",
-  "description": "An outlined pill fades in and the text types inside it behind a caret, like a search box",
+  "description": "An outlined field fades in, the text types into it behind a caret, and the field fades out with it",
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Plate",
+    "range": {
+     "basedOn": "chars",
+     "order": "forward",
+     "stagger": 0,
+     "mask": false,
+     "spread": false,
+     "drive": "time",
+     "animate": "inOut",
+     "duration": 0.35,
+     "curve": "Ease Out"
+    },
+    "effects": [
+     [
+      "box",
+      {
+       "color": "#00000000",
+       "behind": "revealed",
+       "shape": "block",
+       "padX": 46,
+       "padY": 28,
+       "radius": 200,
+       "border": 3,
+       "borderColor": "#ffffff80"
+      }
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -1776,23 +1844,7 @@ export const CLASSIC_PRESETS = [
   "classicOf": "prompt-field",
   "layerProps": {
    "textBgEnabled": false,
-   "textBgColor": "rgba(0,0,0,0.6)",
-   "textBgPaddingX": 46,
-   "textBgPaddingY": 28,
-   "textBgRadius": 200,
-   "textBorderEnabled": true,
-   "textBorderColor": "rgba(255,255,255,0.5)",
-   "textBorderWidth": 3,
-   "textBorderStyle": "solid",
-   "textBgInType": "fade",
-   "textBgInStyle": "wipe",
-   "textBgInDuration": 0.35,
-   "textBgInEasing": "Ease Out",
-   "textBgInDelay": 0,
-   "textBgOutType": "fade",
-   "textBgOutStyle": "wipe",
-   "textBgOutDuration": 0.3,
-   "textBgOutEasing": "Ease In"
+   "textBorderEnabled": false
   }
  },
  {
@@ -1803,6 +1855,81 @@ export const CLASSIC_PRESETS = [
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Size",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4650,
+     "max": 100,
+     "min": -30
+    },
+    "effects": [
+     [
+      "size",
+      {
+       "size": 150
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight",
+    "range": {
+     "basedOn": "words"
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 400
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight 800",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4650,
+     "pick": 50
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 800
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Colour",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4650,
+     "pick": 40
+    },
+    "effects": [
+     [
+      "fill",
+      {
+       "color": "#33efab"
+      }
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -1862,27 +1989,7 @@ export const CLASSIC_PRESETS = [
   ],
   "classicOf": "random-pop",
   "layerProps": {
-   "textRandomEnabled": true,
-   "textRandomScope": "words",
-   "textRandomDist": "uniform",
-   "textRandomNth": 3,
-   "textRandomSeed": 7,
-   "textRandomSizeEnabled": true,
-   "textRandomSizeMin": 85,
-   "textRandomSizeMax": 150,
-   "textRandomColorEnabled": true,
-   "textRandomColors": [
-    "#33efab"
-   ],
-   "textRandomCoverage": 40,
-   "textRandomWeightEnabled": true,
-   "textRandomWeights": [
-    400,
-    800
-   ],
-   "textRandomItalicEnabled": false,
-   "textRandomItalicMode": "mix",
-   "textRandomItalicShare": 30
+   "textRandomEnabled": false
   }
  },
  {
@@ -1893,6 +2000,79 @@ export const CLASSIC_PRESETS = [
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Size",
+    "range": {
+     "basedOn": "charsNoSpace"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 6831,
+     "max": 100,
+     "min": -27
+    },
+    "effects": [
+     [
+      "size",
+      {
+       "size": 141
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight",
+    "range": {
+     "basedOn": "charsNoSpace"
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 300
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight 700",
+    "range": {
+     "basedOn": "charsNoSpace"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 6831,
+     "pick": 50
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 700
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Italic",
+    "range": {
+     "basedOn": "charsNoSpace"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 398,
+     "pick": 25
+    },
+    "effects": [
+     [
+      "italic",
+      {}
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -1961,35 +2141,117 @@ export const CLASSIC_PRESETS = [
   ],
   "classicOf": "chaos-letters",
   "layerProps": {
-   "textRandomEnabled": true,
-   "textRandomScope": "symbols",
-   "textRandomDist": "gaussian",
-   "textRandomNth": 3,
-   "textRandomSeed": 21,
-   "textRandomSizeEnabled": true,
-   "textRandomSizeMin": 70,
-   "textRandomSizeMax": 160,
-   "textRandomColorEnabled": false,
-   "textRandomColors": [],
-   "textRandomCoverage": 35,
-   "textRandomWeightEnabled": true,
-   "textRandomWeights": [
-    300,
-    700
-   ],
-   "textRandomItalicEnabled": true,
-   "textRandomItalicMode": "mix",
-   "textRandomItalicShare": 25
+   "textRandomEnabled": false
   }
  },
  {
   "id": "classic-random-rise",
   "name": "Random Rise",
   "cat": "classic-random",
-  "description": "Masked rise; a wave of size and two colours rolls across the words",
+  "description": "Masked rise; the words take random sizes and weights, some in one of two colours",
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Size",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 9726,
+     "max": 100,
+     "min": -25
+    },
+    "effects": [
+     [
+      "size",
+      {
+       "size": 140
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight",
+    "range": {
+     "basedOn": "words"
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 500
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight 900",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 9726,
+     "pick": 50
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 900
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Colour",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 9726,
+     "pick": 45
+    },
+    "effects": [
+     [
+      "fill",
+      {
+       "color": "#7aa2ff"
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Colour 2",
+    "range": {
+     "basedOn": "words",
+     "randomize": true,
+     "seed": 1,
+     "start": 0,
+     "end": 50,
+     "smooth": 0
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 9726,
+     "pick": 45
+    },
+    "effects": [
+     [
+      "fill",
+      {
+       "color": "#ff6b81"
+      }
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -2045,28 +2307,7 @@ export const CLASSIC_PRESETS = [
   ],
   "classicOf": "random-rise",
   "layerProps": {
-   "textRandomEnabled": true,
-   "textRandomScope": "words",
-   "textRandomDist": "wave",
-   "textRandomNth": 3,
-   "textRandomSeed": 12,
-   "textRandomSizeEnabled": true,
-   "textRandomSizeMin": 90,
-   "textRandomSizeMax": 140,
-   "textRandomColorEnabled": true,
-   "textRandomColors": [
-    "#7aa2ff",
-    "#ff6b81"
-   ],
-   "textRandomCoverage": 45,
-   "textRandomWeightEnabled": true,
-   "textRandomWeights": [
-    500,
-    900
-   ],
-   "textRandomItalicEnabled": false,
-   "textRandomItalicMode": "mix",
-   "textRandomItalicShare": 30
+   "textRandomEnabled": false
   }
  },
  {
@@ -2077,6 +2318,141 @@ export const CLASSIC_PRESETS = [
   "sides": "in",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Size",
+    "range": {
+     "basedOn": "charsNoSpace"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4232,
+     "max": 100,
+     "min": -38
+    },
+    "effects": [
+     [
+      "size",
+      {
+       "size": 165
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight 700 · colour",
+    "range": {
+     "basedOn": "charsNoSpace"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4232,
+     "pick": 60
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 700
+      }
+     ],
+     [
+      "fill",
+      {
+       "color": "#ffd166"
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight 900",
+    "range": {
+     "basedOn": "charsNoSpace"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4232,
+     "pick": 33.33
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 900
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Colour 2",
+    "range": {
+     "basedOn": "charsNoSpace",
+     "randomize": true,
+     "seed": 2704,
+     "start": 0,
+     "end": 66.67,
+     "smooth": 0
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4232,
+     "pick": 60
+    },
+    "effects": [
+     [
+      "fill",
+      {
+       "color": "#ff6b81"
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Colour 3",
+    "range": {
+     "basedOn": "charsNoSpace",
+     "randomize": true,
+     "seed": 2704,
+     "start": 0,
+     "end": 33.33,
+     "smooth": 0
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4232,
+     "pick": 60
+    },
+    "effects": [
+     [
+      "fill",
+      {
+       "color": "#7aa2ff"
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Italic",
+    "range": {
+     "basedOn": "charsNoSpace"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 4672,
+     "pick": 30
+    },
+    "effects": [
+     [
+      "italic",
+      {}
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -2114,40 +2490,90 @@ export const CLASSIC_PRESETS = [
   ],
   "classicOf": "ransom-note",
   "layerProps": {
-   "textRandomEnabled": true,
-   "textRandomScope": "symbols",
-   "textRandomDist": "uniform",
-   "textRandomNth": 3,
-   "textRandomSeed": 33,
-   "textRandomSizeEnabled": true,
-   "textRandomSizeMin": 75,
-   "textRandomSizeMax": 165,
-   "textRandomColorEnabled": true,
-   "textRandomColors": [
-    "#ffd166",
-    "#ff6b81",
-    "#7aa2ff"
-   ],
-   "textRandomCoverage": 60,
-   "textRandomWeightEnabled": true,
-   "textRandomWeights": [
-    400,
-    700,
-    900
-   ],
-   "textRandomItalicEnabled": true,
-   "textRandomItalicMode": "mix",
-   "textRandomItalicShare": 30
+   "textRandomEnabled": false
   }
  },
  {
   "id": "classic-editorial-typer",
   "name": "Editorial Typer",
   "cat": "classic-random",
-  "description": "Word typing behind a caret, set in a wave of weights, sizes and italics",
+  "description": "Word typing behind a caret, the words set in a mix of weights, sizes and italics",
   "sides": "inOut",
   "anchor": "drive",
   "animators": [
+   {
+    "name": "Size",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 5459,
+     "max": 100,
+     "min": -43
+    },
+    "effects": [
+     [
+      "size",
+      {
+       "size": 128
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight",
+    "range": {
+     "basedOn": "words"
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 300
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Weight 800",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 5459,
+     "pick": 50
+    },
+    "effects": [
+     [
+      "weight",
+      {
+       "weight": 800
+      }
+     ]
+    ]
+   },
+   {
+    "name": "Italic",
+    "range": {
+     "basedOn": "words"
+    },
+    "wiggle": {
+     "rate": 0,
+     "corr": 0,
+     "seed": 1,
+     "pick": 35
+    },
+    "effects": [
+     [
+      "italic",
+      {}
+     ]
+    ]
+   },
    {
     "name": "In",
     "range": {
@@ -2213,25 +2639,7 @@ export const CLASSIC_PRESETS = [
   ],
   "classicOf": "editorial-typer",
   "layerProps": {
-   "textRandomEnabled": true,
-   "textRandomScope": "words",
-   "textRandomDist": "wave",
-   "textRandomNth": 3,
-   "textRandomSeed": 5,
-   "textRandomSizeEnabled": true,
-   "textRandomSizeMin": 88,
-   "textRandomSizeMax": 128,
-   "textRandomColorEnabled": false,
-   "textRandomColors": [],
-   "textRandomCoverage": 35,
-   "textRandomWeightEnabled": true,
-   "textRandomWeights": [
-    300,
-    800
-   ],
-   "textRandomItalicEnabled": true,
-   "textRandomItalicMode": "mix",
-   "textRandomItalicShare": 35
+   "textRandomEnabled": false
   }
  }
 ];

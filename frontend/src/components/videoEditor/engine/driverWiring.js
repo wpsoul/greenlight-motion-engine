@@ -18,7 +18,7 @@ import { activeRigAt as activeRigAtInEngine, awaitMotionImages as awaitMotionIma
 import { renderFrame as renderFrameInEngine } from './frameRender';
 import { returnBorrowedGrids as returnBorrowedGridsInEngine } from './gridMockup';
 import { setupMesh as setupMeshInEngine } from './layerMesh';
-import { applyChromaKey as applyChromaKeyInEngine, applySilhouetteFraming as applySilhouetteFramingInEngine, renderLayerAutoFill as renderLayerAutoFillInEngine, renderLayerDepthScan as renderLayerDepthScanInEngine, renderLayerFresnelRim as renderLayerFresnelRimInEngine } from './layerPasses';
+import { applyChromaKey as applyChromaKeyInEngine, applySilhouetteFraming as applySilhouetteFramingInEngine, renderLayerAutoFill as renderLayerAutoFillInEngine, renderLayerDepthKey as renderLayerDepthKeyInEngine, renderLayerDepthScan as renderLayerDepthScanInEngine, renderLayerFresnelRim as renderLayerFresnelRimInEngine } from './layerPasses';
 import { renderLayerRig as renderLayerRigInEngine, runLayerGeometryStages as runLayerGeometryStagesInEngine } from './layerStages';
 import { activateMediaForGesture as activateMediaForGestureInEngine, ensureChannelStates as ensureChannelStatesInEngine, getTotalDuration as getTotalDurationInEngine, seekAllVideosForTime as seekAllVideosForTimeInEngine, seekParticleObjectVideos as seekParticleObjectVideosInEngine, seekVideoAndWait as seekVideoAndWaitInEngine, syncTransitionSounds as syncTransitionSoundsInEngine, syncVideo as syncVideoInEngine } from './mediaClock';
 import { awaitImageTextures as awaitImageTexturesInEngine } from './mediaTextures';
@@ -59,7 +59,7 @@ export const ENV_DEPS = {
   frameEnv: ['SCRUB_SETTLE_MS', 'channels', 'clipsMap', 'ensureChannelStates', 'interactivePreviewEnabled', 'layoutMap', 'motionPathEditItemId', 'parentIndex', 'projectFps', 'syncTransitionSounds', 'isPlaying', 'getTotalDuration', 'setupMesh', 'syncVideo', 'rotoPreview?.itemId'],
   followCurrentTimeEnv: ['currentTime'],
   loadMaterialsEnv: ['materialsReady'],
-  exportEnv: ['awaitMotionImages', 'channels', 'clipsMap', 'layoutMap', 'parentIndex', 'renderHeight', 'renderWidth', 'setCurrentTime', 'setIsPlaying', 'setPlayheadTime', 'setWorldViewActive', 'transitionSoundCues', 'videoHeight', 'videoWidth'],
+  exportEnv: ['awaitMotionImages', 'channels', 'clipsMap', 'layoutMap', 'parentIndex', 'renderHeight', 'renderWidth', 'setCurrentTime', 'setIsPlaying', 'setPlayheadTime', 'setWorldViewActive', 'setupMesh', 'transitionSoundCues', 'videoHeight', 'videoWidth'],
   runPlaybackLoopEnv: ['isPlaying', 'setCurrentTime', 'setIsPlaying', 'setPlayheadTime', 'channels', 'layoutMap', 'clipsMap'],
   gestureEnv: ['channels', 'clipsMap', 'transitionSoundCues'],
   pollVideoReadinessEnv: ['isPlaying'],
@@ -116,6 +116,7 @@ export function wireEngine(engine, v) {
   h.renderLayerGlow = (srcTarget, fieldTarget, outTarget, glow, t) => renderLayerGlowInEngine(engine, envs.previewEnv, srcTarget, fieldTarget, outTarget, glow, t);
   h.renderLayerAutoFill = (srcTarget, af, layerMesh, t, flipPlate = false) => renderLayerAutoFillInEngine(engine, srcTarget, af, layerMesh, t, flipPlate);
   h.renderLayerDepthScan = (srcTarget, scan, layerMesh, chCam, t, flipPlate = false) => renderLayerDepthScanInEngine(engine, srcTarget, scan, layerMesh, chCam, t, flipPlate);
+  h.renderLayerDepthKey = (srcTarget, keyEntry, layerMesh, chCam, t, flipPlate = false) => renderLayerDepthKeyInEngine(engine, envs.timelineEnv, srcTarget, keyEntry, layerMesh, chCam, t, flipPlate);
   h.renderLayerFresnelRim = (srcTarget, fr, layerMesh, chCam, t, flipPlate = false) => renderLayerFresnelRimInEngine(engine, srcTarget, fr, layerMesh, chCam, t, flipPlate);
   h.renderLayerRig = (rt, rigFx, layerMesh, t, camAxis = true) => renderLayerRigInEngine(engine, rt, rigFx, layerMesh, t, camAxis);
   h.runLayerGeometryStages = (out0, stack, ctx) => runLayerGeometryStagesInEngine(engine, out0, stack, ctx);
@@ -196,6 +197,7 @@ export function syncEngineFields(engine, h, v) {
     geometry: h.runLayerGeometryStages,
     glow: h.renderLayerGlow,
     autoFill: h.renderLayerAutoFill,
+    depthKey: h.renderLayerDepthKey,
     depthScan: h.renderLayerDepthScan,
     fresnelRim: h.renderLayerFresnelRim,
     rig: h.renderLayerRig,

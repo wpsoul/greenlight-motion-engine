@@ -8,8 +8,10 @@
 
 import * as THREE from 'three';
 import { computeRig } from './core.js';
-import { sampleTrack } from '../keys.js';
+import { resolveJoints } from './joints.js';
+import { sampleTrack, sampleQuatTrack } from '../keys.js';
 import { useDualQuaternions } from './dualQuat.js';
+import { retargetMotionToRig } from './retarget.js';
 
 const DEG = Math.PI / 180;
 /** three's node name for a joint ("thigh.L" → "thighL"; the pose pipeline matches either spelling). */
@@ -55,6 +57,8 @@ const inflight = new Map();
  */
 export function solveRigAhead(root, spec, { groups = null, solve = null } = {}) {
   if (!root || !spec || typeof spec !== 'object' || typeof solve !== 'function') return null;
+  // a skeleton of the file's own bones binds nothing: no weights to wait for
+  if (ownBones(root, spec, resolveJoints(spec).joints)) return null;
   const found = rigMeshes(root);
   if (!found.length) return null;
   const key = rigKeyOf(found, groups, spec);
@@ -67,16 +71,23 @@ export function solveRigAhead(root, spec, { groups = null, solve = null } = {}) 
   return done;
 }
 
-/** Each joint's rest frame: world rotation (from `rot`, down the chain) and its local position and rotation under its parent. */
+/**
+ * Each joint's rest frame: `world`, its turn as the skeleton writes it (`rot` down the chain; left out, the mesh's axes), and its local
+ * position, rotation and scale under its parent. A joint that is one of the model file's own bones (`rest`, bindRig's ownRig) rests as that
+ * bone does.
+ */
 function restFrames(joints) {
   const worldQ = [];
   return joints.map((j, i) => {
     const q = j.rot ? new THREE.Quaternion().setFromEuler(new THREE.Euler(j.rot[0] * DEG, j.rot[1] * DEG, j.rot[2] * DEG, 'XYZ')) : new THREE.Quaternion();
     const parentQ = j.parent >= 0 ? worldQ[j.parent] : new THREE.Quaternion();
     worldQ[i] = parentQ.clone().multiply(q);
+    if (j.rest) {
+      return { position: new THREE.Vector3().fromArray(j.rest.at), quaternion: new THREE.Quaternion().fromArray(j.rest.quat), scale: new THREE.Vector3().fromArray(j.rest.scale), world: worldQ[i] };
+    }
     const from = j.parent >= 0 ? joints[j.parent].at : [0, 0, 0];
     const local = new THREE.Vector3(j.at[0] - from[0], j.at[1] - from[1], j.at[2] - from[2]).applyQuaternion(parentQ.clone().invert());
-    return { position: local, quaternion: q };
+    return { position: local, quaternion: q, scale: new THREE.Vector3(1, 1, 1), world: worldQ[i] };
   });
 }
 
@@ -84,19 +95,100 @@ function restFrames(joints) {
  * Bones for these joints under one container (an Object3D named "skeleton"): the container, then the bones depth-first in joint order, which
  * is the node order both copies share. Returns { container, bones } (bones in joint order).
  */
-export function buildBones(joints, name = 'skeleton') {
+export function buildBones(joints, name = 'skeleton', frame = null) {
   const container = new THREE.Object3D();
   container.name = name;
+  // (ownRig) where the file's own root bones hang, so these bones stand where the file's do
+  if (Array.isArray(frame) && frame.length === 16) new THREE.Matrix4().fromArray(frame).decompose(container.position, container.quaternion, container.scale);
   const frames = restFrames(joints);
   const bones = joints.map((j, i) => {
     const b = new THREE.Bone();
     b.name = jointNodeName(j.name);
     b.position.copy(frames[i].position);
     b.quaternion.copy(frames[i].quaternion);
+    b.scale.copy(frames[i].scale);
     return b;
   });
   joints.forEach((j, i) => (j.parent >= 0 ? bones[j.parent] : container).add(bones[i]));
   return { container, bones };
+}
+
+/** Joint indices in the order a container built by buildBones is traversed: the container's children, depth first, in joint order. */
+function treeOrder(joints) {
+  const out = [];
+  const visit = (p) => joints.forEach((j, i) => { if (j.parent === p) { out.push(i); visit(i); } });
+  visit(-1);
+  return out;
+}
+
+/**
+ * The model file's own bones a skeleton's joints name, in `joints`' order, when the skeleton has no template and every joint names one:
+ * then it describes the file's own rig (what /api/world3d/prepare-asset writes for a rigged model it retargeted a clip onto). Null otherwise.
+ */
+function ownBones(root, spec, joints) {
+  if (!root || spec?.template || !joints?.length) return null;
+  const byName = new Map();
+  root.traverse((o) => { if (o.isBone && o.name && !byName.has(o.name)) byName.set(o.name, o); });
+  if (!byName.size) return null;
+  const bones = joints.map((j) => byName.get(j.name) || byName.get(jointNodeName(j.name)));
+  return bones.every(Boolean) ? bones : null;
+}
+
+/**
+ * A skeleton that names the file's own bones: nothing is solved or bound again (the file's meshes are skinned already, and a second set of
+ * bones with the same names would leave whatever it bound on bones no clip reaches). Each joint carries its bone's rest frame in root's
+ * space, so the clips play on the file's bones (rigClips) and the editor's copy of the joints (scenePose.js) poses them as the world's. A
+ * plain mesh keeps its place unless `parts` names it: then it follows that bone whole.
+ */
+function ownRig(root, spec, resolved, bones, warnings) {
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert();
+  const inRoot = (o) => (o && o !== root ? new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld) : new THREE.Matrix4());
+  const turnOf = (m) => { const q = new THREE.Quaternion(); m.decompose(new THREE.Vector3(), q, new THREE.Vector3()); return q; };
+  const joints = resolved.map((j, i) => {
+    const b = bones[i], parent = inRoot(b.parent);
+    return {
+      ...j,
+      at: new THREE.Vector3().setFromMatrixPosition(inRoot(b)).toArray(),
+      rest: { at: b.position.toArray(), quat: b.quaternion.toArray(), scale: b.scale.toArray() },
+      world: turnOf(inRoot(b)).toArray(),
+      parentWorld: turnOf(parent).toArray(),
+      parentInv: new THREE.Matrix3().setFromMatrix4(parent).invert().toArray(),
+    };
+  });
+  const firstRoot = joints.findIndex((j) => j.parent < 0);
+  const frame = firstRoot >= 0 ? inRoot(bones[firstRoot].parent).toArray() : null;
+  // not in the scene: the list the world's #setNodePose walks is the file's bones, in the order the editor's copy traverses its joints
+  const container = new THREE.Object3D();
+  container.name = 'skeleton';
+  container.userData.nodeList = [container, ...treeOrder(joints).map((i) => bones[i])];
+  const plain = rigMeshes(root);
+  const byJoint = new Map(joints.map((j, i) => [j.name, i]));
+  const parts = spec.parts && typeof spec.parts === 'object' ? spec.parts : {};
+  const meshes = [];
+  const skeleton = new THREE.Skeleton(bones);
+  for (const m of plain) {
+    const joint = parts[m.name];
+    if (joint == null) continue;
+    const i = byJoint.get(joint) ?? joints.findIndex((j) => jointNodeName(j.name) === jointNodeName(joint));
+    if (i === undefined || i < 0) { warnings.push(`skeleton: parts names joint "${joint}" for mesh "${m.name}", and there is no such joint`); continue; }
+    const n = m.position.length / 3;
+    const skinIndex = new Uint16Array(n * 4), skinWeight = new Float32Array(n * 4);
+    for (let v = 0; v < n; v += 1) { skinIndex[v * 4] = i; skinWeight[v * 4] = 1; }
+    const sm = skinnedInPlace(m.object, skinIndex, skinWeight);
+    meshes.push(sm);
+  }
+  if (meshes.length) {
+    root.updateMatrixWorld(true);
+    for (const sm of meshes) sm.bind(skeleton, sm.matrixWorld);
+    if (spec.skinning !== 'linear') for (const sm of meshes) useDualQuaternions(sm);
+  }
+  const kept = plain.length - meshes.length;
+  if (kept) warnings.push(`skeleton: ${kept} plain mesh(es) keep their place (the skeleton names the file's own bones; \`parts\` binds a mesh to one)`);
+  root.userData.skinned = true;
+  root.userData.rigBones = container;
+  return { joints, landmarks: null, found: [], frame, bones, container, skeleton, meshes, clips: rigClips(spec, joints), own: true,
+    report: { joints: joints.length, own: true, bound: meshes.length }, warnings };
 }
 
 /** The meshes a rig can bind under `root`, in traversal order, with their points in root's space. */
@@ -162,9 +254,16 @@ function skinnedInPlace(mesh, skinIndex, skinWeight) {
  */
 export function bindRig(root, spec, { groups = null } = {}) {
   if (!root || !spec || typeof spec !== 'object') return null;
-  const found = rigMeshes(root);
   const warnings = [];
-  if (!found.length) return { joints: [], bones: [], container: null, skeleton: null, meshes: [], clips: [], report: { joints: 0 }, warnings: ['skeleton: nothing to bind (no plain mesh under this object)'] };
+  const resolved = resolveJoints(spec);
+  const fileBones = ownBones(root, spec, resolved.joints);
+  if (fileBones) return ownRig(root, spec, resolved.joints, fileBones, [...resolved.warnings, ...warnings]);
+  const found = rigMeshes(root);
+  // nothing to bind, and still the skeleton's clips: they play on whatever nodes of the file their tracks name
+  if (!found.length) {
+    return { joints: [], bones: [], container: null, skeleton: null, meshes: [], clips: rigClips(spec, resolved.joints), report: { joints: 0 },
+      warnings: ['skeleton: nothing to bind (no plain mesh under this object)'] };
+  }
   let skipped = 0;
   root.traverse((o) => { if (o.isSkinnedMesh) skipped += 1; });
   if (skipped) warnings.push(`skeleton: ${skipped} mesh(es) already have a skeleton of their own and keep it`);
@@ -229,9 +328,45 @@ export function neutralMaxMove(meshes) {
  */
 export function rigClips(spec, joints) {
   const out = [];
+  const rawClips = [...(Array.isArray(spec?.clips) ? spec.clips : [])];
+  const retargetList = Array.isArray(spec?.retarget) ? spec.retarget : (spec?.retarget && typeof spec.retarget === 'object' ? [spec.retarget] : []);
+  for (const r of retargetList) {
+    if (!r || typeof r !== 'object') continue;
+    const src = r.bvh ?? r.source;
+    if (!src) continue;
+    try {
+      const res = retargetMotionToRig(src, joints, {
+        name: r.name || 'retargeted',
+        scale: r.scale,
+        inPlace: !!r.inPlace,
+        map: r.map,
+        alignRest: r.alignRest,
+        stride: r.stride,
+      });
+      if (res?.clip) rawClips.push(res.clip);
+    } catch { /* reported cleanly when queried via API or schema */ }
+  }
   const frames = restFrames(joints);
+  // How a key becomes a bone's local value. A joint the skeleton made: the key turns it from its rest in its own frame (as the pose's bone
+  // controls do), local = rest * key, and `at` moves it in its parent's frame. One of the file's own bones (ownRig): the key is written in
+  // the skeleton's frames (`rot`, or the mesh's axes when left out), so the bone makes the motion the key makes there, whatever its own rest
+  // turn: local = Rp^-1 * S * key * S^-1 * Rw (Rp its parent node's turn in the file, Rw its own, S the skeleton's frame), and `at`, a move
+  // in the parent joint's frame, is taken into the bone's parent space (an armature's scale and turn with it).
+  const fromArr = (a) => new THREE.Quaternion().fromArray(a);
+  const place = joints.map((j, i) => {
+    const f = frames[i];
+    if (!j.world) return { pre: f.quaternion, post: null, rest: f, move: null };
+    const S = f.world, SJ = j.parent >= 0 ? frames[j.parent].world : new THREE.Quaternion();
+    const parentInv = new THREE.Matrix3().fromArray(j.parentInv);
+    return {
+      pre: fromArr(j.parentWorld).invert().multiply(S),
+      post: S.clone().invert().multiply(fromArr(j.world)),
+      rest: f,
+      move: (v) => v.applyQuaternion(SJ).applyMatrix3(parentInv),
+    };
+  });
   const index = new Map(joints.map((j, i) => [j.name, i]));
-  for (const c of Array.isArray(spec?.clips) ? spec.clips : []) {
+  for (const c of rawClips) {
     if (!c || typeof c.name !== 'string' || !c.bones || typeof c.bones !== 'object') continue;
     const tracks = [];
     let end = 0;
@@ -243,22 +378,34 @@ export function rigClips(spec, joints) {
       const j = index.get(name) ?? index.get(joints.find((x) => jointNodeName(x.name) === jointNodeName(name))?.name);
       if (j === undefined || !control) continue;
       const node = jointNodeName(joints[j].name);
-      const rest = frames[j];
-      if (Array.isArray(control.rot)) {
+      const { pre, post, rest, move } = place[j];
+      const turn = (qOff, q) => { q.copy(pre).multiply(qOff); if (post) q.multiply(post); return q; };
+      if (Array.isArray(control.quat)) {
         const values = new Float32Array(n * 4);
-        const q = new THREE.Quaternion(), e = new THREE.Euler();
+        const q = new THREE.Quaternion(), qOff = new THREE.Quaternion();
+        for (let i = 0; i < n; i += 1) {
+          const v = sampleQuatTrack(control.quat, times[i]) || [0, 0, 0, 1];
+          qOff.set(v[0] || 0, v[1] || 0, v[2] || 0, v[3] ?? 1).normalize();
+          turn(qOff, q).toArray(values, i * 4);
+        }
+        tracks.push(new THREE.QuaternionKeyframeTrack(`${node}.quaternion`, times, values));
+      } else if (Array.isArray(control.rot)) {
+        const values = new Float32Array(n * 4);
+        const q = new THREE.Quaternion(), qOff = new THREE.Quaternion(), e = new THREE.Euler();
         for (let i = 0; i < n; i += 1) {
           const v = sampleTrack(control.rot, times[i]) || [0, 0, 0];
-          q.copy(rest.quaternion).multiply(new THREE.Quaternion().setFromEuler(e.set((v[0] || 0) * DEG, (v[1] || 0) * DEG, (v[2] || 0) * DEG, 'XYZ')));
-          q.toArray(values, i * 4);
+          turn(qOff.setFromEuler(e.set((v[0] || 0) * DEG, (v[1] || 0) * DEG, (v[2] || 0) * DEG, 'XYZ')), q).toArray(values, i * 4);
         }
         tracks.push(new THREE.QuaternionKeyframeTrack(`${node}.quaternion`, times, values));
       }
       if (Array.isArray(control.at)) {
         const values = new Float32Array(n * 3);
+        const d = new THREE.Vector3();
         for (let i = 0; i < n; i += 1) {
           const v = sampleTrack(control.at, times[i]) || [0, 0, 0];
-          values[i * 3] = rest.position.x + (v[0] || 0); values[i * 3 + 1] = rest.position.y + (v[1] || 0); values[i * 3 + 2] = rest.position.z + (v[2] || 0);
+          d.set(v[0] || 0, v[1] || 0, v[2] || 0);
+          if (move) move(d);
+          values[i * 3] = rest.position.x + d.x; values[i * 3 + 1] = rest.position.y + d.y; values[i * 3 + 2] = rest.position.z + d.z;
         }
         tracks.push(new THREE.VectorKeyframeTrack(`${node}.position`, times, values));
       }
@@ -267,7 +414,7 @@ export function rigClips(spec, joints) {
         for (let i = 0; i < n; i += 1) {
           const v = sampleTrack(control.scale, times[i]);
           const s = Array.isArray(v) ? v : [v ?? 1, v ?? 1, v ?? 1];
-          values[i * 3] = s[0] ?? 1; values[i * 3 + 1] = s[1] ?? 1; values[i * 3 + 2] = s[2] ?? 1;
+          values[i * 3] = rest.scale.x * (s[0] ?? 1); values[i * 3 + 1] = rest.scale.y * (s[1] ?? 1); values[i * 3 + 2] = rest.scale.z * (s[2] ?? 1);
         }
         tracks.push(new THREE.VectorKeyframeTrack(`${node}.scale`, times, values));
       }
@@ -277,7 +424,13 @@ export function rigClips(spec, joints) {
   return out;
 }
 
-/** What the editor needs to pose a Scene object's rig without its mesh: the joints (name, parent, at, rot), plain data. */
+/**
+ * What the editor needs to pose a Scene object's rig without its mesh: the joints (name, parent, at, rot), plain data. A rig of the file's
+ * own bones (ownRig) also gives each bone's rest frame and where its root bones hang (`frame`), so the editor's copy stands as the file does.
+ */
 export function rigInfo(bound) {
-  return bound?.joints?.length ? { joints: bound.joints.map((j) => ({ name: j.name, parent: j.parent, at: j.at, tail: j.tail, rot: j.rot })) } : null;
+  if (!bound?.joints?.length) return null;
+  const joints = bound.joints.map((j) => ({ name: j.name, parent: j.parent, at: j.at, tail: j.tail, rot: j.rot,
+    ...(j.rest ? { rest: j.rest, world: j.world, parentWorld: j.parentWorld, parentInv: j.parentInv } : {}) }));
+  return bound.frame ? { joints, frame: bound.frame } : { joints };
 }

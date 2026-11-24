@@ -188,8 +188,36 @@ export function critiqueHints({ mode = 'draft', stats = null, scene = null, chec
   const path = crit.path;
   if (path?.leaves?.length && !scene?.error) {
     for (const o of path.leaves.slice(0, 3)) {
-      const layer = path.camera === 'layer';
-      add('pathFrame', 'warning', `The camera move takes "${o.id}" out of the frame: at ${o.t} s only ${Math.round(o.inside * 8)} of its box's 8 corners are in shot (all 8 are at ${path.now} s, this frame; the move runs ${path.from}–${path.to} s). Keep it in: ${layer ? `a smaller move, a wider lens (a lower camZoom), or the Camera layer's keys, path or rig that frame it (a look-at: cameraLookAt "@<id>").` : 'a smaller move (world.camera amount), a wider fov, or keys that frame it (scene.camera.keys).'}`, layer ? 'Camera layer' : 'scene.camera.keys', { object: o.id, t: o.t });
+      const layer = path.camera === 'layer', steered = path.camera === 'steered';
+      // (screensharp2) a Scene camera that a Camera layer clip steers: both are the move, as the render films it
+      add('pathFrame', 'warning', `The camera move takes "${o.id}" out of the frame: at ${o.t} s only ${Math.round(o.inside * 8)} of its box's 8 corners are in shot (all 8 are at ${path.now} s, this frame; the move runs ${path.from}–${path.to} s). Keep it in: ${layer ? `a smaller move, a wider lens (a lower camZoom), or the Camera layer's keys, path or rig that frame it (a look-at: cameraLookAt "@<id>").` : steered ? `a smaller move of the Scene camera (scene.camera.keys) or of the Camera layer that steers it (its pan, dolly and tilt), or a wider fov.` : 'a smaller move (world.camera amount), a wider fov, or keys that frame it (scene.camera.keys).'}`, layer ? 'Camera layer' : steered ? 'scene.camera.keys and the Camera layer' : 'scene.camera.keys', { object: o.id, t: o.t });
+    }
+  }
+
+  // Rig diagnostics (4A.3): binding gaps, extreme edge stretch, and limb/torso self-intersections.
+  const rigs = crit.rigs && typeof crit.rigs === 'object' ? crit.rigs : null;
+  if (rigs && !scene?.error) {
+    for (const oid of Object.keys(rigs).sort()) {
+      if (named.size && !named.has(oid)) continue;
+      const rc = rigs[oid] || {};
+      const b = rc.bindings || {};
+      const bParts = [];
+      if ((b.unboundCount || 0) > 0) bParts.push(`${b.unboundCount} unbound vertices`);
+      if ((b.unnormalizedCount || 0) > 0) bParts.push(`${b.unnormalizedCount} unnormalized rows`);
+      if ((b.badIndexCount || 0) > 0) bParts.push(`${b.badIndexCount} invalid joint indices`);
+      if (bParts.length) {
+        add('rig', 'warning', `"${oid}" has rig binding problems (${bParts.join(', ')}): inspect \`rigCritique\` or add \`skeleton.fixes\`.`, `objects[${oid}].skeleton.fixes`, { object: oid });
+      }
+      const st = rc.stretch || {};
+      if ((st.extremeEdges || 0) > 0 && (st.maxStretch || 1) > 2.0) {
+        const worst = st.worstJoints?.[0]?.joint;
+        add('rig', 'warning', `"${oid}" stretches up to ${Number(st.maxStretch).toFixed(1)}x at ${worst ? `joint "${worst}"` : 'its joints'} (${st.extremeEdges} extreme edges): check \`skeleton.skinning: "dualQuaternion"\` or weight fixes.`, `objects[${oid}].skeleton.fixes`, { object: oid });
+      }
+      const si = rc.selfIntersections || [];
+      if (si.length) {
+        const first = si[0];
+        add('rig', 'warning', `"${oid}" self-intersects between ${first.a} and ${first.b} (${first.count} crossing triangles): adjust its pose or add \`pole\` / \`limits\`.`, `objects[${oid}].pose`, { object: oid });
+      }
     }
   }
 

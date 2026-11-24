@@ -115,6 +115,9 @@ uniform vec2 uCellCrop;
 // backdrop, so the full-frame "video player bars" treatment would paint an
 // opaque comp-aspect plate behind every mismatched member.
 uniform float uGridCell;
+// A box Layer Mask cut in this pass (layerMask.js boxMaskShape): centre, half size; plate px, y up; z 0 = none.
+uniform vec4 uBoxCrop;
+uniform vec2 uBoxRadius;
 uniform vec2 uUvOffset;
 uniform vec2 uUvScale;
 // Advanced Zoom / Advanced Movement, camera side. These run in FRAME space,
@@ -345,6 +348,16 @@ float roundedRectSDF(vec2 p, vec2 halfSize, vec4 r) {
   float rad = p.x < 0.0 ? (p.y > 0.0 ? r.x : r.w) : (p.y > 0.0 ? r.y : r.z);
   vec2 q = abs(p) - halfSize + rad;
   return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - rad;
+}
+
+// The box's signed distance; elliptical corners made circles by scaling y (exact zero line).
+float boxCropSDF(vec2 p, vec4 box, vec2 r) {
+  float k = r.y > 1e-4 ? r.x / r.y : 1.0;
+  vec2 q = abs((p - box.xy) * vec2(1.0, k));
+  vec2 h = box.zw * vec2(1.0, k);
+  float rr = min(r.x, min(h.x, h.y));
+  vec2 d = q - h + rr;
+  return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - rr;
 }
 
 // Arc-length coordinate along the rounded-rect boundary (clockwise, starting at
@@ -689,6 +702,20 @@ void main() {
     sampleUv = uvPushedOut > 0.5 ? transformedUv : clamp(transformedUv, 0.0, 1.0);
   }
 
+  // The box (uBoxCrop) instead of a mask pass: in plate geometry (before the V flip), a pixel's coverage (fwidth
+  // ramp); on the plate's own edge the quad is the edge (the plate's coverage divides out).
+  float boxCov = 1.0;
+  if (uBoxCrop.z > 0.0) {
+    vec2 pb = (sampleUv - 0.5) * uCanvasSize;
+    float db = boxCropSDF(pb, uBoxCrop, uBoxRadius);
+    float covBox = clamp(0.5 - db / max(fwidth(db), 1e-4), 0.0, 1.0);
+    vec2 eb = abs(pb) - 0.5 * uCanvasSize;
+    float dq = max(eb.x, eb.y);
+    float covQuad = clamp(0.5 - dq / max(fwidth(dq), 1e-4), 0.0, 1.0);
+    boxCov = clamp(covBox / max(covQuad, 1e-4), 0.0, 1.0);
+    if (boxCov <= 0.0) discard;
+  }
+
   // Render-target plates on WebGPU arrive V-flipped relative to WebGL. Apply
   // AFTER the UV transform so transitions that write uUvScale/Offset still land
   // on the right texels of an upright plate.
@@ -799,6 +826,7 @@ void main() {
         empty.rgb = mix(uBgColor.rgb, empty.rgb, empty.a);
         empty.a = max(empty.a, uBgColor.a);
       }
+      empty.a *= boxCov;
       gl_FragColor = blendFade(empty);
       return;
     }
@@ -981,6 +1009,7 @@ void main() {
   } else {
     gl_FragColor = color;
   }
+  gl_FragColor.a *= boxCov;
 
   gl_FragColor = blendFade(gl_FragColor);
 
@@ -1081,6 +1110,8 @@ export function createClipMaterial() {
       uStabilizeSize: { value: new THREE.Vector2(1, 1) },
       uCellCrop: { value: new THREE.Vector2(1, 1) },
       uGridCell: { value: 0.0 },
+      uBoxCrop: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uBoxRadius: { value: new THREE.Vector2(0, 0) },
       uUvOffset: { value: new THREE.Vector2(0, 0) },
       uUvScale: { value: new THREE.Vector2(1, 1) },
       uFisheye: { value: 0.0 },
@@ -1223,6 +1254,9 @@ export function resetMaterialUniforms(mat) {
   u.uMirrorTile.value = 0.0;
   if (u.uCellCrop) u.uCellCrop.value.set(1, 1);
   if (u.uGridCell) u.uGridCell.value = 0.0;
+  // The box (a Layer Mask the layer's own pass cuts) is this layer's alone: setupMesh writes it again when it has one.
+  if (u.uBoxCrop) u.uBoxCrop.value.set(0, 0, 0, 0);
+  if (u.uBoxRadius) u.uBoxRadius.value.set(0, 0);
   u.uInputPremultiplied.value = 0.0;
   if (u.uInputFlipV) u.uInputFlipV.value = 0.0;
   u.uPlaneExpand.value = 0.0;
@@ -2024,6 +2058,73 @@ void main() {
 `,
     // Depth only. The test is ON so a model cannot stamp itself over something already
     // nearer; the write is what later layers are then cut against.
+    colorWrite: false,
+    depthTest: true,
+    depthWrite: true,
+    transparent: false,
+  });
+}
+
+/**
+ * Hardware Z-buffer stamp for video/image layers with `dmWrite3dDepth === 1`.
+ * Projects 0..1 normalized disparity (1 = uDepthNearM, 0 = uDepthFarM) into
+ * editor perspective clip depth [0, 1] matching THREE.PerspectiveCamera so
+ * later 3D Text and 3D Models automatically occlude behind foreground pixels.
+ */
+export function createFootageDepthStampMaterial() {
+  return new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    uniforms: {
+      uDepth: { value: null },
+      uColor: { value: null },
+      uHasColor: { value: 0 },
+      uResolution: { value: new THREE.Vector2(1, 1) },
+      uFxOrigin: { value: new THREE.Vector2(0.5, 0.5) },
+      uFxAxisX: { value: new THREE.Vector2(0.5, 0) },
+      uFxAxisY: { value: new THREE.Vector2(0, 0.5) },
+      uFxHom: { value: new THREE.Matrix3() },
+      uFxHomInv: { value: new THREE.Matrix3() },
+      uInvert: { value: 0 },
+      uDepthNearM: { value: 0.4 },
+      uDepthFarM: { value: 8.0 },
+      uCamNear: { value: 1 },
+      uCamFar: { value: 100000 },
+    },
+    vertexShader: `
+void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+`,
+    fragmentShader: `
+precision highp float;
+uniform sampler2D uDepth;
+uniform sampler2D uColor;
+uniform float uHasColor;
+uniform vec2 uResolution;
+uniform mat3 uFxHomInv;
+uniform float uInvert;
+uniform float uDepthNearM;
+uniform float uDepthFarM;
+uniform float uCamNear;
+uniform float uCamFar;
+out vec4 fragColor;
+void main() {
+  vec2 uvn = gl_FragCoord.xy / max(vec2(1.0), uResolution);
+  if (uHasColor > 0.5) {
+    if (texture(uColor, uvn).a < 0.01) discard;
+  }
+  vec3 h = uFxHomInv * vec3(uvn, 1.0);
+  if (h.z < 1e-6) discard;
+  vec2 p = h.xy / h.z;
+  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) discard;
+  float raw = clamp(texture(uDepth, p).r, 0.0, 1.0);
+  if (uInvert > 0.5) raw = 1.0 - raw;
+  float invNear = 1.0 / max(0.05, uDepthNearM);
+  float invFar = 1.0 / max(invNear + 0.001, 1.0 / max(0.1, uDepthFarM));
+  float invDist = mix(1.0 / max(0.1, uDepthFarM), invNear, raw);
+  float viewZ = clamp((1.0 / max(1e-4, invDist)) * 1000.0, uCamNear * 1.01, uCamFar * 0.99);
+  gl_FragDepth = clamp((uCamFar * (viewZ - uCamNear)) / (viewZ * (uCamFar - uCamNear)), 0.0, 0.99999);
+  fragColor = vec4(0.0);
+}
+`,
     colorWrite: false,
     depthTest: true,
     depthWrite: true,

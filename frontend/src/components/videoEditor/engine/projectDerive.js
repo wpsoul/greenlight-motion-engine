@@ -102,6 +102,24 @@ export function deriveTextFontLoadRequest({ channels, clipsMap }) {
         if (Number.isFinite(Number(item.textFontWeight))) {
           weights.push(Number(item.textFontWeight));
         }
+        // Text Animator ▸ Font weight: every hundred from the layer's weight to the effect's (a moving weight
+        // passes through them), its keyframed values too, so no frame draws a weight that has not loaded.
+        if (Array.isArray(item.textAnimators)) {
+          const own = Number.isFinite(Number(item.textFontWeight)) ? Number(item.textFontWeight) : 400;
+          for (const an of item.textAnimators) {
+            for (const fx of an?.effects || []) {
+              if (fx?.type !== 'weight' || fx.enabled === false) continue;
+              const keys = item.propertyKeyframes?.[`txa:${an.aid}:${fx.pid}.weight`];
+              const values = [Number(fx.weight), ...(Array.isArray(keys) ? keys.map((k) => Number(k?.value)) : [])];
+              for (const v of values) {
+                if (!Number.isFinite(v)) continue;
+                const lo = Math.max(100, Math.floor(Math.min(own, v) / 100) * 100);
+                const hi = Math.min(900, Math.ceil(Math.max(own, v) / 100) * 100);
+                for (let w = lo; w <= hi; w += 100) weights.push(w);
+              }
+            }
+          }
+        }
       }
     }
   };

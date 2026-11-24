@@ -4,9 +4,9 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Video Editor Layer Effects and Overlay Effects
+# GLEA — Video Editor Layer Effects and Overlay Effects
 
-> Part of the `greenlight-dash` skill. Read [video-projects.md](video-projects.md) first for the project, clip, channel, item, timing and versioned-write contracts; read [video-keyframes.md](video-keyframes.md) when animating effects. Effect details live in [effects-overlay.md](#greenlight-dash--overlay-effects-reference), [effects-layer.md](#greenlight-dash--layer-effects-reference), [effects-warps.md](#greenlight-dash--warp-layer-effects), [effects-depth.md](#greenlight-dash--depth-effects-and-real-3d-on-models), [masks.md](#greenlight-dash--layer-masks) and [color-correction.md](#greenlight-dash--colour-correction-and-luts); use the [Effect index](#effect-index) to pick one.
+> Part of the `greenlight-dash` skill. Read [video-projects.md](video-projects.md) first for the project, clip, channel, item, timing and versioned-write contracts; read [video-keyframes.md](video-keyframes.md) when animating effects. Effect details live in [effects-overlay.md](#glea--overlay-effects-reference), [effects-layer.md](#glea--layer-effects-reference), [effects-warps.md](#glea--warp-layer-effects), [effects-depth.md](#glea--depth-effects-and-effects-on-3d-models), [masks.md](#glea--layer-masks) and [color-correction.md](#glea--colour-correction-and-luts); use the [Effect index](#effect-index) to pick one.
 
 ## Contents
 
@@ -32,11 +32,11 @@
 
 ## Effect index
 
-Find an effect by id here, then open only its page. Item fields that are not effects: colour correction (`colorCorrection`) and adjustment LUTs (`lut`) are in [color-correction.md](#greenlight-dash--colour-correction-and-luts); a shape's `backdropBlur` and `shapeBackground` are in [video-shapes.md](video-shapes.md) and [video-backgrounds.md](video-backgrounds.md).
+Find an effect by id here, then open only its page. Item fields that are not effects: colour correction (`colorCorrection`) and adjustment LUTs (`lut`) are in [color-correction.md](#glea--colour-correction-and-luts); a shape's `backdropBlur` and `shapeBackground` are in [video-shapes.md](video-shapes.md) and [video-backgrounds.md](video-backgrounds.md).
 
 ### Overlay Effects index
 
-Flags: **3D** renders in real 3D on a `model3d` layer when the entry carries `"real3d": true` ([Real 3D on 3D model layers](#real-3d-on-3d-model-layers)); **avoid** and **on request** follow [Preferred and avoided effects](#preferred-and-avoided-effects). "Registry only" means capabilities is the whole reference.
+Flags: **3D** renders in real 3D on a `model3d` layer when the entry carries `"real3d": true`; in a 3D Scene its `inWorldScene` decides what it does ([Real 3D on 3D model layers](#real-3d-on-3d-model-layers)); **avoid** and **on request** follow [Preferred and avoided effects](#preferred-and-avoided-effects). "Registry only" means capabilities is the whole reference.
 
 | `id` | Name | Group | Scope | Flags | Section |
 |---|---|---|---|---|---|
@@ -77,7 +77,7 @@ Flags: **3D** renders in real 3D on a `model3d` layer when the entry carries `"r
 | `vignette` | Vignette | Lens | layer + adjustment |  | registry only |
 | `radialBlur` | Radial Blur | Lens | layer + adjustment |  | registry only |
 | `radialFastBlur` | Radial Fast Blur | Lens | layer + adjustment |  | [Radial Fast Blur](#radial-fast-blur) |
-| `sharpen` | Sharpen | Lens | layer + adjustment |  | registry only |
+| `sharpen` | Sharpen | Lens | layer + adjustment |  | [Sharpening: which to use](#sharpening-which-to-use) |
 | `fastBlur` | Fast Blur | Lens | layer + adjustment |  | [Fast Blur](#fast-blur) |
 | `lensPrism` | Lens Prism | Optical | layer + adjustment | avoid | [Lens Prism](#lens-prism) |
 | `sdfLensBlur` | SDF Lens Blur | Optical | layer + adjustment | avoid | [SDF Lens Blur](#sdf-lens-blur) |
@@ -115,7 +115,7 @@ Flags: **3D** renders in real 3D on a `model3d` layer when the entry carries `"r
 
 ### Layer Effects index
 
-"Not model3d" means the effect is skipped on 3D model layers. The depth rows are wider than capabilities reports; see [effects-depth.md](#greenlight-dash--depth-effects-and-real-3d-on-models).
+"Not model3d" means the effect is skipped on 3D model layers. "Not in a 3D Scene" means it is not offered on a model in a 3D Scene and a saved one is skipped (capabilities: `inWorldScene: "skipped"`); see [effects-depth.md](#glea--depth-effects-and-effects-on-3d-models).
 
 | `id` | What it does | Works on | Section |
 |---|---|---|---|
@@ -136,10 +136,11 @@ Flags: **3D** renders in real 3D on a `model3d` layer when the entry carries `"r
 | `bezierWarp` | Four cubic edges driving a Coons patch | as `regionDistort` | [Bezier Warp entry](#bezier-warp-entry) |
 | `droste` | The layer recursed into itself (Escher's Print Gallery) | as `regionDistort` | [Droste entry](#droste-entry) |
 | `pryzm` | The layer seen through fluted / rippled / diamond glass | as `regionDistort` | [Pryzm entry](#pryzm-entry) |
-| `depthMap` | Build Depth Map: the shared depth source; renders nothing | image, video | [Build Depth Map entry](#build-depth-map-entry) |
+| `depthMap` | Build Depth Map: shared depth source (`depthMap` + `depthVideo`) + 3D Z-buffer stamp; renders nothing | image, video | [Build Depth Map entry](#build-depth-map-entry) |
 | `depth3d` | 2.5D parallax from the project camera | image, video | [3D Depth entry](#3d-depth-entry) |
-| `depthScan` | LiDAR-style slice through depth | image, video, model3d | [Depth Scan entry](#depth-scan-entry) |
-| `fresnelRim` | Rim light that hugs the subject's edges | image, video, model3d | [Fresnel Rim entry](#fresnel-rim-entry) |
+| `depthScan` | LiDAR-style slice through depth | image, video, model3d (not in a 3D Scene) | [Depth Scan entry](#depth-scan-entry) |
+| `depthKey` | Depth Matte: AE-style foreground / background / band keying from depth | image, video | [Depth Matte entry](#depth-matte-entry) |
+| `fresnelRim` | Rim light that hugs the subject's edges | image, video, model3d (not in a 3D Scene) | [Fresnel Rim entry](#fresnel-rim-entry) |
 | `layerMask` | Animatable vector masks; on an adjustment item they scope the grade | video, image, text, shape, motion, adjustment | [Layer Mask entry](#layer-mask-entry) |
 
 ## Preferred and avoided effects
@@ -247,7 +248,7 @@ The chain:
 - `mix` is 0–100; 0 is an exact bypass.
 - `params` contains effect-specific values. Preserve keys you are not intentionally changing.
 - Optional `start` / `end` are clip-local seconds. Omit both for the whole clip.
-- Optional `clip` matters only on a regular layer: `true` cuts the output to the layer's silhouette, `false` lets glow, blur, echoes or displacement spill past it. **Omit it.** Each effect's `defaultClip` in capabilities is already right: effects that light or smear outward default to `false`, and self-clipping effects (Fill, Posterize, Copy Color Profile) would multiply semi-transparent edges by their alpha a second time if you set `true`. Set it only to get the opposite on purpose; the [effect notes](#greenlight-dash--overlay-effects-reference) mention `clip` only where that is worth doing.
+- Optional `clip` matters only on a regular layer: `true` cuts the output to the layer's silhouette, `false` lets glow, blur, echoes or displacement spill past it. **Omit it.** Each effect's `defaultClip` in capabilities is already right: effects that light or smear outward default to `false`, and self-clipping effects (Fill, Posterize, Copy Color Profile) would multiply semi-transparent edges by their alpha a second time if you set `true`. Set it only to get the opposite on purpose; the [effect notes](#glea--overlay-effects-reference) mention `clip` only where that is worth doing.
 - `code` is accepted only for `id: "custom"` and is capped at 8192 characters.
 - Optional `real3d: true` — on a `model3d` item only: the effect renders INSIDE the model's 3D pass instead of on its flat picture (see [Real 3D on 3D model layers](#real-3d-on-3d-model-layers)). Write it only when true; an entry without it renders the flat version.
 
@@ -265,9 +266,9 @@ GET /api/video-editor/capabilities
 - `effects.layer[]` contains every typed Layer Effect with defaults, fields, supported media types and requirements (every effect is free).
 - `effects.limits.overlayEffectsPerItem` is the current chain limit.
 
-Use `params: {}` for registry defaults, or start from `defaultParams` and change only requested values. Never invent an id, parameter key, select value, range, scope, or keyframe capability from this document; the runtime-generated endpoint is authoritative. One exception: it under-reports the Depth effects. Video layers are supported too, and Depth Scan and Fresnel Rim also run on `model3d`; `scnSpace` is a valid Depth Scan field (see [effects-depth.md](#greenlight-dash--depth-effects-and-real-3d-on-models)).
+Use `params: {}` for registry defaults, or start from `defaultParams` and change only requested values. Never invent an id, parameter key, select value, range, scope, or keyframe capability from this document; the runtime-generated endpoint is authoritative. On a Layer Effect, `requiresOn` lists the layer types its `requires` applies to (a depth effect on a model needs no map), and a field's `appliesTo` the layer types that field acts on.
 
-Glass is a Layer Effect on a shape, not an Overlay Effect: see [Glass entry](#glass-entry). What each Overlay Effect's values do is in [effects-overlay.md](#greenlight-dash--overlay-effects-reference).
+Glass is a Layer Effect on a shape, not an Overlay Effect: see [Glass entry](#glass-entry). What each Overlay Effect's values do is in [effects-overlay.md](#glea--overlay-effects-reference).
 
 ### Regular-layer Overlay Effects example
 
@@ -418,9 +419,9 @@ apply exactly like the registry effects above, in the same `effects` list and bo
 Layer Effects are an array of typed entries in `item.layerEffects`. The [Layer Effects index](#layer-effects-index) lists every id, the layers it works on and its page.
 
 - At most one entry of each id. Each entry has a stable `eid`, an `enabled` flag and a `params` object.
-- Some entries carry data next to `params`, never inside it: `points` / `points3d` (Grow Fill), `pins` / `chains` (Rig), `masks` (Layer Mask), `depthMap` (Build Depth Map).
+- Some entries carry data next to `params`, never inside it: `points` / `points3d` (Grow Fill), `pins` / `chains` (Rig), `masks` (Layer Mask), `depthMap` / `depthVideo` (Build Depth Map).
 - Their numbers keyframe as same-name `propertyKeyframes` tracks (`glowAmount`, `depthStrength`, `repReveal`…), not `fx:` tracks; Rig uses `rig:<pid>:<chan>` and Layer Mask `msk:<mid>:<chan>`. Each entry's section lists which fields keyframe.
-- The depth effects (`depthMap`, `depth3d`, `depthScan`, `fresnelRim`) share one depth map; see [effects-depth.md](#greenlight-dash--depth-effects-and-real-3d-on-models).
+- The depth effects (`depthMap`, `depth3d`, `depthScan`, `depthKey`, `fresnelRim`) share one depth source; see [effects-depth.md](#glea--depth-effects-and-effects-on-3d-models).
 
 ### Complete regular-item example
 
@@ -470,9 +471,9 @@ Follow the versioned-write contract in [video-projects.md](video-projects.md#upd
 3. When you delete an effect, delete its tracks too (`fx:<eid>:*`, or its same-name, `rig:` or `msk:` tracks).
 4. Render with `/render-onserver` or the desktop renderer, never the fast `/render` (see rendering.md (GreenLight Dash only)).
 
-# GreenLight Dash — Overlay Effects reference
+# GLEA — Overlay Effects reference
 
-> Part of the `greenlight-dash` skill. Read [video-effects.md](#greenlight-dash--video-editor-layer-effects-and-overlay-effects) first: the entry schema, the `clip` rule, `fx:` keyframes and the id index live there.
+> Part of the `greenlight-dash` skill. Read [video-effects.md](#glea--video-editor-layer-effects-and-overlay-effects) first: the entry schema, the `clip` rule, `fx:` keyframes and the id index live there.
 
 ## Contents
 
@@ -914,9 +915,9 @@ The rest of the fragment family: `objectSlitScan` slides strips of the picture �
 
 Geometry look controls: `objectNodes` — `shape` (0–7, `8` mixed), `size`, `weight`, `fill`, `vary`, `random`, `rotate`, `hero`/`heroScale`/`ring`, plus `labels`/`labelStyle`/`labelSize` (Node Labels is this program's option, not a separate effect). `objectLinks` — `mode` (`0` proximity, `1` Delaunay, `2` edge chain, `3` radial hubs, `4` orthogonal, `5` hybrid), `dist`, `weight`, `conf`. `objectFacets` — `detail`, `maxSide` (drops the Delaunay hull slivers), `fill`, `shade` (`0` flat, `1` facing ramp, `2` monochrome), `edge`, `subject`. `objectMeasure` — `target` (`0` subject bounds, `1` face box, `2` whole layer), `pad`, `corners`, `dims`, `cross`, `readout`, `weight`.
 
-# GreenLight Dash — Layer Effects reference
+# GLEA — Layer Effects reference
 
-> Part of the `greenlight-dash` skill. Read [video-effects.md](#greenlight-dash--video-editor-layer-effects-and-overlay-effects) first for the storage contract and the id index; read [video-keyframes.md](video-keyframes.md) when animating effects.
+> Part of the `greenlight-dash` skill. Read [video-effects.md](#glea--video-editor-layer-effects-and-overlay-effects) first for the storage contract and the id index; read [video-keyframes.md](video-keyframes.md) when animating effects.
 
 ## Contents
 
@@ -931,7 +932,7 @@ Geometry look controls: `objectNodes` — `shape` (0–7, `8` mixed), `size`, `w
 - [Chroma Key entry](#chroma-key-entry)
 - [Mockup Frame entry](#mockup-frame-entry)
 
-Layer Effects live in `item.layerEffects`: at most one entry per id, each with a stable `eid`, an `enabled` flag and a `params` object. Which layers each id works on, and which need PRO, is in the [Layer Effects index](#layer-effects-index). Warps (Region Distort, Bend, Corner Pin, Mesh / Bezier Warp, Droste, Pryzm) are in [effects-warps.md](#greenlight-dash--warp-layer-effects), the depth effects in [effects-depth.md](#greenlight-dash--depth-effects-and-real-3d-on-models) and Layer Mask in [masks.md](#greenlight-dash--layer-masks).
+Layer Effects live in `item.layerEffects`: at most one entry per id, each with a stable `eid`, an `enabled` flag and a `params` object. Which layers each id works on, and which need PRO, is in the [Layer Effects index](#layer-effects-index). Warps (Region Distort, Bend, Corner Pin, Mesh / Bezier Warp, Droste, Pryzm) are in [effects-warps.md](#glea--warp-layer-effects), the depth effects in [effects-depth.md](#glea--depth-effects-and-effects-on-3d-models) and Layer Mask in [masks.md](#glea--layer-masks).
 
 ## Running Glow entry
 
@@ -1223,7 +1224,7 @@ Keyframe tracks named like the params: `glassIor`, `glassDispersion`, `glassMagn
 
 ## Mockup Frame entry
 
-A flat device chassis drawn around a flat picture, for a flat shot. A device that turns, tumbles or moves in depth is a ready-made preset standing in the 3D Scene ([video-world3d.md](video-world3d.md#a-device-from-the-preset-table)).
+A flat device chassis drawn around a flat picture, for a flat shot. A device that turns, tumbles or moves in depth is a ready-made preset standing in the 3D Scene ([world3d.md](video-3d.md#devices-from-the-preset-table)).
 
 ```json
 {
@@ -1254,11 +1255,11 @@ A flat device chassis drawn around a flat picture, for a flat shot. A device tha
 - `mfVariant` (`safari` / `chrome` / `arc` / `minimal`), `mfTheme` (`light` / `dark`) and `mfUrl` apply to the `browser` chassis only. `mfStand`, `mfNano` and `mfBand` are per-device extras (0/1).
 - The framed device is ONE image: the layer's own 3D tilt (`rotateX` / `rotateY`) keystones the chassis with the screen, and Mockup Frame runs FIRST in the geometry chain, so `regionDistort`, `bend`, `meshWarp`, `bezierWarp`, `droste`, [`pryzm`](#pryzm-entry), `cornerPin` and `repetile` on the same item reshape the whole device (listing order in `layerEffects` does not matter). With `mfSizeMode` `1` those stages work on the layer box grown to cover the overflowing chassis. A framed layer is rendered SEATED into the screen (the artwork's own pixels are moved into the chassis screen on the layer's plane before masks, fills, glow and overlay effects run), so those effects act on the seated artwork and a big or tilted layer never needs pixels outside the frame. Overlay effects that resample through the layer box (CRT Matrix, VHS), Layer Mask, Depth Scan and Grow Fill (`autoFill`) are exact on a 3D-tilted layer too — the box is the plane's projective map, not an affine frame.
 - The numbers keyframe as same-name tracks; the selects and strings do not.
-- Not the same thing as a **device mockup layer** — that is a rendered `video` clip carrying a `mockupConfig` (see motion.md (GreenLight Dash only)). This is a layer effect on artwork you already have on the timeline.
+- Not the same thing as a **device mockup layer** — that is a rendered `video` clip carrying a `mockupConfig` (see motionfast.md (GreenLight Dash only)). This is a layer effect on artwork you already have on the timeline.
 
-# GreenLight Dash — Warp Layer Effects
+# GLEA — Warp Layer Effects
 
-> Part of the `greenlight-dash` skill. Read [video-effects.md](#greenlight-dash--video-editor-layer-effects-and-overlay-effects) first for the storage contract and the id index; read [video-keyframes.md](video-keyframes.md) when animating effects.
+> Part of the `greenlight-dash` skill. Read [video-effects.md](#glea--video-editor-layer-effects-and-overlay-effects) first for the storage contract and the id index; read [video-keyframes.md](video-keyframes.md) when animating effects.
 
 ## Contents
 
@@ -1436,52 +1437,130 @@ All seven work on `video`, `image`, `text`, `shape`, `motion`, `sequence` and `g
 - Runs after the free-form warps and before Corner Pin (Droste's slot), so the glass can be laid onto a plane after.
   All 42 params, ranges and defaults: `GET /api/video-editor/capabilities` → `effects.layer` → `pryzm`.
 
-# GreenLight Dash — Depth effects and real 3D on models
+# GLEA — Depth effects and effects on 3D models
 
-> Part of the `greenlight-dash` skill. Read [video-effects.md](#greenlight-dash--video-editor-layer-effects-and-overlay-effects) first for the storage contract and the id index; [video-3d.md](video-3d.md) covers model layers themselves.
+> Read [video-effects.md](#glea--video-editor-layer-effects-and-overlay-effects) first for the storage contract and the id index; [video-keyframes.md](video-keyframes.md) when animating.
+
+Read this to give a photo or a video clip depth (2.5D parallax, a depth scan, a depth matte, a rim light from depth), or to put
+an Overlay Effect on a model layer, in a 3D Scene or outside one. The objects a 3D Scene builds itself (`rig.scene.objects`) are
+not layers and take no effects: their moving looks (edge glow, a beam, a sweep, live noise) are materials
+([video-world3d.md](video-world3d.md#animated-materials-edge-glow-live-noise-beam-sweep-graph-presets)). To put a 3D object behind real
+things in footage, use the footage call's occlusion matte
+(tracking-data.md (GreenLight Dash only)).
 
 ## Contents
 
+- [The depth effects at a glance](#the-depth-effects-at-a-glance)
+- [Where the depth comes from](#where-the-depth-comes-from)
 - [Build Depth Map entry](#build-depth-map-entry)
 - [3D Depth entry](#3d-depth-entry)
 - [Depth Scan entry](#depth-scan-entry)
+- [Depth Matte entry](#depth-matte-entry)
 - [Fresnel Rim entry](#fresnel-rim-entry)
 - [Real 3D on 3D model layers](#real-3d-on-3d-model-layers)
+  - [In a 3D Scene](#in-a-3d-scene)
+  - [A model layer in its own pass](#a-model-layer-in-its-own-pass)
 
-The four depth Layer Effects — `depthMap` (the source), `depth3d`, `depthScan` and `fresnelRim` — share one depth map, held by the `depthMap` entry. In the data they are ordinary `layerEffects` entries.
+## The depth effects at a glance
 
-They work on `image` and `video` layers; `depthScan` and `fresnelRim` also run on `model3d` layers, where they read the model's exact depth and need no map. `GET /api/video-editor/capabilities` under-reports this (it lists image only and omits Depth Scan's `scnSpace`); trust this page for those two points. All four are free.
+Five Layer Effects share one depth source, held by the `depthMap` entry. They are ordinary `layerEffects` entries (one per id),
+all free.
 
-Overlay Effects that render in real 3D on a model are covered in [Real 3D on 3D model layers](#real-3d-on-3d-model-layers).
+| `id` | Name | What it does | Works on | Reads |
+| --- | --- | --- | --- | --- |
+| `depthMap` | Build Depth Map | holds the depth source; draws nothing | image, video | — |
+| `depth3d` | 3D Depth | 2.5D parallax from the project camera's moves | image, video | the frozen map only |
+| `depthScan` | Depth Scan | a slice of light that sweeps through depth | image, video; a model, not in a 3D Scene | the depth video, else the map; on only with a map |
+| `depthKey` | Depth Matte | keeps the near, the far or a band of depth | image, video | the depth video, else the map |
+| `fresnelRim` | Fresnel Rim | rim light where depth falls away; on a model, its real rim | image, video; a model, not in a 3D Scene | the depth video, else the map; on only with a map |
+
+- On a model, Depth Scan and Fresnel Rim read the model's exact depth and normals and need no map, in a project with no 3D
+  Scene. **On a model in a 3D Scene they are not offered, and a saved one is skipped** ([In a 3D Scene](#in-a-3d-scene)).
+- 3D Depth, Depth Scan, Depth Matte and Fresnel Rim accept the Active Range: optional top-level `start` / `end` in clip-local
+  seconds (not inside `params`), as on a windowed Overlay Effect. Build Depth Map has none.
+- In `GET /api/video-editor/capabilities` each entry's `mediaTypes` are the layer types above. `requires: ["depthMap"]` with
+  `requiresOn: ["image", "video"]` means only a picture needs the map; a field's `appliesTo` names the layer types it acts on;
+  Depth Scan and Fresnel Rim carry `inWorldScene: "skipped"`.
+
+## Where the depth comes from
+
+- **The user makes it in the editor**, in the layer's Depth section: **Analyse depth…** (a photo), **Analyse depth at
+  playhead…** (a video: one frame, held for the whole clip), **Bake Video Depth (per-frame)…** (a video: every frame of the
+  trimmed range, steadied over time), **Load a depth map…** (PNG, JPEG or WebP) or **Load depth video…** (MP4, WebM or MOV: a
+  depth pass from Blender or After Effects). White is near unless `dmInvert` says otherwise.
+- **An agent cannot make one**: the depth model runs in the editor window. Never invent a map's `data`. A `depthVideo` may point
+  at a depth pass that is already in the board's media.
+- **The model** is Depth Anything V2 Small (`onnx-community/depth-anything-v2-small`) through Transformers.js: WebGPU in fp16, or
+  the CPU (WASM, q8) without WebGPU. The library and the model download at first use through the app's model cache
+  (`GET /api/model-cache/…`): from jsDelivr and Hugging Face, or the GreenLight mirror when those cannot be reached. They are kept
+  in the app's data folder (`models/web/`) across updates and reinstalls and checked for a newer version every 90 days. The first
+  analysis needs the internet; after that it works offline. A render never needs the model: the map is stored in the project and
+  the depth video in the board's media.
+- **Sizes.** A map (estimated or loaded) is at most 384 px on its longest side, stored as a PNG data URI. A baked depth video is
+  at most 384 px on its longest side, at the project's frame rate held to 10–24 fps, saved as `<clip>_depth.mp4` in the board's
+  `Depth` folder. A loaded depth video goes to the same folder.
+- **A video layer may carry both.** Depth Matte, Depth Scan, Fresnel Rim and Write 3D Depth then read the depth video's frame at
+  each moment, in the preview and every render; 3D Depth reads only the frozen map. Depth Scan and Fresnel Rim switch on only
+  when a frozen map exists, even with a depth video; Depth Matte and Write 3D Depth run on a depth video alone. With a depth
+  video and no map, and 3D Depth, Depth Scan or Fresnel Rim on the layer, the Depth section shows **Analyse depth at
+  playhead…** and **Load a depth map…** to add the map, and those cards say "Needs a depth map".
 
 ## Build Depth Map entry
 
-The depth SOURCE: one entry owns the depth estimate that 3D Depth, Depth Scan and Fresnel Rim sample. It is created by the depth analysis and renders nothing itself.
+The depth source. It holds the frozen map (`depthMap`) and / or the per-frame depth video (`depthVideo`) the other four read, and
+the Write 3D Depth switch. It draws nothing on its own.
 
 ```json
 {
   "id": "depthMap",
   "eid": "layer-depthmap-1",
   "enabled": true,
-  "params": { "dmInvert": 0 },
+  "params": {
+    "dmInvert": 0,
+    "dmWrite3dDepth": 0,
+    "dmDepthNear": 0.4,
+    "dmDepthFar": 8.0
+  },
   "depthMap": {
     "w": 384,
     "h": 216,
     "data": "data:image/png;base64,...",
     "t": 2.4
+  },
+  "depthVideo": {
+    "url": "/media/admin/board/depth.mp4",
+    "w": 384,
+    "h": 216,
+    "fps": 15,
+    "startTime": 0,
+    "duration": 5.0
   }
 }
 ```
 
-- `depthMap` rides TOP-LEVEL on the entry (not inside `params`), so the project stays self-contained.
-- `data` MUST start with `data:image/png;base64,` and `w`/`h` must be ≥ 2, or the map is dropped on load.
-- `t` (video only, optional) — the SOURCE second the map was measured at. One map serves the whole clip; `t` only records which frame it describes. Images carry no `t`.
-- `dmInvert` 0 = white is near (what the estimator produces), 1 = white is far. Every Depth effect on the layer obeys it, so they can never disagree about which end of the scene is close.
-- This entry renders nothing on its own; `depth3d`, `depthScan` and (on image / video) `fresnelRim` render nothing WITHOUT it. Write it alongside them.
-- Do not invent a depth map. It comes from the editor's depth analysis, which on video measures the frame under the playhead.
-- A map kept on the `depth3d` entry instead also renders, and the editor moves it into a `depthMap` entry when Build Depth Map is added.
+| Field | Values | Default | What it does |
+| --- | --- | --- | --- |
+| `dmInvert` | 0 / 1 | 0 | 0 = white is near (what the model produces), 1 = white is far. Every depth effect on the layer obeys it. |
+| `dmWrite3dDepth` | 0 / 1 | 0 | 1 = Write 3D Depth (below). |
+| `dmDepthNear` | 0.05–50 m | 0.4 | the distance the nearest depth (white) stands for |
+| `dmDepthFar` | 0.2–200 m | 8 | the distance the farthest depth (black) stands for; kept at least 0.1 m past `dmDepthNear` |
+
+- `depthMap` and `depthVideo` ride on the entry, not inside `params`.
+- `depthMap` is `{ w, h, data, t?, name? }`. `data` must start with `data:image/png;base64,` and stay under 2,000,000 characters,
+  and `w` / `h` must be ≥ 2, or the map is dropped on load. `t` is the source second a video's map was taken at (images have
+  none); `name` is the file a loaded map came from.
+- `depthVideo` is `{ url, w, h, fps, startTime, duration, name? }`. Only `url` is required. `w` / `h` are clamped to 2–4096,
+  `fps` to 1–120 (15 when missing); `startTime` is the source second its first frame belongs to (≥ 0), `duration` its length in
+  seconds (≥ 0.1, 5 when missing).
+- **Write 3D Depth** (`dmWrite3dDepth: 1`, with a map or a depth video) writes the footage's depth, white at `dmDepthNear`, black
+  at `dmDepthFar` metres (1000 px = 1 m), into the depth buffer the editor composites 3D layers against (a 3D Scene's picture,
+  3D Text, a model in its own pass), so they pass behind or in front of what the footage shows.
+- Write it alongside the effects that read it: 3D Depth, Depth Scan and Fresnel Rim (on a picture) render nothing without the
+  frozen map, Depth Matte nothing without a map or a depth video.
 
 ## 3D Depth entry
+
+2.5D parallax for a photo or a video: the project camera's moves shift near pixels further than far ones.
 
 ```json
 {
@@ -1495,18 +1574,17 @@ The depth SOURCE: one entry owns the depth estimate that 3D Depth, Depth Scan an
 }
 ```
 
-- Reads the `depthMap` entry's map. Renders nothing without one.
-- Accepts the Overlay Effects **Active Range** — optional top-level `start`/`end` in clip-local seconds. Outside the window the strength is 0 (an exact bypass). It is a HARD edge; keyframe `depthStrength` for a gentle arrival. The timeline draws it as a coloured line under the clip, like a windowed Overlay Effect.
-- `depthStrength` is 0–300%; `depthFocus` is 0–100%.
-- Keyframe them with `propertyKeyframes.depthStrength` and `propertyKeyframes.depthFocus`.
-- The effect uses the evaluated project-camera pose, including Camera Motion Paths, pan, tilt, and dolly. Lens-only `camZoom` intentionally produces no parallax.
-- A `cameraLocked` channel does not receive camera-driven depth displacement.
+- `depthStrength` 0–300 % (default 100); `depthFocus` 0–100 % (default 45): the depth that stays pinned.
+- Reads the frozen `depthMap` only; a depth video alone does not drive it.
+- Driven by the evaluated project-camera pose: Camera Motion Paths, pan, tilt and dolly. Lens-only `camZoom` makes no parallax.
+  A `cameraLocked` channel gets none.
+- The Active Range is a hard edge: outside it the strength is 0 (an exact bypass). Key `depthStrength` for a gentle arrival.
+- Keyframable as `propertyKeyframes.depthStrength` and `propertyKeyframes.depthFocus`.
 
 ## Depth Scan entry
 
-A narrow slice THROUGH DEPTH, not a screen wipe: pixels whose depth is within
-`scnWidth` of the moving threshold light up, so the contour crawls over the
-subject's surface instead of marching across the frame.
+A narrow slice through depth, not a screen wipe: pixels whose depth is within `scnWidth` of the moving threshold light up, so the
+contour crawls over the subject's surface instead of marching across the frame.
 
 ```json
 {
@@ -1537,23 +1615,96 @@ subject's surface instead of marching across the frame.
 }
 ```
 
-- Reads the `depthMap` entry's map. Renders nothing without one.
-- Accepts the Overlay Effects **Active Range** — optional top-level `start`/`end` in clip-local seconds (NOT inside `params`), as on a windowed Overlay Effect. Outside the window the pass is skipped entirely. Inside it the SWEEP CLOCK IS REBASED, so the slice starts at `scnPhase` wherever the window sits rather than being caught mid-travel; keyframe tracks stay on the clip clock.
-- `scnColorMode` picks how the slice is coloured:
-  - `0` **RGB Split** (default) — three slices at `phase − split` / `phase` / `phase + split`, which reads as chromatic fringing on the contour.
-  - `1` **Flat Color** — one slice in `scnColor`. `scnSplit` is ignored.
-  - `2` **Gradient** — one slice widened to `width + split`, with `scnRamp` laid across it far-to-near. `scnSplit` still means "how far the colours spread through depth".
-  - `scnColor` is a hex string; `scnRamp` is a CSS `linear-gradient(...)` string.
-- The sweep is a pure function of clip time: `phase = scnPhase + scnSpeed × seconds`, wrapped to 0–1. `scnEase: 1` (Hold Ends) applies a closed-form remap so it crawls at the extremes.
-- `scnBorder` (0–100%) rejects the depth CLIFF at the subject's silhouette. At 0 the silhouette becomes a permanent outline that never moves, which reads as a filter rather than a scan.
-- `scnView` `1` (Depth Map) and `2` (Original) are diagnostics that **render and export exactly as shown** — set it back to `0` before exporting.
-- `scnAmount: 0` is a byte-exact bypass.
-- Keyframable as same-name `propertyKeyframes` tracks: `scnPhase`, `scnWidth`, `scnSplit`, `scnFeather`, `scnGrain`, `scnGamma`, `scnLow`, `scnHigh`, `scnBorder`, `scnBrightness`, `scnSource`, `scnAmount`. `scnSpeed` is deliberately static (phase is `start + speed × t`, so an animated rate teleports the slice), as are `scnPixel` and the enums.
-- **On a `model3d` layer** no `depthMap` entry is needed: the slice runs through the model's EXACT depth inside its 3D pass. `scnSpace` picks the axis — `0` Camera depth (distance from the camera across the model's own depth range, default), `1` / `2` / `3` a plane sweeping along the model's own X / Y / Z, so the line runs over the body however it is posed. `scnPixel`, `scnBorder` and `scnView` do nothing there.
+These are the defaults. **At `scnSource` 0 the layer shows only the slice on black**: raise it to keep the picture under the scan.
+
+| Field | Range | Default | What it does |
+| --- | --- | --- | --- |
+| `scnSpeed` | −250…250 %/s | 83.33 | sweep speed (83.33 = one pass in 1.2 s); not keyframable |
+| `scnPhase` | 0–100 % | 4 | where the slice starts |
+| `scnEase` | 0 Linear / 1 Hold Ends | 0 | Hold Ends crawls at the extremes |
+| `scnWidth` | 0.1–10 % | 1.1 | slice width, in % of the depth range |
+| `scnSplit` | 0–12 % | 2.4 | how far the colours spread through depth |
+| `scnFeather` | 0–5 % | 0.35 | slice softness |
+| `scnGrain` | 0–100 % | 22 | point-cloud speckle |
+| `scnPixel` | 1–8 × | 1 | reads the depth in cells; not keyframable |
+| `scnColorMode` | 0 / 1 / 2 | 0 | below |
+| `scnColor` | hex | `#b8ff52` | Flat Color's colour |
+| `scnRamp` | CSS `linear-gradient(…)` | the LiDAR ramp above | Gradient's colours, far to near |
+| `scnGamma` | 0.25–3 | 1 | depth curve |
+| `scnLow` / `scnHigh` | 0–40 % / 60–100 % | 1.5 / 99.5 | far cut / near cut |
+| `scnBorder` | 0–100 % | 100 | rejects the depth cliff at the subject's silhouette; at 0 the silhouette becomes a fixed outline that reads as a filter, not a scan |
+| `scnBrightness` | 0–300 % | 125 | slice brightness |
+| `scnSource` | 0–100 % | 0 | how much of the original picture stays under the scan |
+| `scnAmount` | 0–100 % | 100 | master mix; 0 is a byte-exact bypass |
+| `scnView` | 0 Result / 1 Depth Map / 2 Original | 0 | 1 and 2 are diagnostics that render and export as shown: set 0 before a render |
+
+- `scnColorMode`: `0` **RGB Split**, three slices at `phase − split` / `phase` / `phase + split` (chromatic fringing on the
+  contour); `1` **Flat Color**, one slice in `scnColor` (`scnSplit` ignored); `2` **Gradient**, one slice widened to
+  `width + split` with `scnRamp` laid across it.
+- The sweep is a pure function of clip time: `phase = scnPhase + scnSpeed × seconds`, wrapped to 0–1. Inside an Active Range the
+  sweep clock starts again at the window's start, so the slice starts at `scnPhase` wherever the window sits; keyframe tracks stay
+  on the clip clock. Outside the window the pass is skipped.
+- Keyframable as same-name `propertyKeyframes` tracks: `scnPhase`, `scnWidth`, `scnSplit`, `scnFeather`, `scnGrain`, `scnGamma`,
+  `scnLow`, `scnHigh`, `scnBorder`, `scnBrightness`, `scnSource`, `scnAmount`. `scnSpeed` stays static (an animated rate would
+  make the slice jump), as do `scnPixel` and the choices.
+- Presets: Reference, Needle LiDAR, RGB Shells, Soft Tomography (`scnSource` 14), Source Reveal (`scnSource` 42, `scnAmount`
+  88), Single Blade.
+- **On a model** (not in a 3D Scene) no map is needed: the slice runs through the model's exact depth. `params.scnSpace` picks
+  the axis: `0` camera depth across the model's own depth range (default, not written), `1` / `2` / `3` a plane along the model's
+  own X / Y / Z, so the line runs over the body however it is posed. `scnPixel`, `scnBorder` and `scnView` do nothing there.
+
+## Depth Matte entry
+
+After Effects-style depth keying: keeps the foreground, the background or a band of depth, from the layer's depth video or
+frozen map.
+
+```json
+{
+  "id": "depthKey",
+  "eid": "layer-depthkey-1",
+  "enabled": true,
+  "params": {
+    "dkMode": "foreground",
+    "dkDepth": 50,
+    "dkFeather": 6,
+    "dkBandWidth": 18,
+    "dkGamma": 1.0,
+    "dkEdgeSnap": 35,
+    "dkChoke": 0,
+    "dkInvert": 0,
+    "dkMix": 100,
+    "dkView": "final",
+    "dkFollowLayerId": "",
+    "dkFollowOffset": 0
+  }
+}
+```
+
+These are the defaults.
+
+| Field | Range | Default | What it does |
+| --- | --- | --- | --- |
+| `dkMode` | `"foreground"` / `"background"` / `"band"` | `"foreground"` | keep what is nearer than `dkDepth`, farther than it, or a band around it |
+| `dkDepth` | 0–100 % | 50 | the cut (100 = near, 0 = far) |
+| `dkBandWidth` | 1–100 % | 18 | the band's width (`"band"` only) |
+| `dkFeather` | 0–50 % | 6 | softens the transition |
+| `dkGamma` | 0.25–4 | 1 | depth curve; not keyframable |
+| `dkEdgeSnap` | 0–100 % | 35 | snaps the matte onto colour edges (RGB-guided bilateral); not keyframable |
+| `dkChoke` | −10…10 px | 0 | above 0 shrinks the matte, below 0 spreads it |
+| `dkInvert` | 0 / 1 | 0 | 1 keeps the other part |
+| `dkMix` | 0–100 % | 100 | master mix |
+| `dkView` | `"final"` / `"matte"` / `"cut"` / `"zone"` | `"final"` | the matte in grey, the depth with the cut line, the kept zone highlighted: diagnostics that render and export as shown |
+| `dkFollowLayerId` | an item id, or `@<object id>` | `""` | sets `dkDepth` on every frame from that layer's (or that 3D Scene object's) distance to the camera, across `dmDepthNear`–`dmDepthFar` (1000 px = 1 m) |
+| `dkFollowOffset` | −50…50 % | 0 | added to the followed cut |
+
+- Accepts the Active Range.
+- Keyframable as same-name `propertyKeyframes` tracks: `dkDepth`, `dkBandWidth`, `dkFeather`, `dkChoke`, `dkMix`,
+  `dkFollowOffset`.
 
 ## Fresnel Rim entry
 
-Rim light from the subject's SHAPE.
+Rim light from the subject's shape. On a picture it glows where depth falls away; on a model (not in a 3D Scene) it is the real
+surface rim.
 
 ```json
 {
@@ -1576,41 +1727,124 @@ Rim light from the subject's SHAPE.
 }
 ```
 
-- **3D model:** the real surface rim (1 − n·v from the model's own normals) inside its 3D pass, with its own even halo. It turns with the model and lights edges inside the outline too. No depth map. Fields: `frWidth` (rim width), `frSoftness` (hard band → raw falloff), `frBody` (0–100 %, the model's own light under the rim — 100 leaves it untouched; the presets dim it so the rim reads).
-- **Image / video:** needs the `depthMap` entry. Only EDGES glow — wherever depth falls away behind a pixel — fading inward over `frRimPx` (px of a 1080-tall frame); `frEdgeMin` is the smallest depth drop that counts. Like Depth Scan, a window (`frWindow` ± `frFeather`) around `frPhase` picks WHICH depth's edges light, swept by `frSpeed` (%/s) with `frEase` (0 Linear, 1 Hold Ends); `frGamma`, `frLow`, `frHigh` shape the depth; `frBgDim` (0–100 %) dims what is not lit.
-- Both: `frColorA` edge colour, `frColorB` falloff colour, `frIntensity` (0–6), `frHalo` (0–3, 0 skips the halo pass), `frPulse` %, `frDirMix` % with `frAngle` ° keep the rim to one side, `frAmount` (0 is an exact bypass).
-- Presets: Backlight, Neon Edge, Ember, Glacier.
-- Accepts the Active Range (top-level `start`/`end`). Keyframable: `frIntensity`, `frWidth`, `frHalo`, `frBody`, `frDirMix`, `frAngle`, `frPhase`, `frRimPx`, `frWindow`, `frAmount`.
+This is the Neon Edge preset. Presets: Backlight (the defaults' colours), Neon Edge, Ember, Glacier.
+
+| Field | Range | Default | What it does |
+| --- | --- | --- | --- |
+| `frColorA` / `frColorB` | hex | `#e8f6ff` / `#4aa8ff` | edge colour / falloff colour |
+| `frIntensity` | 0–6 | 2.2 | brightness |
+| `frHalo` | 0–3 | 0.6 | halo; 0 skips the halo pass |
+| `frPulse` | 0–100 % | 0 | pulsing; not keyframable |
+| `frDirMix` / `frAngle` | 0–100 % / 0–360° | 0 / 0 | keep the rim to one side, and which side |
+| `frAmount` | 0–100 % | 100 | master mix; 0 is an exact bypass |
+| `frWidth` | 0–100 % | 45 | model: rim width |
+| `frSoftness` | 0–100 % | 60 | model: hard band → raw falloff; not keyframable |
+| `frBody` | 0–100 % | 100 | model: the model's own light under the rim (100 leaves it as it is; the presets dim it so the rim reads) |
+| `frPhase` | 0–100 % | 30 | picture: the depth whose edges light |
+| `frSpeed` | −100…100 %/s | 22 | picture: sweeps `frPhase` |
+| `frEase` | 0 Linear / 1 Hold Ends | 1 | picture: the sweep's easing |
+| `frRimPx` | 2–40 px | 12 | picture: how far the glow reaches inward, in px of a 1080-tall frame |
+| `frEdgeMin` | 0.3–10 % | 2 | picture: the smallest depth drop that counts as an edge |
+| `frWindow` / `frFeather` | 1–60 % / 0–20 % | 14 / 4 | picture: the depth window around `frPhase` and its softness |
+| `frGamma` | 0.25–3 | 1 | picture: depth curve |
+| `frLow` / `frHigh` | 0–40 % / 60–100 % | 30 / 99.5 | picture: far cut / near cut |
+| `frBgDim` | 0–100 % | 100 | picture: the brightness kept where no rim lights (100 = untouched) |
+
+- **On a model** (not in a 3D Scene): 1 − n·v from the model's own normals, with its own even halo. It turns with the model and
+  lights edges inside the outline too. No map. The picture-only fields are ignored.
+- **On a picture**: needs a frozen map. Only edges glow, wherever depth falls away behind a pixel; like Depth Scan, a window
+  around `frPhase` picks which depth's edges light. `frWidth`, `frSoftness` and `frBody` are ignored.
+- Accepts the Active Range. Keyframable as same-name tracks: `frIntensity`, `frWidth`, `frHalo`, `frBody`, `frDirMix`,
+  `frAngle`, `frPhase`, `frRimPx`, `frWindow`, `frAmount`.
 
 ## Real 3D on 3D model layers
 
-On a `model3d` item, these Overlay Effects have a REAL 3D version that renders inside the model's own 3D pass — reading its surface normals, its position in its own space and its real depth — instead of filtering the flat picture the pass hands back:
+On a `model3d` item, 25 Overlay Effects have a real 3D version. It reads the model's surface normals, its position in its own
+space and its real depth, instead of filtering a flat picture of it.
 
-`rgbSplit`, `pixelate`, `crtMatrix`, `halftone`, `objectDither`, `ascii`, `fractalNoise`, `fill`, `colorama`, `gradientBeam`, `gradientSweep`, `objectContour`, `objectCurtain`, `bloom`, `auraBlur`, `lightRays`, `neonGlow`, `linesDraw`, `edgeDetect`, `flashBlink`, `glitch`, `objectSlitScan`, `pixelStretch`, `shapeRulers`, `curves`.
+- The 3D version runs only when the entry says `"real3d": true` and its id is in the table below. The editor writes it when one
+  of these is added to a model layer; `real3d` switches an entry between the two versions. Any other effect on a model is flat.
+- Same `params`, Mix, Active Range and `fx:<eid>:*` keyframes as the flat effect. `clip` and the Object family's tracking params
+  are ignored: the model is the subject.
+- In capabilities these effects carry `real3dOnModels: true` and `inWorldScene` (what each does on a model in a 3D Scene); 3D-only
+  params and options carry `model3d: true`. The editor resets the 3D-only values when an entry leaves 3D.
+- Cost: nothing until a model carries one of them. The passes and their buffers load on first use.
 
-- In `capabilities.json` these effects carry `real3dOnModels: true`; 3D-only params and options carry `model3d: true`. `inWorldScene` says what each one does on a model inside a world Scene (below): `"onObject"`, `"ownPass"` or `"skipped"`.
-- The 3D version runs only when the entry says `"real3d": true` AND its id is in the list. The editor sets it when one of these is ADDED to a model layer; `real3d` switches an entry between the two. Any other effect on a model stays on the flat chain.
-- Same `params`, Mix, Active Range and `fx:<eid>:*` keyframes as the flat effect. `clip` and the Object family's tracking params are ignored in 3D — the model IS the subject.
-- What changes in 3D, in short: patterns (Mosaic Layer grid, Pixel Matrix, Halftone, ASCII, Dither, Fractal Noise) are locked to the SURFACE and turn with the model; lighting effects (Halftone dot size, Fill's shading, Colorama, Flash) use the model's real light and normals; RGB Split re-films the model from two shifted cameras (real parallax); Bloom thresholds the displayed light but blooms the HDR light; Beam / Sweep / Contour / Glitch / Slit Scan / Pixel Stretch run along the MODEL's own axes; Neon Glow, Lines Draw and Edge Detect trace its real outline, creases and depth steps; Light Rays' origin sits in the model's box and the body occludes its own rays; Shape Rulers draws its real 3D bounding box; Curves applies to the HDR light in tone space. Bloom's Threshold / Soft Knee are judged on the displayed light (same meaning as on the flat effect), and what blooms is the HDR light, so a strong highlight glows more than a clipped one.
-- 3D-only values (the editor resets them when an entry leaves 3D): Colorama `input` `5` Height / `6` Depth / `7` Facing; Mosaic `grid` `2` **Voxels** (the model rebuilt from cubes on a grid in its own space — `size` is the cube size in px, the silhouette turns blocky too); Light Rays `source` `3` **Behind** (a light disc behind the body, rays escape round its silhouette); Flash Blink `lightAngle` (0–360°, default 135 — the side of the body the flash lands on).
-- Light that leaves the silhouette (halos, streaks, the ruler box, RGB Split's copies) is composited at the model's centre depth, so it is occluded by — and occludes — other 3D layers like the model itself.
-- Cost: nothing until a model carries one of these. The passes and their buffers load and allocate on first use.
+| `id` | Name | In a 3D Scene (`inWorldScene`) | What changes in 3D |
+| --- | --- | --- | --- |
+| `curves` | Curves | `onObject` | applies to the HDR light in tone space |
+| `neonGlow` | Neon Glow | `onObject` | traces the real outline, creases and depth steps |
+| `pixelate` | Mosaic | `onObject` | the grid is locked to the surface; `grid: 2` **Voxels** rebuilds the model from cubes on a grid in its own space (`size` = cube size in px; the silhouette turns blocky too) |
+| `fractalNoise` | Fractal Noise | `onObject` | locked to the surface, turns with the model |
+| `gradientBeam` | Gradient Motion Beam | `onObject` | runs along the model's own axes |
+| `gradientSweep` | Gradient Sweep | `onObject` | runs along the model's own axes |
+| `bloom` | Bloom | `onObject` | Threshold / Soft Knee are judged on the displayed light, and the HDR light blooms: a strong highlight glows more than a clipped one |
+| `linesDraw` | Lines Draw | `onObject` | traces the real outline, creases and depth steps |
+| `shapeRulers` | Shape Rulers | `onObject` | draws the model's real 3D bounding box |
+| `edgeDetect` | Edge Detect | `onObject` | traces the real outline, creases and depth steps |
+| `rgbSplit` | RGB Split | `ownPass` | films the model again from two shifted cameras (real parallax) |
+| `glitch` | Digital Glitch | `ownPass` | runs along the model's own axes |
+| `pixelStretch` | Pixel Stretch | `ownPass` | runs along the model's own axes |
+| `objectSlitScan` | Slit Scan | `ownPass` | runs along the model's own axes |
+| `objectCurtain` | Spectral Curtain | `ownPass` | — |
+| `flashBlink` | Flash Blink | `ownPass` | uses the model's real light and normals; `lightAngle` 0–360° (default 135) is the side the flash lands on |
+| `crtMatrix` | CRT Pixel Matrix | `skipped` | locked to the surface |
+| `halftone` | Halftone / Engraving | `skipped` | locked to the surface; dot size from the real light |
+| `objectDither` | Dither Print | `skipped` | locked to the surface |
+| `ascii` | ASCII | `skipped` | locked to the surface |
+| `fill` | Fill | `skipped` | shading from the real light and normals |
+| `colorama` | Colorama | `skipped` | uses the real light; `input` `5` Height / `6` Depth / `7` Facing |
+| `objectContour` | Contour Studio | `skipped` | runs along the model's own axes |
+| `auraBlur` | Aura Blur | `skipped` | — |
+| `lightRays` | Light Rays | `skipped` | the origin sits in the model's box and the body blocks its own rays; `source: 3` **Behind** puts a light disc behind the body, rays escaping round its silhouette |
 
-### In a world Scene (`rig.renderer: "world"`)
+### In a 3D Scene
 
-A model inside a world Scene is an object in the 3D world. Write its effects exactly as above (`"real3d": true`, same params, Mix, Active Range, keyframes); what each one does there is its `inWorldScene`:
+<a id="in-a-world-scene-rigrenderer-world"></a>
 
-- `"onObject"`: `curves`, `neonGlow`, `pixelate` (Voxels too), `fractalNoise`, `gradientBeam`, `gradientSweep`, `bloom`, `linesDraw`, `shapeRulers`, `edgeDetect`. They run in the world, on that object: it keeps its shadow, Final traces it, it shows in reflections, and the effect looks the same in Draft and Final. They run on the world's picture inside the model's outline, before the Scene's tone and film, so the Film panel's look applies over them; a glow or a halo spills onto what is around the model.
-- `"ownPass"`: `rgbSplit`, `glitch`, `pixelStretch`, `objectSlitScan`, `objectCurtain`, `flashBlink`. They move the picture off the surface, so while one of them is live on the model (enabled, Mix above 0, inside its Active Range, the layer's effect Amount above 0) the model leaves the world: its own pass draws it over the Scene, it casts no shadow and Final does not trace it, and its other effects run in that pass. On every other frame it is in the world. Give the effect an Active Range to keep the model in the world for the rest of the shot. Each switch rebuilds the world's scene, so do not key one on and off many times. Out of the world the model stands where it stood in it, filmed by the same camera (`rig.scene.camera` included), lit by the world's lights and environment, its contact shadows (GTAO) on it in Draft and the floor's bounce light in Final, and filmed through the Scene's Look and exposure; what it does not get is the world's shadows on its own faces and, in Final, the rest of the traced bounce light and its reflections.
-- `"skipped"`: `crtMatrix`, `halftone`, `objectDither`, `ascii`, `fill`, `colorama`, `objectContour`, `auraBlur`, `lightRays`. Not available on a model in a world Scene: a saved entry, flat or 3D, stays in the project and is skipped there. Do not add them to a model in a world Scene; put them on an adjustment layer above the Scene, or use a Rig with `renderer: "classic"`.
-- Outside a world Scene (no Scene layer, or a Rig with `renderer: "classic"`) all of them work on a model as described above.
-- The layer's colour filters (`filterBrightness`, `filterContrast`, `filterSaturation`, `filterHueRotate`, `filterGrayscale`, `filterSepia`, `filterInvert`, keyed or not) run there too, after the effects. `filterBlur` moves the picture: a blurred model leaves the world for its own pass (no shadow, not traced), and so does a model with any other flat effect (an entry without `"real3d": true` that is not `"skipped"`).
-- Grow Fill on a model in a world Scene is the object's own material: the fill is lit, bounces its colour and shows in reflections in Final; its glows light what is near. Unfill and Reveal cut the surface away (shadows follow).
-- A setting that lets the model's own picture go (Edge Detect's, Neon Glow's or Lines Draw's Source Level below 100; Gradient Beam's Layer Mask below 100; Pixelate's Voxels where no cube stands) shows the set behind the model there: the world draws itself once more without that model, in raster, while such a setting is on (in Final too, so that part is not traced).
+A model layer in a 3D Scene (a Rig drawn by the world renderer, [video-world3d.md](video-world3d.md)) is an object of the world. Write its
+effects as above; `inWorldScene` says what each one does there:
 
-# GreenLight Dash — Layer masks
+- **`onObject`** (10): they run in the world, on that object. It keeps its shadow, Final traces it, it shows in reflections, and
+  the effect looks the same in Draft and Final. They run on the world's picture inside the model's outline, before the Scene's
+  tone and film, so the Scene's look applies over them; a glow or a halo spills onto what is around the model. A setting that
+  lets the model's own picture go (Edge Detect's, Neon Glow's or Lines Draw's Source Level below 100, Gradient Beam's Layer Mask
+  below 100, Voxels where no cube stands) shows the set behind the model: the world draws itself once more without that model,
+  in raster, while such a setting is on (in Final too, so that part is not traced).
+- **`ownPass`** (6): they move the picture off the surface. While one is live on the model (enabled, Mix above 0, inside its
+  Active Range, the layer's effect Amount above 0) the model leaves the world: its own pass draws it over the Scene, it casts no
+  shadow and Final does not trace it, and its other effects run in that pass. On every other frame it is in the world. Give the
+  effect an Active Range to keep the model in the world for the rest of the shot. Each switch rebuilds the world's scene, so do
+  not key one on and off many times. Out of the world the model stands where it stood in it, filmed by the same camera
+  (`rig.scene.camera` included), lit by the world's lights and environment and filmed through the Scene's look and exposure; it
+  does not get the world's shadows on its own faces, nor, in Final, the rest of the traced bounce light and its reflections.
+- **`skipped`** (9): not offered on a model in a 3D Scene. A saved entry, flat or 3D, stays in the project and is skipped. For
+  such a look over the whole picture, put the effect on an adjustment layer above the Scene (it covers everything under it).
+- **Depth Scan and Fresnel Rim** (Layer Effects, `inWorldScene: "skipped"` in capabilities) are `skipped` the same way: not
+  offered on a model in a 3D Scene, and a saved entry stays in the project and is skipped, also while the model is out of the
+  world. A glow along the edges or a band across a Scene object is a material: `edgeGlow`, `sweep`, `motionBeam`
+  ([video-world3d.md](video-world3d.md#animated-materials-edge-glow-live-noise-beam-sweep-graph-presets)).
+- The layer's colour filters (`filterBrightness`, `filterContrast`, `filterSaturation`, `filterHueRotate`, `filterGrayscale`,
+  `filterSepia`, `filterInvert`, keyed or not) run in the world too, after the effects.
+- These take the model out of the world for its own pass (no shadow, not traced): `filterBlur` (static or keyed), and any flat
+  Overlay Effect that is switched on (an entry without `"real3d": true` whose id is not `skipped` or `ownPass`); one with
+  `enabled: false` does not count.
+- Grow Fill on a model in a 3D Scene is the object's own material: the fill is lit, bounces its colour and shows in reflections
+  in Final; its glows light what is near. Unfill and Reveal cut the surface away, and the shadows follow.
 
-> Part of the `greenlight-dash` skill. Read [video-effects.md](#greenlight-dash--video-editor-layer-effects-and-overlay-effects) for the Layer Effects storage contract. A roto result from the tracker is an ordinary mask; its data contract is in tracking-data.md (GreenLight Dash only).
+### A model layer in its own pass
+
+A model draws in its own pass when the project has no 3D Scene or its Rig has `renderer: "classic"`, when its channel is locked
+to the camera, and while it is out of the world (an `ownPass` effect live, a blur, a flat effect). With no 3D Scene all 25
+effects, Depth Scan and Fresnel Rim run there as described above; in a project with a 3D Scene the `skipped` ones, Depth Scan
+and Fresnel Rim stay skipped in that pass too. A model layer with no Scene is not a video's 3D ([video-3d.md](video-3d.md)).
+
+- Light that leaves the silhouette in that pass (halos, streaks, the ruler box, RGB Split's copies) is composited at the model's
+  centre depth, so it is hidden by, and hides, other 3D layers as the model itself does.
+
+# GLEA — Layer masks
+
+> Part of the `greenlight-dash` skill. Read [video-effects.md](#glea--video-editor-layer-effects-and-overlay-effects) for the Layer Effects storage contract. A roto result is an ordinary mask (a matte or a keyed outline); its data contract is in tracking-data.md (GreenLight Dash only).
 
 ## Layer Mask entry
 
@@ -1650,6 +1884,7 @@ A model inside a world Scene is an object in the 3D world. Write its effects exa
 - **The masks ride top-level on the entry** in the `masks` array (the `pins` precedent), max 16. `mid` must match `^[A-Za-z0-9_-]{1,24}$`, one entry per mid.
 - **Too many points?** A rotoscoped or traced outline is usually far denser than it needs to be. `POST /api/paths/smooth` reduces any of these point lists (see [Smoothing / reducing any path](video-paths.md#smoothing--reducing-any-path--post-apipathssmooth)) — use `mode: "reduce"` plus `kept_indexes` when the mask path is keyframed, so every key loses the same points and the morph stays 1:1.
 - Each mask's `path` is **byte-identical in shape to `item.shapePath`**: points in unit-box space (±0.5 = the edge of the mask's own box, +y DOWN), handles stored as offsets from their anchor. A mask always fills, so `closed` is always `true`. At least 3 points, else the mask is dropped on load.
+- **A matte mask** (`"kind": "matte"`) takes its coverage from a grayscale MP4 instead of its path: `"matte": { "url", "w", "h", "fps", "frames", "t0" }`, white = inside, filling the mask box as a path would. `t0` is the source second of the matte's frame 0, so the mask lands on the right frame of a trimmed or speed-ramped clip. It still needs a `path` of at least 3 points: what the Pen and the panel show, and the coverage if the file cannot decode. `expand` and `grow` do not apply (a matte has no contour); `feather`, `inverted`, `opacity` and the mode fold do. RotoScope's Detail output, Roto ▸ SAM 2 / SAM 3 ▸ Use as mask and the footage call's occluder write it (tracking-data.md (GreenLight Dash only)).
 - ⚠️ **Write `hIn`/`hOut` and `manual: true` on every anchor** — an absent or zero-length handle is a corner, and nothing auto-smooths a stored path (that pass runs only when a human drags a point), so a bare `x`/`y` list cuts a **polygon**. Smooth anchor = `hOut = (P[next] − P[prev]) / 6`, `hIn = −hOut`, wrapping at both ends since a mask is closed; a circular quarter-arc = `0.5523 × radius` perpendicular to the radius (`0.2761` in the ±0.5 box — the four-point circle above). Anchors and handles clamp to ±8. Ready-made outlines with handles resolved: `GET /api/video-editor/capabilities` → `paths.shapePresets` (see [video-shapes.md](video-shapes.md)).
 
 | Field | Unit | Range | Meaning |
@@ -1667,26 +1902,41 @@ A model inside a world Scene is an object in the 3D world. Write its effects exa
 - **Keyframes ride `msk:<mid>:<chan>` tracks**, never edited stored fields: channels are `x`, `y`, `w`, `h`, `rot`, `feather`, `expand`, `opacity`, `grow` (numeric, same units as the table) plus **`msk:<mid>:path`, which is NON-SCALAR** — each key's value is a JSON point list, exactly like the shape layer's `shapePath` track. `mskAmount` is an ordinary registry track. Tracks for a deleted mask are dropped on load.
 - ⚠️ **Every key of a `msk:<mid>:path` track MUST hold the same point count.** The morph blends point-by-point and clamps to the shorter list, so a mismatch silently corrupts the geometry. Any edit that changes the count (insert, delete, applying a preset at a different resolution) has to be applied to every key AND to the stored `path`.
 - ⚠️ **A dense (per-frame / roto) `msk:<mid>:path` track must use `Linear` easing on every key** — the evaluator applies the LOW key's easing, so eased per-frame keys stutter at 30–60Hz. Key positions are kept to 4 decimal places, which keeps adjacent frames distinct at 60fps.
-- **RotoScope (video layers, part of Layer Mask)** traces a subject (Person / Object / Colour modes, box region seed) and writes the whole outline animation as one `msk:<mid>:path` track on a mask named `Roto`, max 128 points, Linear keys, mask box = the media's contain-fit rect with x/y/w/h/rot never keyed. Tracing the current frame is FREE; tracking forward through the clip is PRO. Re-running replaces the `Roto` mask instead of adding another.
+- **RotoScope (video layers, part of Layer Mask)** traces a subject and writes a mask named `Roto`: a matte mask (its Detail output, the default) or the whole outline animation as one `msk:<mid>:path` track (Outline, and Hand roto), max 128 points, Linear keys, mask box = the media's contain-fit rect with x/y/w/h/rot never keyed. Tracing the current frame is FREE; tracking forward through the clip is PRO. Re-running replaces the `Roto` mask instead of adding another. Modes, outputs and how to write a roto mask yourself: tracking-data.md (GreenLight Dash only).
 - **The fold rule.** The stack folds top-down in `masks` array order from an EMPTY base: `add` = `clamp(acc + m)`, `subtract` = `acc·(1−m)`, `intersect` = `acc·m`, `difference` = `acc + m − 2·acc·m`. **But if the FIRST enabled mask's mode is `subtract` or `intersect`, the base starts FULL instead** — otherwise a lone Subtract mask would blank the layer rather than cut a hole in it. A leading `difference` is treated as `add`. Order therefore matters: swapping two masks changes the result for Intersect and Difference.
 - `mskAmount` (0–100 %, keyframable) mixes toward **no mask**: 0 leaves the layer untouched, 100 cuts fully. `mskQuality` 0 Fast / 1 High raises the coverage raster's resolution (a finer plate for wide feathers and hard edges under magnification).
 - **Where it runs**: masks cut the layer's isolate BEFORE everything else on it — After Effects' order (Masks → Effects → Transform → Track Matte → Blend). So Running Glow traces the MASK edge, camera DOF gathers against the masked silhouette, "Clip to layer shape" clips to the mask, velocity Motion Blur smears the masked look, and a Track Matte still gets the last word. A layer can carry both a mask and a track matte, and they compose as AE does.
 - Known limits: with ACCUMULATION motion blur the mask lands on the already-averaged plate (crisp edge, blurred content); Neon Glow's path FX still traces the UNMASKED outline; a masked-away region still occludes in the 3D depth pass; on split text the box is the whole mesh quad, so the mask cuts the plate uniformly.
 
-# GreenLight Dash — Colour correction and LUTs
+# GLEA — Colour correction and LUTs
 
-> Part of the `greenlight-dash` skill. These are item fields, not effects: `colorCorrection` on a video or image item, `lut` on an adjustment item. Read [video-projects.md](video-projects.md) for the item schema and the `filter*` grade fields.
+> Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts.
+
+Read this to fix the colour, exposure or sharpness of a video or photo layer, to animate a grade, to sharpen any layer, or to
+put a .cube LUT on an adjustment layer. These are item fields, not effects: `colorCorrection` on a `video` or `image` item, `lut`
+on an `adjustment` item. The layer's cheap CSS-style grade (`filter*`) is in
+[video-projects.md](video-projects.md#layer-grade--the-static-filter-fields).
 
 ## Contents
 
 - [Color Correction (`item.colorCorrection`)](#color-correction-itemcolorcorrection)
+- [White balance, tone, levels, colour, wheels, HSL](#white-balance-tone-levels-colour-wheels-hsl)
+- [Details and Sharpen (`detail`)](#details-and-sharpen-detail)
+- [Sharpening: which to use](#sharpening-which-to-use)
+- [Keyframes (`cc:<path>`)](#keyframes-ccpath)
 - [Adjustment-layer LUT](#adjustment-layer-lut)
 
 ## Color Correction (`item.colorCorrection`)
 
-A per-layer colour fix in the Lumetri mould for `video` and `image` items. It runs on the layer's own pixels inside its clip shader — before FILTERS, Layer/Overlay Effects, masks and the transition — so it costs no extra pass and appears identically in preview and every render. The stages always run in this order: **details / sharpen → white balance → tone → levels → color → wheels → HSL**, then `mix` blends the result back over the original.
+A per-layer colour fix in the Lumetri mould for `video` and `image` items (the panel's COLOR CORRECTION section). It runs on the
+layer's own pixels inside its clip shader, before FILTERS, Layer / Overlay Effects, masks and the transition, so it costs no
+extra pass. The same code runs in the WebGL and the WebGPU renderer, in the preview and in every render. The stages always run in
+this order: **details / sharpen → white balance → tone → levels → color → wheels → HSL**, then `mix` blends the result back over
+the original.
 
-Use it, not the `filter*` fields, to fix a photo or clip: FILTERS are display-space multipliers that clip and shift hue, while this works in linear light, keeps hue when brightening, and carries per-channel levels for removing a cast. Keep FILTERS for stylised looks (sepia, invert, blur).
+Use it, not the `filter*` fields, to fix a photo or clip: FILTERS are display-space multipliers that clip and shift hue, while
+this works in linear light, keeps hue when brightening, and carries per-channel levels for removing a cast. Keep FILTERS for
+stylised looks (sepia, invert, blur).
 
 ```json
 "colorCorrection": {
@@ -1708,16 +1958,91 @@ Use it, not the `filter*` fields, to fix a photo or clip: FILTERS are display-sp
 }
 ```
 
-- **White balance** — `temp` / `tint` −100…100 (0 = as shot). Positive `temp` warms (red up, blue down), negative cools; positive `tint` adds magenta, negative green. They are gains in linear light, luminance-preserving, eased so small values are fine adjustments and ±100 reaches an underwater-strength correction. To neutralise a colour cast, cool a warm (tungsten) picture with negative `temp`, warm a blue (shade, snow) one with positive.
-- **Tone** — `exposure` −4…4 stops (linear light). `contrast`, `highlights`, `shadows`, `whites`, `blacks` −100…100 act on a hue-preserving brightness curve: lifting shadows does not shift colour. `highlights` below 0 also pulls values pushed past white back into range; `whites` / `blacks` move the white and black points.
-- **Levels** — Photoshop levels on 0–255 values: per-channel `r` / `g` / `b` first, then the `rgb` master. `inB` < `inW` (kept ≥ 2 apart), `gamma` 0.1–9.99 (above 1 brightens the midtones), `outB` / `outW` the output range. Per-channel black/white points are the classic way to remove a cast.
-- **Color** — `saturation` 0–200 (100 = unchanged, 0 = greyscale); `vibrance` −100…100 boosts the least saturated colours most and protects skin tones.
-- **Wheels** — `shadows` / `midtones` / `highlights` each `{ x, y, l }`: `(x, y)` is a direction on the colour wheel inside the unit disc, laid out like a vectorscope (x = blue-yellow Cb axis, y = red-cyan Cr axis; red is up-left, blue right, green down-left); radius is strength. `l` (−100…100) lifts or lowers that tonal range.
-- **HSL** — eight bands in this fixed order: Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta (centred at 0°, 30°, 60°, 120°, 180°, 240°, 270°, 300°). Each list holds eight values from −100 to 100 (values outside are clamped on load): `hue` shifts the band (±100 = the full ±30°), `sat` scales its saturation (−100 = grey), `lum` darkens / brightens it. Greys are never affected.
-- **Details** (the panel's last section) — `details` −100…100 is local contrast at a ~2–4 px scale: above 0 brings out texture (skin, fabric, foliage), below 0 smooths fine texture and keeps the edges (−30…−60 softens skin). `sharpen` 0…100 is an unsharp mask at 1 px: 20–50 is a normal sharpen, 100 is very strong. Both act on brightness only, are measured in composition pixels (the preview and the export match), keep the mean brightness, and leave a cut-out's edge alone (no halo). Auto and the pickers ignore them.
-- Each stage's `on: false` bypasses it and keeps its values; `enabled: false` mutes the whole correction; `mix` (0–100) blends it in.
-- Omit the field (or leave everything at the defaults shown in the ranges above) for no correction — a layer without one costs nothing. On load, values are clamped to these ranges, and an object with nothing off its defaults is dropped.
-- Every number is keyframable as a `cc:<path>` track in `propertyKeyframes` — `path` is the value's address inside the object (`cc:wb.temp`, `cc:tone.exposure`, `cc:levels.r.inB`, `cc:wheels.shadows.x`, `cc:hsl.sat.5`, `cc:detail.sharpen`, `cc:mix`). A track overrides the static value, so an animated correction needs no stored `colorCorrection` at all; the `on` / `enabled` switches are not animatable. Example — a grade that warms up over the clip:
+- Write only the sections you change: a missing section or field reads as its default.
+- Each section's `on: false` bypasses it and keeps its values; `enabled: false` mutes the whole correction; `mix` (0–100 %,
+  default 100) blends it in, details and sharpen included.
+- A section at its defaults is skipped. With no live section, `enabled: false` or `mix` 0 the whole stage is skipped: a layer
+  without a correction costs nothing.
+- On load, values are clamped to their ranges, and an object with nothing off its defaults (`mix` 100, every section at its
+  defaults) is dropped.
+- The panel's Auto (white balance + tone; it clears per-channel Levels), the white-balance and Levels pickers, Before / After (a
+  split over the preview: original left) and Scopes (histogram, waveform, vectorscope) run in the editor window. Auto and the
+  pickers write these same fields; Before / After and Scopes are views and never reach a render.
+
+## White balance, tone, levels, colour, wheels, HSL
+
+- **White balance** (`wb`) — `temp` / `tint` −100…100 (0 = as shot). Positive `temp` warms (red up, blue down), negative cools;
+  positive `tint` adds magenta, negative green. They are gains in linear light, luminance-preserving, eased so small values are
+  fine adjustments and ±100 reaches an underwater-strength correction. To neutralise a colour cast, cool a warm (tungsten)
+  picture with negative `temp`, warm a blue (shade, snow) one with positive.
+- **Tone** (`tone`) — `exposure` −4…4 stops (linear light, default 0). `contrast`, `highlights`, `shadows`, `whites`, `blacks`
+  −100…100 (default 0) act on a hue-preserving brightness curve: lifting shadows does not shift colour. `highlights` below 0 also
+  pulls values pushed past white back into range; `whites` / `blacks` move the white and black points.
+- **Levels** (`levels`) — Photoshop levels on 0–255 values: per-channel `r` / `g` / `b` first, then the `rgb` master. Each is
+  `{ inB, inW, gamma, outB, outW }`, default `{ 0, 255, 1, 0, 255 }`. `inB` < `inW` (kept ≥ 2 apart), `gamma` 0.1–9.99 (above 1
+  brightens the midtones), `outB` / `outW` the output range. Per-channel black / white points are the classic way to remove a
+  cast.
+- **Color** (`color`) — `saturation` 0–200 (100 = unchanged, 0 = greyscale); `vibrance` −100…100 (default 0) moves the least
+  saturated colours most, and when raised it spares skin tones.
+- **Wheels** (`wheels`) — `shadows` / `midtones` / `highlights` each `{ x, y, l }` (default all 0): `(x, y)` is a direction on the
+  colour wheel inside the unit disc, laid out like a vectorscope (x = blue-yellow Cb axis, y = red-cyan Cr axis; red is up-left,
+  blue right, green down-left); radius is strength. `l` (−100…100) lifts or lowers that tonal range.
+- **HSL** (`hsl`) — eight bands in this fixed order: Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta (centred at 0°, 30°,
+  60°, 120°, 180°, 240°, 270°, 300°). Each list holds eight values from −100 to 100 (default 0; values outside are clamped on
+  load): `hue` shifts the band (±100 = the full ±30°), `sat` scales its saturation (−100 = grey), `lum` darkens / brightens it
+  (±100 = ±50 %). Greys are never affected.
+
+## Details and Sharpen (`detail`)
+
+The panel's last section. Two sliders that bring out or smooth texture and crisp the finest detail of a video or photo.
+
+```json
+"detail": { "on": true, "details": 20, "sharpen": 35 }
+```
+
+| Field | Range | Default | What it does |
+| --- | --- | --- | --- |
+| `details` | −100…100 | 0 | Local contrast against a ~2.5 px blur of the picture (it reads pixels 2 px and 4 px away). Above 0 brings out texture: skin, fabric, foliage. Below 0 smooths fine texture and keeps the edges: −30…−60 softens skin. It fades out toward pure black and pure white, so it never clips them. |
+| `sharpen` | 0…100 | 0 | An unsharp mask against a 3 × 3 blur (1 px): crisps the finest detail. 20–50 is a normal sharpen, 100 is very strong. |
+| `on` | true / false | true | `false` bypasses both and keeps the values. |
+
+- **Brightness only.** Both read the luminance of the pixels around and add the same amount to red, green and blue: colours do
+  not shift, and the average brightness stays.
+- **No halo on hard edges.** A fine difference is boosted fully, a hard edge (burned-in text, a logo, a horizon) only up to a
+  cap, so strong edges do not get a light-and-dark rim.
+- **A cut-out keeps its edge.** Only opaque pixels change: below 85 % opacity nothing happens, and near a transparent area (1 px
+  for Sharpen, 4 px for Details) nothing happens either.
+- **Measured in composition pixels**, not source pixels: one step is one pixel of the layer as laid out in the project (at
+  `zoom` 1). The preview's proxy file and the full-size file an export reads are sharpened alike; a 4K clip fitted into a 1080p
+  project is sharpened at the 1080p scale.
+- **Part of the grade.** It feeds the grade's input, so `mix`, `enabled` and Before / After treat it like every other section.
+  Auto and the pickers read the picture without it.
+- **Where it runs, what it costs.** Inside the layer's own clip shader, in the WebGL and the WebGPU renderer, preview and every
+  render. With both at 0 (or `on: false`) the shader reads no neighbouring pixels; Sharpen adds four texture reads per pixel,
+  Details eight, in the same pass.
+- Keyframable as `cc:detail.details` and `cc:detail.sharpen` ([Keyframes](#keyframes-ccpath)).
+
+## Sharpening: which to use
+
+| What you sharpen | Use |
+| --- | --- |
+| A `video` or `image` layer | `colorCorrection.detail` (above): `sharpen` for crispness, `details` for texture |
+| Any other layer (text, shapes, an HTML clip, a template), or everything under an adjustment layer | the **Sharpen** Overlay Effect (`id: "sharpen"`, group Lens) in that item's `effects` |
+| A 3D object put into footage, to match the footage's own sharpening | the Scene's `look.sharpen` (0–1), measured and written by the place call: tracking-data.md (GreenLight Dash only) |
+
+The Sharpen Overlay Effect has one field, `params.amount` 0–3 (default 0.8; 1 is the classic 3 × 3 sharpen kernel), keyframable
+as `fx:<eid>:amount`. It adds each pixel's difference from its four neighbours, one pixel of the frame it draws on away, on red,
+green and blue separately and with no cap: high amounts brighten noise and put light and dark rims, and colour fringes, on hard
+edges and on a cut-out's outline. It runs as its own pass, over the layer (Clip to layer is on by default) or, on an adjustment
+layer, over everything under it, in the WebGL and the WebGPU renderer. The entry's other fields (`eid`, `mix`, `start` / `end`)
+are in [video-effects.md](#overlay-effect-entry).
+
+## Keyframes (`cc:<path>`)
+
+Every number is keyframable as a `cc:<path>` track in `propertyKeyframes`. `path` is the value's address inside the object:
+`cc:mix`, `cc:wb.temp`, `cc:tone.exposure`, `cc:levels.r.inB`, `cc:wheels.shadows.x`, `cc:hsl.sat.5`, `cc:detail.sharpen`. Key
+values are clamped to the field's range. A track overrides the static value, so an animated correction needs no stored
+`colorCorrection` at all; the `on` / `enabled` switches are not animatable. A grade that warms up over the clip:
 
 ```json
 "propertyKeyframes": {
@@ -1730,7 +2055,8 @@ Use it, not the `filter*` fields, to fix a photo or clip: FILTERS are display-sp
 
 ## Adjustment-layer LUT
 
-An `adjustment` item may carry a dedicated .cube colour LUT, separate from its `effects` chain, applied right after the layer's grade and before any stacked effects:
+An `adjustment` item may carry a dedicated .cube colour LUT, separate from its `effects` chain, applied right after the layer's
+grade and before any stacked effects:
 
 ```json
 {
@@ -1739,4 +2065,8 @@ An `adjustment` item may carry a dedicated .cube colour LUT, separate from its `
 }
 ```
 
-`data` is the parsed lattice (size³ RGB bytes, red-fastest order, base64; max size 33 — the editor resamples bigger .cube files on import), so the look is self-contained in the project JSON. `lutAmount` (0–100 %) is the intensity and is keyframable via a standard `lutAmount` track. **Don't author `data` by hand** — parse a real .cube file into the lattice, or copy a `lut` object from another item. On load, a malformed `lut` (wrong size/length) is silently dropped.
+`data` is the parsed lattice (size³ RGB bytes, red-fastest order, base64; `size` 2–33), so the look is self-contained in the
+project JSON. The editor takes a 3D .cube up to 128 per axis, resamples a bigger one than 33 on import and clamps values to 0–1;
+a 1D LUT is refused. `lutAmount` (0–100 %, default 100) is the intensity and is keyframable via a standard `lutAmount` track.
+**Don't author `data` by hand** — parse a real .cube file into the lattice, or copy a `lut` object from another item. On load, a
+malformed `lut` (wrong size or length) is silently dropped.

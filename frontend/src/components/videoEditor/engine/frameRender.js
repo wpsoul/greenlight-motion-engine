@@ -22,6 +22,8 @@ import { isChromaKeyEnabled } from '../chromaKeyLayer';
 import { createBlitMaterial } from '../clipShader';
 import { layerPlane, layerQuad, layerSortDepth } from '../compositeSortDepth';
 import { isCornerPinEnabled } from '../cornerPinLayer';
+import { isDepthKeyEnabled } from '../depthKeyLayer';
+import { hasDepthSource, resolveDepthMapParams } from '../depthMapEffect';
 import { isDepthScanEnabled } from '../depthScanLayer';
 import { isDrosteEnabled } from '../drosteLayer';
 import { isFresnelRimEnabled } from '../fresnelRimLayer';
@@ -33,7 +35,6 @@ import { htmlLiveBeginFrame } from '../htmlLive';
 import { setLiveLayerFrame } from '../liveLayers';
 import { setKeyframeFxScene } from '../keyframeFx';
 import { applyParenting, localPrs, resolveParentTransform } from '../keyframeParenting';
-import { isLayerMaskEnabled } from '../layerMask';
 import { isMeshWarpEnabled } from '../meshWarp';
 import { isMockupFrameActive } from '../mockupFrame';
 import { withFlatEffects } from '../model3dFxCatalog';
@@ -57,7 +58,7 @@ import { repaintAnimatedBackground } from './background';
 import { poseEngineCamera } from './camera';
 import { prePoseWorldModels, renderChannel as renderChannelInEngine } from './channelRender';
 import { getChannelsBottomToTop, isClipMaskItem, orderChannelsForComposite, resolveActiveIndex, resolveGlassLayer } from './compositeHelpers';
-import { clamp01 } from './layerHelpers';
+import { clamp01, needsLayerMaskPass } from './layerHelpers';
 import { isTexturePinned as isTexturePinnedInEngine } from './mediaTextures';
 import { layerPoseScale, resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
 import { PASS_POOL_IDLE_MS, sweepPassPool as sweepPassPoolInEngine } from './passPool';
@@ -275,6 +276,7 @@ export function renderFrame(engine, env) {
         itemId: item.id,
         channelId: channel.id,
         item,
+        clip: layerClip,
         entry,
         mesh,
         pct: Math.max(0, Math.min(1, (t - entry.startTime) / span)) * 100,
@@ -626,6 +628,8 @@ export function renderFrame(engine, env) {
   chromaKeyLayers.clear();
   const depthScanLayers = engine.depthScanLayers;
   depthScanLayers.clear();
+  const depthKeyLayers = engine.depthKeyLayers;
+  depthKeyLayers.clear();
   const frRimLayers = engine.frRimLayers;
   frRimLayers.clear();
   const mockupFrameLayers = engine.mockupFrameLayers;
@@ -742,6 +746,9 @@ export function renderFrame(engine, env) {
       if (isChromaKeyEnabled(item) && !bakedForTransition) {
         chromaKeyLayers.set(channel.id, { item, entry: layout[ai], clip });
       }
+      if (isDepthKeyEnabled(item) && !isCameraBaked3dPlate(clip, item) && !bakedForTransition) {
+        depthKeyLayers.set(channel.id, { item, entry: layout[ai], clip });
+      }
       if (isDepthScanEnabled(item) && !isCameraBaked3dPlate(clip, item) && !bakedForTransition) {
         depthScanLayers.set(channel.id, { item, entry: layout[ai], clip });
       }
@@ -770,7 +777,8 @@ export function renderFrame(engine, env) {
       // inside a transition is already cut in preparePreTransitionOverlayEffects
       // (flow 3); collecting it here as well would run the stack twice —
       // doubled feather, squared opacity.
-      if (isLayerMaskEnabled(item) && !isCameraBaked3dPlate(clip, item)
+      // A box mask is cut by the layer's own pass instead (layerHelpers.js needsLayerMaskPass).
+      if (needsLayerMaskPass(item, clip) && !isCameraBaked3dPlate(clip, item)
         && !engine.preTransitionFxItemIds.has(item.id)) {
         layerMaskLayers.set(channel.id, { item, entry: layout[ai], clip });
       }
@@ -799,7 +807,9 @@ export function renderFrame(engine, env) {
           : 1;
         glassLayers.set(channel.id, resolveGlassLayer(item, kf, compW, compH, poseScale));
       }
-      if (isDepthPlate(item, clip)) depthPlates.set(channel.id, item);
+      if (isDepthPlate(item, clip) || (resolveDepthMapParams(item).dmWrite3dDepth === 1 && hasDepthSource(item) && !isCameraBaked3dPlate(clip, item))) {
+        depthPlates.set(channel.id, item);
+      }
       // The Scene Rig's backdrop is a 3D pass too. With no model beside it the frame
       // took the direct single pass, which painted the backdrop over every layer and,
       // on WebGPU, drew it upside down; the composite puts it first, the right way up.
@@ -905,13 +915,13 @@ export function renderFrame(engine, env) {
       || motionBlurLayers.size > 0 || motionTrailLayers.size > 0
       || autoFillLayers.size > 0 || rigLayers.size > 0 || repetileLayers.size > 0
       || regionDistortLayers.size > 0 || bendLayers.size > 0 || cornerPinLayers.size > 0
-      || drosteLayers.size > 0 || pryzmLayers.size > 0 || chromaKeyLayers.size > 0 || depthScanLayers.size > 0 || frRimLayers.size > 0
+      || drosteLayers.size > 0 || pryzmLayers.size > 0 || chromaKeyLayers.size > 0 || depthKeyLayers.size > 0 || depthScanLayers.size > 0 || frRimLayers.size > 0
       || meshWarpLayers.size > 0 || bezierWarpLayers.size > 0 || mockupFrameLayers.size > 0
       || layerMaskLayers.size > 0 || backdropLayers.size > 0 || glassLayers.size > 0 || shaderBlendLayers.size > 0
-      || trackMatteLayers.size > 0 || mixedCameraLock || modelLayers.size > 0
+      || trackMatteLayers.size > 0 || depthPlates.size > 0 || mixedCameraLock || modelLayers.size > 0
       // The world's picture lands through the compositor. On WebGPU the direct path below has the other parity, so a Scene with no
       // model layer came out upside down.
-      || engine.worldFrameReady)
+      || engine.worldFrameReady || engine.worldLoadingPreview)
     && renderAdjustmentCompositeInEngine(engine, env, adjustments)) {
     // Adjustment/mask effects and camera DOF share this alpha-aware compositor.
   } else {

@@ -11,9 +11,9 @@ ends with its check.
 
 **In the Video Editor** the fields are: [video-keyframes.md](../video-keyframes.md) (`propertyKeyframes`, `Custom` + `bezier`),
 [video-camera.md](../video-camera.md) (camera clip: `camX` % of frame width, positive pans right so content slides LEFT; `camY`;
-`camZoom` × about the centre; `camDolly` px), [masks.md](../video-effects.md#greenlight-dash--layer-masks) (`layerMask` with `msk:<mid>:<chan>` tracks),
-[effects-layer.md](../video-effects.md#greenlight-dash--layer-effects-reference) (`motionBlur` with `mblurShutter`, `glass`),
-[effects-warps.md](../video-effects.md#greenlight-dash--warp-layer-effects) (`cornerPin`), [video-shapes.md](../video-shapes.md) (`trackMatte`); the term map and the
+`camZoom` × about the centre; `camDolly` px), [masks.md](../video-effects.md#glea--layer-masks) (`layerMask` with `msk:<mid>:<chan>` tracks),
+[effects-layer.md](../video-effects.md#glea--layer-effects-reference) (`motionBlur` with `mblurShutter`, `glass`),
+[effects-warps.md](../video-effects.md#glea--warp-layer-effects) (`cornerPin`), [video-shapes.md](../video-shapes.md) (`trackMatte`); the term map and the
 traps at a join are in [video-transitions.md](../video-transitions.md#joins-in-the-editor-the-fields-of-the-motion-grammar). One
 editor limit touches most recipes: a camera in Smart Zoom, Rig or path mode ignores its pose keys
 ([the camera at a join](../video-transitions.md#the-camera-at-a-join)). `motionBlur` and `cornerPin` work on a layer inside a
@@ -214,7 +214,7 @@ shot for an organic morph. The Video Editor has one: the `gooey` effect on a seq
   re-centres as it grows (the earlier words glide left).
 
 Use your tool's per-word / per-letter text animation presets for every entrance (in the editor, the Text Animator
-presets: [video-text-presets.md](../video-text-presets.md), [video-text-kinetic.md](../video-text-kinetic.md)).
+presets: [video-text-presets.md](../video-text-presets.md), Kinetic included).
 
 ## SR-09 · Crisp smash-pan
 

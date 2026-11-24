@@ -22,7 +22,7 @@ export function install(STUDIO) {
   let root, signature='', live=[];
   function make(tag,cls,text){const e=document.createElement(tag);e.className=cls||'';if(text!==undefined)e.textContent=text;return e;}
   function button(label,fn,cls='mi-quiet'){const b=make('button',cls,label);b.type='button';b.onclick=fn;return b;}
-  function section(title,icon){const sec=make('section','mi-section');const h=make('h3','mi-heading');h.innerHTML=`<span>${icons[icon]}</span>`;h.append(document.createTextNode(title));sec.append(h);root.querySelector('.mi-scroll').append(sec);const body=make('div','mi-body');sec.append(body);return body;}
+  function section(title,icon){const sec=make('section','mi-section');const h=make('h3','mi-heading');h.innerHTML=`<span>${icons[icon]||icon}</span>`;h.append(document.createTextNode(title));sec.append(h);root.querySelector('.mi-scroll').append(sec);const body=make('div','mi-body');sec.append(body);return body;}
   function nativeFields(){return [...document.querySelectorAll('.glm-insp .glm-field')].map(row=>({row,label:row.querySelector('.glm-l')?.textContent.trim()||'',input:row.querySelector('textarea,input:not([type=range]),select'),choose:row.querySelector('button[data-choose],button[data-anim]')}));}
   function commit(field,value){
     const id=field.input.id.replace('glm-field-','');const selected=api().selected();
@@ -78,6 +78,22 @@ export function install(STUDIO) {
   const XFORM=['panX','panY','panZ','rotateX','rotateY','rotateZ','scaleX','scaleY','zoom','mirrorH','mirrorV'];
   const XDEF={panX:0,panY:0,panZ:0,rotateX:0,rotateY:0,rotateZ:0,scaleX:1,scaleY:1,zoom:1,mirrorH:false,mirrorV:false};
   const store={get:k=>{try{return localStorage.getItem(k);}catch{return null;}},set:(k,v)=>{try{localStorage.setItem(k,v);}catch{}}};
+  // the Transform section's parts (EditorPanel ▸ TRANSFORM): a labelled row of up to three number cells, and a cell that
+  // drags sideways (Shift ×10, Alt ×0.1), takes a typed value and steps with ↑ / ↓. The camera's rows are made of them too.
+  function xrow(body,label,extra){const r=make('div','mi-xrow');const h=make('div','mi-xhead');h.append(make('span','mi-label',label));if(extra)h.append(extra);const g=make('div','mi-xgrid');r.append(h,g);body.append(r);return g;}
+  function axisCell(grid,axis,title,get,set,{suffix='',min=-Infinity,max=Infinity}={}){
+    const f=make('div','mi-ax');f.title=title;const chip=make('span','mi-ax-chip',axis);const input=make('input','mi-ax-in');input.type='text';input.inputMode='decimal';input.setAttribute('aria-label',title);const suf=make('span','mi-ax-suf');f.append(chip,input,suf);grid.append(f);
+    const put=v=>{if(Number.isFinite(v))set(Math.max(min,Math.min(max,+v.toFixed(2))));};
+    input.onchange=()=>{put(parseFloat(input.value));input.blur();};
+    input.onkeydown=e=>{if(e.key==='Enter'){input.blur();}else if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();put(get()+(e.key==='ArrowUp'?1:-1)*(e.shiftKey?10:e.altKey?0.1:1));input.value=fmt(get());}else if(e.key==='Escape'){input.value=fmt(get());input.blur();}};
+    const scrub=e=>{if(e.button!==0||document.activeElement===input)return;e.preventDefault();const x0=e.clientX,v0=get();let moved=false;const tgt=e.currentTarget;tgt.setPointerCapture(e.pointerId);
+      const mv=ev=>{const dx=ev.clientX-x0;if(!moved&&Math.abs(dx)<3)return;moved=true;document.body.classList.add('mi-scrubbing');put(v0+Math.round(dx/2)*(ev.shiftKey?10:ev.altKey?0.1:1));};
+      const up=()=>{tgt.removeEventListener('pointermove',mv);tgt.removeEventListener('pointerup',up);tgt.removeEventListener('pointercancel',up);document.body.classList.remove('mi-scrubbing');if(!moved){input.focus();input.select();}};
+      tgt.addEventListener('pointermove',mv);tgt.addEventListener('pointerup',up);tgt.addEventListener('pointercancel',up);};
+    chip.addEventListener('pointerdown',scrub);input.addEventListener('pointerdown',scrub);
+    const fmt=v=>String(+(+v).toFixed(2));
+    live.push(()=>{suf.textContent=typeof suffix==='function'?suffix():suffix;if(document.activeElement!==input)input.value=fmt(get());});
+  }
   function positionSection(layer){
     const id=layer.id,body=section('Position','position'),head=body.parentNode.querySelector('.mi-heading');
     const val=k=>window.LabXform?window.LabXform.valueOf(id,k,XDEF[k]):XDEF[k];
@@ -87,24 +103,11 @@ export function install(STUDIO) {
     live.push(()=>dot.classList.toggle('on',XFORM.some(k=>val(k)!==authored(k))));
     const size=()=>window.GL_LAB_PROJECT.videoSize||{w:1920,h:1080};
     let unitPx=store.get('rv-pos-unit')==='px';
-    function row(label,extra){const r=make('div','mi-xrow');const h=make('div','mi-xhead');h.append(make('span','mi-label',label));if(extra)h.append(extra);const g=make('div','mi-xgrid');r.append(h,g);body.append(r);return g;}
-    function num(grid,axis,title,get,set,{suffix='',min=-Infinity,max=Infinity}={}){
-      const f=make('div','mi-ax');f.title=title;const chip=make('span','mi-ax-chip',axis);const input=make('input','mi-ax-in');input.type='text';input.inputMode='decimal';input.setAttribute('aria-label',title);const suf=make('span','mi-ax-suf');f.append(chip,input,suf);grid.append(f);
-      const put=v=>{if(Number.isFinite(v))set(Math.max(min,Math.min(max,+v.toFixed(2))));};
-      input.onchange=()=>{put(parseFloat(input.value));input.blur();};
-      input.onkeydown=e=>{if(e.key==='Enter'){input.blur();}else if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();put(get()+(e.key==='ArrowUp'?1:-1)*(e.shiftKey?10:e.altKey?0.1:1));input.value=fmt(get());}else if(e.key==='Escape'){input.value=fmt(get());input.blur();}};
-      const scrub=e=>{if(e.button!==0||document.activeElement===input)return;e.preventDefault();const x0=e.clientX,v0=get();let moved=false;const tgt=e.currentTarget;tgt.setPointerCapture(e.pointerId);
-        const mv=ev=>{const dx=ev.clientX-x0;if(!moved&&Math.abs(dx)<3)return;moved=true;document.body.classList.add('mi-scrubbing');put(v0+Math.round(dx/2)*(ev.shiftKey?10:ev.altKey?0.1:1));};
-        const up=()=>{tgt.removeEventListener('pointermove',mv);tgt.removeEventListener('pointerup',up);tgt.removeEventListener('pointercancel',up);document.body.classList.remove('mi-scrubbing');if(!moved){input.focus();input.select();}};
-        tgt.addEventListener('pointermove',mv);tgt.addEventListener('pointerup',up);tgt.addEventListener('pointercancel',up);};
-      chip.addEventListener('pointerdown',scrub);input.addEventListener('pointerdown',scrub);
-      const fmt=v=>String(+(+v).toFixed(2));
-      live.push(()=>{suf.textContent=typeof suffix==='function'?suffix():suffix;if(document.activeElement!==input)input.value=fmt(get());});
-    }
     const seg=make('div','mi-seg');seg.setAttribute('role','group');seg.setAttribute('aria-label','Position unit');
     for(const [k,label,tip] of [['pct','%','% of the frame from the centre — stays put when the resolution changes'],['px','px','Pixels from the centre. Still saved as %, so a resolution change keeps the layout']]){const b=button(label,()=>{unitPx=k==='px';store.set('rv-pos-unit',k);},'mi-seg-btn');b.dataset.unit=k;b.title=tip;seg.append(b);}
     live.push(()=>seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',(b.dataset.unit==='px')===unitPx)));
     const posK=k=>()=>unitPx?size()[k]/100:1, posSuf=()=>unitPx?'px':'%';
+    const row=(label,extra)=>xrow(body,label,extra),num=axisCell;
     let g=row('Position',seg);
     num(g,'X','Pan X',()=>val('panX')*posK('w')(),v=>api().setLayerValue(id,'panX',+(v/posK('w')()).toFixed(4)),{suffix:posSuf});
     num(g,'Y','Pan Y',()=>val('panY')*posK('h')(),v=>api().setLayerValue(id,'panY',+(v/posK('h')()).toFixed(4)),{suffix:posSuf});
@@ -131,12 +134,15 @@ export function install(STUDIO) {
     if(styleFields.length){const body=section('Appearance','appearance');styleFields.forEach(f=>fieldRow(body,f));}
     const animations=fields.filter(f=>f.choose||f.input?.id.includes('layer-trans-'));
     if(animations.length){const body=section('Motion','motion');animations.forEach(f=>fieldRow(body,f));}
+    // a Camera layer on a page that has the camera's controls (studio/camera.js): its sections instead of Position
+    const camera=layer?.type==='camera'&&STUDIO.camera;
+    if(camera)STUDIO.camera.inspect(layer,{section,make,button,xrow,axisCell,live:fn=>live.push(fn)});
     if(layer){
       const body=section('Timing','clock');
       for(const [name,key] of [['In','start'],['Out','end'],['Length',null]]){const row=make('div','mi-row');const lab=make('span','mi-label',name);const val=make('span','mi-time');row.append(lab,val);body.append(row);live.push(()=>{const l=api().layers().find(l=>l.id===layer.id);if(l)val.textContent=(key?l[key]:l.end-l.start).toFixed(2)+' s';});}
       const actions=make('div','mi-actions');actions.append(button('Go to in',()=>{api().pause();api().seek(api().layers().find(l=>l.id===layer.id).start);}),button('Go to out',()=>{api().pause();api().seek(Math.max(0,api().layers().find(l=>l.id===layer.id).end-1/30));}));body.append(actions);
       const reset=[...document.querySelectorAll('.glm-insp button')].find(b=>b.textContent==='Undo the changes to this layer');if(reset)body.append(button('Reset layer changes',()=>reset.click(),'mi-reset'));
-      positionSection(layer);
+      if(!camera)positionSection(layer);
     }else{
       const body=section('Project file','project');const actions=make('div','mi-actions');actions.append(button('Save project',()=>$('#save-project').click(),'mi-primary'));const copy=[...document.querySelectorAll('.glm-insp button')].find(b=>b.textContent==='Copy settings');if(copy)actions.append(button('Copy settings',()=>copy.click()));body.append(actions);
     }
@@ -149,9 +155,10 @@ export function install(STUDIO) {
     const useCustom=!$('.glm-app').classList.contains('is-render')&&!api().review.on&&!$('#glm-h-trans');side.classList.toggle('has-lab-inspector',useCustom);root.hidden=!useCustom||document.body.classList.contains('original');
     if(useCustom){
       const fields=nativeFields(),layer=api().layers().find(l=>l.id===api().selected());
-      const key=JSON.stringify([layer?.id,fields.map(f=>[f.label,f.input?.id,f.choose?.dataset]),!![...document.querySelectorAll('.glm-insp button')].find(b=>b.textContent==='Undo the changes to this layer')]);
-      // Rebuild only when controls change; keep text focus and caret during editing.
-      if(key!==signature && !(root.contains(document.activeElement) && document.activeElement.matches('input,textarea'))){signature=key;rebuild(fields,layer);}else live.forEach(fn=>fn());
+      const key=JSON.stringify([layer?.id,layer?.type==='camera'&&STUDIO.camera?STUDIO.camera.signature(layer):0,fields.map(f=>[f.label,f.input?.id,f.choose?.dataset]),!![...document.querySelectorAll('.glm-insp button')].find(b=>b.textContent==='Undo the changes to this layer')]);
+      // Rebuild only when controls change; keep text focus and caret during editing, and a number being dragged (its first
+      // change brings the layer's Undo button, which used to rebuild the panel under the pointer and end the drag).
+      if(key!==signature && !(root.contains(document.activeElement) && document.activeElement.matches('input,textarea')) && !document.body.classList.contains('mi-scrubbing')){signature=key;rebuild(fields,layer);}else live.forEach(fn=>fn());
     }
     setTimeout(sync,120);
   }

@@ -1,4 +1,4 @@
-// Smart Zoom: our own cursor art (PLANS/SCREEN_RECORDER_SMOOTH_MOTION_PLAN.md §3.5), drawn as vectors so it is sharp at
+// Smart Zoom: our own cursor art, drawn as vectors so it is sharp at
 // any zoom. Lab-grade shapes for now (the recorder's Motion preview, the labs); Phase 3 replaces them with the final
 // set. Every shape is drawn in a 24-unit box around its hotspot. A leaf: canvas 2D only.
 function poly(ctx, pts) {

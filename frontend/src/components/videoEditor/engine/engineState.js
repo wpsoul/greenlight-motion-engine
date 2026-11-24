@@ -18,7 +18,7 @@ const FIELDS = [
   // the composite pipeline (./compositePipeline.js)
   'posedCamera', 'orthoCamera', 'fsQuadGeo', 'materialFactory',
   'blitMaterial', 'blitScene', 'pictureCopyMaterial', 'pictureCopyScene', 'seqPlateCopyMaterial', 'seqPlateCopyScene',
-  'depthStampMaterial', 'depthStampScene', 'depthCompositeMaterial', 'depthCompositeScene', 'depthCompositeSplitMaterial', 'depthCompositeSplitScene', 'depthCompositeTranslucentMaterial', 'depthCompositeTranslucentScene', 'depthCompositeUnderMaterial', 'depthCompositeUnderScene', 'backdropUnderMaterial', 'backdropUnderScene','cameraDofMaterial', 'cameraDofScene', 'cameraDofDepthMaterial', 'cameraDofDepthScene',
+  'depthStampMaterial', 'depthStampScene', 'footageDepthStampMaterial', 'footageDepthStampScene', 'depthCompositeMaterial', 'depthCompositeScene', 'depthCompositeSplitMaterial', 'depthCompositeSplitScene', 'depthCompositeTranslucentMaterial', 'depthCompositeTranslucentScene', 'depthCompositeUnderMaterial', 'depthCompositeUnderScene', 'backdropUnderMaterial', 'backdropUnderScene','cameraDofMaterial', 'cameraDofScene', 'cameraDofDepthMaterial', 'cameraDofDepthScene',
   'mixMaterial', 'mixScene', 'maskMaterial', 'maskScene', 'trackMatteMaterial', 'trackMatteScene',
   // (vfx) the footage's light wrapped onto a placed object's edge, and how much this frame's Scene asks for (world3dLayer.js)
   'lightWrapMaterial', 'lightWrapScene', 'worldLightWrap',
@@ -66,7 +66,7 @@ const FIELDS = [
   // the history effects' own state beyond the pool (./historyEffects.js)
   'timeshiftSweep', 'repetilePass',
   // per-layer passes (./layerPasses.js), whether an export runs, and the repaint the async bakes call
-  'autoFillRig', 'chromaKeyPass', 'depthScanRig', 'pryzmPass', 'silhouetteFramingPass', 'exporting', 'renderFrame',
+  'autoFillRig', 'chromaKeyPass', 'depthScanRig', 'depthKeyRig', 'pryzmPass', 'silhouetteFramingPass', 'exporting', 'renderFrame',
   // an adjustment layer's Layer Mask mix (./compositeOps.js)
   'adjustmentMaskPass',
   // grids and Mockup Frame (./gridMockup.js), and the raster density settings they read
@@ -80,7 +80,7 @@ const FIELDS = [
   // ./sequenceComposite.js
   'perfStats', 'rcMediaOnly', 'sequenceFrameStamp',
   // ./adjustmentComposite.js
-  'alphaExport', 'autoFillLayers', 'backdropLayers', 'bendLayers', 'bezierWarpLayers', 'chromaKeyLayers', 'colorRefConsumed', 'colorRefKeys', 'colorRefSources', 'cornerPinLayers', 'depthPlates', 'depthScanLayers', 'drosteLayers', 'frRimLayers', 'glassLayers', 'glowLayers', 'layerDepthMode', 'layerItems', 'layerMaskLayers', 'matteSourceChannels', 'meshWarpLayers', 'mockupFrameLayers', 'modelDepth', 'modelDepthRange', 'modelDepthTex', 'modelSpillDepth', 'modelTransparentDepthTex', 'motionBlurLayers', 'motionTrailLayers', 'overlayFx', 'pryzmLayers', 'regionDistortLayers', 'repetileLayers', 'rigLayers', 'shaderBlendLayers', 'trackMatteLayers',
+  'alphaExport', 'autoFillLayers', 'backdropLayers', 'bendLayers', 'bezierWarpLayers', 'chromaKeyLayers', 'colorRefConsumed', 'colorRefKeys', 'colorRefSources', 'cornerPinLayers', 'depthPlates', 'depthScanLayers', 'depthKeyLayers', 'drosteLayers', 'frRimLayers', 'glassLayers', 'glowLayers', 'layerDepthMode', 'layerItems', 'layerMaskLayers', 'matteSourceChannels', 'meshWarpLayers', 'mockupFrameLayers', 'modelDepth', 'modelDepthRange', 'modelDepthTex', 'modelSpillDepth', 'modelTransparentDepthTex', 'motionBlurLayers', 'motionTrailLayers', 'overlayFx', 'pryzmLayers', 'regionDistortLayers', 'repetileLayers', 'rigLayers', 'shaderBlendLayers', 'trackMatteLayers',
   // ./channelRender.js
   'activeRigAt', 'audioElements', 'ensureParticleModule', 'forceMuteAudio', 'frameToken', 'lastActiveIndex', 'loop', 'playbackStep', 'preTransitionFxPrepare', 'renderSequenceFrame', 'selectedItemId', 'shortAudio', 'soundEnabled', 'tightSyncUntil', 'worldActive',
   // ./layerMesh.js

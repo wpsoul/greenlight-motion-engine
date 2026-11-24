@@ -542,7 +542,7 @@ function normalizeEnv(raw) {
 export function normalizeRigRender(r) {
   return {
     mode: r?.mode === 'final' ? 'final' : 'draft',
-    spp: num(r?.spp, 64, 1, 4096),
+    spp: num(r?.spp, 32, 1, 4096),
     bounces: num(r?.bounces, 8, 1, 32),
     transparentBounces: num(r?.transparentBounces, 5, 0, 32),
     glossy: num(r?.glossy, 0.5, 0, 1),
@@ -604,6 +604,12 @@ export function normalizeRig(raw) {
     ...(r.render && typeof r.render === 'object' ? { render: normalizeRigRender(r.render) } : null),
     ...(r.scene && typeof r.scene === 'object' ? { scene: r.scene } : null),
     ...(Number.isFinite(r.exposure) ? { exposure: r.exposure } : null),
+    // Transient render-job overrides set by /video-render prerender jobs — must survive
+    // normalizeEditorState / sanitizeRig / applyRigKeyframes so World3D blocking/clay looks apply.
+    ...(r.prerenderLook === 'blocking' || r.prerenderLook === 'clay' || r.prerenderLook === 'lit' || r.prerenderLook === 'draft'
+      ? { prerenderLook: r.prerenderLook }
+      : null),
+    ...(r.excludeWorldText === true ? { excludeWorldText: true } : null),
   };
 }
 

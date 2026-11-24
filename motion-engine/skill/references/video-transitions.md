@@ -4,7 +4,12 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Cross transitions and layer entrances/exits
+# GLEA — Cross transitions and layer entrances/exits
+
+Read this page to put a transition on a cut or an entrance / exit on a layer: the item fields and their limits, the
+directions, the options of the Advanced transitions, the `Custom` transition's lanes, an installed transition package
+(`local:<id>`) on a cut, and the editor's fields at a join. To build a new transition package, start at
+custom-builds.md (GreenLight Dash only).
 
 > Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts. Load only the sections needed for the task.
 
@@ -26,6 +31,7 @@
   - [Gradient Glow Stack](#gradient-glow-stack)
   - [Gradient Map](#gradient-map)
   - [The `Custom` transition](#the-custom-transition--build-the-move-yourself)
+  - [Installed transition packages (`local:<id>`)](#installed-transition-packages-localid)
 - [Joins in the editor: the fields of the motion grammar](#joins-in-the-editor-the-fields-of-the-motion-grammar)
 
 ## Preferred cross transitions
@@ -50,7 +56,7 @@ A cross transition lives on the item it leads INTO (the item before it in the ch
 ]
 ```
 
-Durations are clamped on load, so stay inside them: `transitionDuration` 0.05–4 s (up to 30 s for an installed `local:` transition), `transitionInDuration` / `transitionOutDuration` 0.1–3 s. Each defaults to 1 s, and every easing to `Smooth`. `transition: "None"` and `transitionInType` / `transitionOutType` `"None"` mean no transition.
+Durations are clamped on load, so stay inside them: `transitionDuration` 0.05–4 s (up to 30 s for an [installed `local:` transition](#installed-transition-packages-localid)), `transitionInDuration` / `transitionOutDuration` 0.1–3 s. Each defaults to 1 s, and every easing to `Smooth`. `transition: "None"` and `transitionInType` / `transitionOutType` `"None"` mean no transition.
 
 ### No transitions on 3D model layers
 
@@ -102,22 +108,102 @@ A cross type and a layer in/out type, decoded from an After Effects gradient-map
 
 ### The `Custom` transition — build the move yourself
 
-`"Custom"` appears in the cross list and in both layer slots, and unlike every other type it carries no built-in move: what it does comes entirely from a config object on the item. For API-authored items, **an absent config or empty lane produces a plain dissolve**: the loader defaults `moveX`/`moveY` to 0 and `opacityFrom` to 0. The editor's Transition Builder starts from a different preset (`next.moveX: 100`, `prev.moveX: 0`), which slides the incoming clip from the right. Write the lane fields explicitly to reproduce either result; do not infer API defaults from that preset.
+`"Custom"` is a value of all three slots (`transition`, `transitionInType`, `transitionOutType`), and unlike every other
+type it carries no built-in move: what it does comes entirely from a config object on the item. In the editor it is
+made in the Transition Builder (the transition window's **Builder** button) and edited under the transition's cog in
+the inspector; the window's list shows `Custom` only on a slot that already holds one. The capabilities list it with
+`kind: "builder"` and no option fields: its keys are below.
 
 - **Where it goes.** A **cross** slot reads `customTransitionConfig`, which holds **two lanes**: `{ "prev": {…}, "next": {…} }` — `prev` is the OUTGOING clip, `next` the INCOMING one. A layer **entrance** reads `customTransitionInConfig` and an **exit** `customTransitionOutConfig`, each a single bare lane with no `prev`/`next` wrapper. A bare lane written to `customTransitionConfig` is read as its `next`; the `prev` lane then holds its position and fades out.
-- **A lane describes the pose AWAY FROM REST, and the two lanes travel it in opposite directions.** The incoming clip starts at that pose and arrives at rest; the outgoing clip starts at rest and leaves toward it. So one object means "flies in from the right" on `next` and "flies out to the right" on `prev` — you do not negate anything to reverse a lane.
+- **A lane describes the pose AWAY FROM REST, and the two lanes travel it in opposite directions.** The incoming clip starts at that pose and arrives at rest; the outgoing clip starts at rest and leaves toward it. So one object means "flies in from the right" on `next` and "flies out to the right" on `prev` — you do not negate anything to reverse a lane. An entrance runs its lane like `next`, an exit like `prev`.
+- **Write the config whenever you write `Custom`.** A missing key, an empty lane and a missing config play at the
+  defaults below: no move, and `opacityFrom: 0` on both lanes, so the outgoing clip fades out while the incoming one
+  fades in and mid-way the layers below show through by about a quarter (a `Cross Fade` keeps the outgoing clip
+  solid; set `prev.opacityFrom: 1` for that). The Builder and the cog open a missing config at their own preset
+  instead (`next.moveX: 100`, the incoming clip slides in from the right; `prev.moveX: 0`), and the first edit there
+  saves it, so an unconfigured `Custom` changes its move as soon as the user touches it.
+
+A lane with every key at its default:
 
 ```json
 { "moveX": 0, "moveY": 0, "scaleFrom": 1, "opacityFrom": 0,
   "rotateX": 0, "rotateY": 0, "rotation": 0,
   "originX": 50, "originY": 50, "tile": false,
-  "fxZoom": 0, "fxBlur": 0, "fxProfile": "ramp" }
+  "fxProfile": "ramp",
+  "fxZoom": 0, "fxPointX": 50, "fxPointY": 50,
+  "fxBlur": 0, "fxBlurType": "gaussian",
+  "fxRgbSplit": 0, "fxRgbAlong": "motion",
+  "fxOptics": 0, "fxOpticsFit": true,
+  "fxFisheye": 0, "fxFisheyeModel": "spherical", "fxFisheyeCentre": "point", "fxFisheyeFit": true,
+  "fxFlash": 0, "fxFlashColor": "#ffffff",
+  "fxOpacityDip": 0,
+  "fxWiggle": 0, "fxWiggleFreq": 14, "fxWiggleRotate": 1.6, "fxWiggleSeed": 7 }
 ```
 
-- **The move.** `moveX` / `moveY` are the offset as a **% of the frame** (−200…200), `moveX` positive = right, **`moveY` positive = down**. `scaleFrom` (0.1–3) and `opacityFrom` (0–1) are the scale and alpha at that pose — `opacityFrom: 0` (the default) is what makes an unconfigured `Custom` a dissolve. `rotation` (−360…360) is roll and `rotateX` / `rotateY` (−180…180) the 3D tilt. `originX` / `originY` (0–100 % of the layer box, default 50) is the pivot the rotation and scale turn about. `tile: true` fills the vacated area with mirrored copies of the clip instead of transparency.
-- **The effects.** `fxZoom` (−300…300 %), `fxBlur` (0–60 px) with `fxBlurType` (`gaussian` | `directional` | `radial`), `fxRgbSplit` (0–300) with `fxRgbAlong` (`motion` | `horizontal` | `radial`), `fxOptics` and `fxFisheye` (−200…200) with `fxFisheyeModel` (`spherical` | `barrel`) / `fxFisheyeCentre` (`point` | `frame`) / `fxFisheyeFit`, `fxFlash` (0–200) with `fxFlashColor` (`#rrggbb`), `fxOpacityDip` (0–100), and `fxWiggle` (0–100) with `fxWiggleFreq` (1–40), `fxWiggleRotate` (0–8) and `fxWiggleSeed` (1–99). **Amount `0` is off for every group**, so leave out any group you don't use. `fxPointX` / `fxPointY` (0–100 %, default 50) is the pivot the zoom and the radial modes aim through — separate from `originX`/`originY`.
-- **`fxProfile` shapes every fx across the transition**: `"ramp"` (default — rises with it), `"peak"` (rises and falls, strongest mid-way, which is what a blur or a flash on a cut wants) or `"constant"` (flat).
-- Values outside these ranges are clamped on load and unknown keys are dropped on save, so write only the keys above and round-trip only what you mean to change.
+For example, the next shot rises in from below with a blur on the cut while the outgoing one shrinks and fades:
+
+```json
+{ "transition": "Custom", "transitionDuration": 0.8, "transitionEasing": "Expo Out",
+  "customTransitionConfig": {
+    "prev": { "scaleFrom": 0.85, "opacityFrom": 0, "fxBlur": 12, "fxProfile": "peak" },
+    "next": { "moveY": 100, "opacityFrom": 1, "fxBlur": 12, "fxBlurType": "directional", "fxProfile": "peak" } } }
+```
+
+- **The move.** `moveX` / `moveY` are the offset as a **% of the frame** (−200…200), `moveX` positive = right, **`moveY` positive = down**. `scaleFrom` (0.1–3) and `opacityFrom` (0–1) are the scale and alpha at that pose. `rotation` (−360…360 °) is roll and `rotateX` / `rotateY` (−180…180 °) the 3D tilt. `originX` / `originY` (0–100, default 50 = the clip's centre; % of the frame, y down) is the pivot the scale and the rotations turn about. `tile: true` fills the vacated area, out to the frame's edges, with mirrored copies of the clip instead of transparency. The move, scale, alpha and rotations follow `transitionEasing`.
+- **The effects**, each lane its own. **Amount `0` is off for every group**, so leave out any group you don't use.
+  - **Zoom:** `fxZoom` (−300…300 %) zooms about `fxPointX` / `fxPointY` (0–100 % of the frame, y down; default the
+    centre). The zoom grows by 2^(`fxZoom`/100) over the transition (100 = ×2): the outgoing clip from 1 up to that,
+    the incoming one from its inverse up to 1, so equal amounts on both lanes read as one continuous push; negative
+    pulls out. It follows `transitionEasing`, not `fxProfile`.
+  - **Blur:** `fxBlur` (0–60) with `fxBlurType` `gaussian`, `directional` (along the lane's move) or `radial` (from the
+    point).
+  - **RGB split:** `fxRgbSplit` (0–300 %) with `fxRgbAlong` `motion` (along the lane's move), `horizontal` or `radial`
+    (from the point).
+  - **Lens:** `fxOptics` (−200…200 %, Optics Compensation) and `fxFisheye` (−200…200 %) with `fxFisheyeModel`
+    `spherical` or `barrel` and `fxFisheyeCentre` `point` or `frame`. `fxOpticsFit` / `fxFisheyeFit` (default `true`,
+    "Pin the corner") keep the frame's corners in place. The two share one lens and add up; with both on, the
+    fisheye's model, centre and fit win.
+  - **Exposure flash:** `fxFlash` (0–200 %) washes the clip toward `fxFlashColor` (`#rrggbb`; white flashes, black
+    dips).
+  - **Opacity dip:** `fxOpacityDip` (0–100 %) lowers the clip's opacity.
+  - **Wiggle:** `fxWiggle` (0–100 %; 100 = a shake of 9 % of the frame height) shakes the clip itself, position and
+    roll, at `fxWiggleFreq` (1–40 Hz), with `fxWiggleRotate` (0–8 °) of roll at 100 % and `fxWiggleSeed` (1–99)
+    choosing the pattern. Scrub, preview and export land on the same shake.
+- **`fxProfile` shapes every effect except the zoom across the transition**: `"ramp"` (default: builds as the outgoing clip leaves and settles as the incoming one arrives; the Builder calls it "Build to cut" / "Settle from cut"), `"peak"` (rises and falls, strongest mid-way, which is what a blur or a flash on a cut wants) or `"constant"` (flat).
+- Values outside these ranges are clamped on load and unknown keys are dropped on save, so write only the keys above and round-trip only what you mean to change. The Builder's **Saved Presets** live in that browser's storage, not in the project: an agent cannot read them.
+
+### Installed transition packages (`local:<id>`)
+
+A transition package that an agent built or the user imported (custom-builds.md (GreenLight Dash only), the
+advanced-transitions skill (GreenLight Dash only)) goes on a cut like a built-in, as the incoming
+item's `transition`:
+
+```json
+{ "id": "shot2", "clipId": "c2", "trimStart": 0, "trimEnd": 6,
+  "transition": "local:liquid-glass-cut", "transitionDuration": 2, "transitionEasing": "Linear",
+  "transitionOptions": { "amount": 1.2, "tint": "#ffd9a0" } }
+```
+
+- Discover them in `GET /api/video-editor/capabilities` → `transitions.cross.local`. Each entry carries `type` (the
+  value to write), `name`, `description`, `defaultDuration`, `optionDefaults`, `optionFields`, `hasAudio`, `renderer`
+  (`webgl`, `webgpu` or `null`), `slots: ["cross"]`, `renderSupport` and `installation`. An entry with
+  `installation.metadataAvailable: false` has no metadata yet (no editor has loaded it and none was written), so it
+  lists no name or options.
+- **Cross slot only.** A `local:` value in `transitionInType` / `transitionOutType` is dropped to `None` on load.
+- `transitionDuration` is 0.05–30 s. The package's `defaultDuration` is applied only when someone picks it in the
+  editor; through the API write the length yourself (missing = 1 s). The package plays over the actual overlap, which
+  the two clips can make shorter.
+- `transitionOptions` takes the package's option keys: a number is clamped to its field's `min` / `max`, a `select`
+  keeps only one of its values, and a key you leave out plays at its `optionDefaults` value. `transitionEasing` eases
+  the package's `progress` (its `rawProgress` stays linear); `transitionOrder` works as on any cross.
+- It draws only on the engine it was written for: compare `renderer` with `GET /api/video-editor/engine` (`null`
+  makes no claim). On the other engine the editor refuses it and the cut plays without the move.
+- The full renders and `/render-still` draw it; the fast `/render` returns 400 for it (`renderSupport.fast: false`,
+  rendering.md (GreenLight Dash only)). `POST /api/moodboards/{board_id}/video-projects/from-clips`
+  accepts built-in types only: create the project, then write the `local:` value.
+- A project whose package is not installed on this machine keeps `transition` and `transitionOptions` as stored and
+  plays a `Cross Fade` there; installing the package (or a bundle restore or web sync that carries it) brings the move
+  back, and an open editor finds it as soon as the project names it. A plain board ZIP import installs no packages.
 
 ## Joins in the editor: the fields of the motion grammar
 
@@ -147,11 +233,11 @@ computer with Python: [seam-craft/seam-recipes.md](seam-craft/seam-recipes.md).
 | opacity, blur | `opacity` 0–1, `blur` px |
 | camera | a camera item on the camera channel, which must be the last channel ([video-camera.md](video-camera.md)) |
 | camera zoom, pan, dolly, roll, tilt | `camZoom` × about the frame centre; `camX` % of frame width (positive pans right, content slides left); `camY` % of frame height (positive down, content slides up); `camDolly` px; `camRoll` °; `camTiltX` / `camTiltY` ° |
-| mask | a `layerMask` entry in `layerEffects`, keyed on `msk:<mid>:<chan>` tracks ([masks.md](video-effects.md#greenlight-dash--layer-masks)) |
+| mask | a `layerMask` entry in `layerEffects`, keyed on `msk:<mid>:<chan>` tracks ([masks.md](video-effects.md#glea--layer-masks)) |
 | matte | `trackMatte: {sourceId, mode}` with mode `alpha` / `alphaInverted` / `luma` / `lumaInverted` ([video-shapes.md](video-shapes.md#track-matte-trackmatte)) |
 | motion blur | the per-layer `motionBlur` layer effect, or the project's `motionBlurEnabled` ([Motion blur at a join](#motion-blur-at-a-join)) |
 | corner pin | the `cornerPin` layer effect ([effects-warps.md](video-effects.md#corner-pin-entry)) |
-| per-letter / per-word text animation | `textAnimators` and the presets in [video-text-presets.md](video-text-presets.md) and [video-text-kinetic.md](video-text-kinetic.md) |
+| per-letter / per-word text animation | `textAnimators` and the presets in [video-text-presets.md](video-text-presets.md) |
 | render a frame range | a background render job kept off the board (with Python: `seam-craft/tools/lib/vp.py render F0 F1 out.mp4`) |
 | project notes, seam ledger | the board memory, section "Scene seams used" (board-memory.md (GreenLight Dash only)) |
 
@@ -186,7 +272,7 @@ computer with Python: [seam-craft/seam-recipes.md](seam-craft/seam-recipes.md).
 ### Masks and mattes at a join
 
 - **Mask:** `layerEffects: [{id: "layerMask", masks: [...]}]`; box `x`, `y`, `w`, `h` in % of the layer box,
-  `feather` / `expand` in composition px; key them on `msk:<mid>:<chan>` tracks ([masks.md](video-effects.md#greenlight-dash--layer-masks)). A mask cannot
+  `feather` / `expand` in composition px; key them on `msk:<mid>:<chan>` tracks ([masks.md](video-effects.md#glea--layer-masks)). A mask cannot
   cut a sequence or grid *container* (a mask on a layer inside it works).
 - **Matte:** `trackMatte: {sourceId: <shape item id>, mode: "alpha"}` on the consumer. The source must be another
   visual item at the **same editing level**, over the same frames; with no source under the playhead the matte is
@@ -227,7 +313,7 @@ Each cost a render on a real film.
   ([video-keyframes.md](video-keyframes.md#preview-timing-keys-between-frames)).
 - **Depth order of turned layers:** a layer turned in 3D is ordered against every flat layer it does not cross by
   which side of that layer's plane it stands on, so a card standing on a page always draws over it
-  ([video-3d.md](video-3d.md#turning-flat-layers-in-3d--pivot-and-stacking)). In a 3D world, depth decides what is in front, not
+  ([video-keyframes.md](video-keyframes.md#turning-a-flat-layer-in-3d)). In a 3D world, depth decides what is in front, not
   the channel: a dissolve "B over A" is decided by Z. Keep a moving layer ≥ 20 px in front of a turned card's
   *surface* (card Z + x·sin(rotY)), not its centre.
 - **Small images draw at their pixel size × zoom;** full-size frames are fitted to the frame. For a crop, set zoom =

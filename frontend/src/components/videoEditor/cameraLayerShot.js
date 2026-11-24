@@ -8,7 +8,9 @@ import * as THREE from 'three';
 import { cameraProxyFromPose, findCameraChannel, getCameraDofSettings, isCameraClip, perspectiveDistance, resolveCameraPose, sanitizeCameraPath } from './projectCamera';
 import { cornersInFrame } from '../../world3d/cameraPath.js';
 import { getTimelineLayout } from './speedUtils';
-import { WORLD_UNITS, worldLens } from './world3dScene.js';
+import { WORLD_UNITS, worldLens, worldSteer } from './world3dScene.js';
+// (screensharp2) a Scene that films from its own camera: that camera at its clip's time, as the world reads it, steered by the Camera layer
+import { cameraShot } from '../../world3d/shot.js';
 
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
 const r6 = (v) => Math.round(v * 1e6) / 1e6;
@@ -51,6 +53,48 @@ export function cameraTimeline(data) {
   return { channels, clipsMap, layoutFor: (ch) => layouts.get(ch.id), width, height };
 }
 
+/** (screensharp2) The Scene clip under the playhead at `time` whose Scene films from its own camera (`rig.scene.camera`): { item, start, end }
+ *  or null. The last such clip on top wins, as resolveRigAt picks the Scene a frame is drawn from. */
+function ownCameraSceneAt(tl, time) {
+  let found = null;
+  for (const channel of tl.channels) {
+    if (channel?.visible === false) continue;
+    const layout = tl.layoutFor(channel) || [];
+    (channel.items || []).forEach((item, i) => {
+      const e = layout[i];
+      if (!e || !item?.rig?.scene?.camera || time < e.startTime - 1e-6 || time > e.endTime + 1e-6) return;
+      found = { item, start: e.startTime, end: e.endTime };
+    });
+  }
+  return found;
+}
+
+/** (screensharp2) Where a Scene's own camera films from at timeline `time`, steered by the Camera layer's `proxy` as the world steers it
+ *  (WorldRenderer.applyTime: a turn about what it looks at and the same share of the way there, its zoom a lens): { at, target, up, fov,
+ *  reach } in metres, or null. `rest` is the Camera layer's distance at rest (world3dLayer.js), `aspect` the frame's. */
+export function steeredSceneCamera(scene, proxy, { time, start = 0, end = Infinity, rest, aspect }) {
+  const cam = scene?.camera;
+  if (!cam) return null;
+  const local = Math.max(0, Math.min(Math.max(0, end - start), time - start));
+  const shot = cameraShot(cam, scene, [local], aspect)[0] || {};
+  const at = new THREE.Vector3(...(Array.isArray(shot.at) ? shot.at : [0, 1, 3]));
+  const target = new THREE.Vector3(...(Array.isArray(shot.target) ? shot.target : [0, 0, 0]));
+  const c = new THREE.PerspectiveCamera(shot.view ?? shot.fov ?? 28, aspect || 16 / 9);
+  c.position.copy(at);
+  const d = target.clone().sub(at), reach = d.length() || 1;
+  c.up.set(...(Array.isArray(cam.up) ? cam.up : (Math.abs(d.y) / reach > 0.999 ? [0, 0, -1] : [0, 1, 0])));
+  c.lookAt(target);
+  if (proxy && rest > 0) {
+    const steer = worldSteer(proxy, rest);
+    c.position.add(new THREE.Vector3().fromArray(steer.position).multiplyScalar(reach).applyQuaternion(c.quaternion));
+    c.quaternion.multiply(new THREE.Quaternion().fromArray(steer.quaternion));
+    c.fov = (2 * Math.atan(Math.tan((c.fov * Math.PI) / 360) / steer.zoom) * 180) / Math.PI;
+  }
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(c.quaternion), up = new THREE.Vector3(0, 1, 0).applyQuaternion(c.quaternion);
+  return { at: c.position.clone(), target: c.position.clone().addScaledVector(fwd, reach), up, fov: c.fov, reach,
+    focus: Number.isFinite(shot.focus) ? shot.focus : null, fStop: Number.isFinite(shot.fStop) ? shot.fStop : 0 };
+}
+
 /** The camera clip under the playhead at `time`: { item, start, end } or null (the same pick as resolveCameraPose). */
 function cameraClipAt(tl, time) {
   const channel = findCameraChannel(tl.channels);
@@ -72,6 +116,10 @@ function cameraClipAt(tl, time) {
  * length (mm) on the world's 36 mm film; `dof` { on, focus (m), fStop, aperture (px), blurLevel } the thin lens Final traces (Draft
  * blurs the same circles). `pose` is the Camera layer's own tracks as evaluated (camX … camRoll, camZoom, camPathT). With no camera clip
  * under the playhead the camera is the neutral one ({ camera: null }).
+ * (screensharp2) Where the Scene under the playhead films from its own camera (`rig.scene.camera`), the shot is that camera's, at its
+ * clip's time, steered by the Camera layer as the world steers it (`films: "scene"`, `scene`: the Scene item's id, `steered` when the
+ * Camera layer has moved it off its rest); `dof` is then that camera's own thin lens (`fStop`, `focus`), which the world traces. Before, this said where the Camera layer alone would stand,
+ * which no render films there.
  */
 export function cameraLayerShot(data, times, { tl = cameraTimeline(data) } = {}) {
   const { width: W, height: H } = tl;
@@ -88,13 +136,27 @@ export function cameraLayerShot(data, times, { tl = cameraTimeline(data) } = {})
     const dofSettings = getCameraDofSettings(pose, D);
     const lens = worldLens(dofSettings, W, proxy.fov, aspect);
     const reach = Math.max(1, dofSettings.focusDistance);
-    const at = proxy.position.clone().multiplyScalar(WORLD_UNITS);
-    const target = proxy.position.clone().addScaledVector(fwd, reach).multiplyScalar(WORLD_UNITS);
+    let at = proxy.position.clone().multiplyScalar(WORLD_UNITS);
+    let target = proxy.position.clone().addScaledVector(fwd, reach).multiplyScalar(WORLD_UNITS);
+    let fov = proxy.fov, films = 'cameraLayer', sceneId = null, steered = false, sceneLens = null;
+    const own = ownCameraSceneAt(tl, time);
+    if (own) {
+      // the Camera layer's move steers the Scene's own camera (world3dLayer.js poseWorld: worldSteer), from the rest it has at no move
+      const rest = (H * 0.5) / Math.tan((28 * Math.PI) / 180 / 2);
+      const s = steeredSceneCamera(own.item.rig.scene, hit ? proxy : null, { time, start: own.start, end: own.end, rest, aspect });
+      if (s) {
+        const st = hit ? worldSteer(proxy, rest) : null;
+        steered = !!st && (Math.hypot(...st.position) > 1e-6 || Math.abs(st.quaternion[3]) < 1 - 1e-9 || Math.abs(st.zoom - 1) > 1e-6);
+        at = s.at; target = s.target; up.copy(s.up); fov = s.fov; films = 'scene'; sceneId = own.item.id;
+        sceneLens = { on: s.fStop > 0, focus: r4(s.focus ?? s.reach), fStop: r4(s.fStop), aperture: 0, blurLevel: 0 };
+      }
+    }
     const out = {
       t: r6(time), camera: hit?.item?.id ?? null, mode: hit ? (hit.item.cameraMoveMode || (hit.item.cameraPath ? 'path' : 'free')) : null,
-      at: v3(at), target: v3(target), up: v3(up), fov: r4(proxy.fov), lens: r4(lensMmOf(proxy.fov, aspect)),
+      films, ...(sceneId ? { scene: sceneId, steered } : {}),
+      at: v3(at), target: v3(target), up: v3(up), fov: r4(fov), lens: r4(lensMmOf(fov, aspect)),
       zoom: r4(Number.isFinite(pose?.camZoom) && pose.camZoom > 0 ? pose.camZoom : 1),
-      dof: { on: !!dofSettings.enabled && lens.fStop > 0, focus: r4(dofSettings.focusDistance * WORLD_UNITS), fStop: r4(lens.fStop || 0),
+      dof: sceneLens || { on: !!dofSettings.enabled && lens.fStop > 0, focus: r4(dofSettings.focusDistance * WORLD_UNITS), fStop: r4(lens.fStop || 0),
         aperture: r4(dofSettings.aperture), blurLevel: r4(dofSettings.blurLevel) },
       pose: pose ? Object.fromEntries(['camX', 'camY', 'camDolly', 'camTiltX', 'camTiltY', 'camRoll', 'camZoom', 'camPathT']
         .map((k) => [k, r4(Number(pose[k]) || 0)])) : null,

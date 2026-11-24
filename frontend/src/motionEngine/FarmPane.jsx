@@ -10,14 +10,18 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { estimateHere, planFarm, farmChoice, podsLine, podsEnded, FARM_LIMITS } from './farmPlan';
 import { joinParts, partRanges } from './joinParts';
 
-// ── the host's farm adapter (one per page) ──────────────────────────────────────────────────────────────────────────────────────────
-let farm = null;
+// ── the host's farm adapter(s) (one or more per page, e.g. [GLMRunPod, GLMColab]) ──────────────────────────────────────────────────
+let farms = [];
 const subs = new Set();
 // the last estimate of this computer's time (the pane's probe), for a host that renders without a press (the chat's render_video)
 let lastEstimate = null;
 export const farmEstimate = () => lastEstimate;
-export function setRenderFarm(adapter) { farm = adapter || null; subs.forEach((f) => f()); }
-export const useFarm = () => useSyncExternalStore((f) => { subs.add(f); return () => subs.delete(f); }, () => farm);
+export function setRenderFarm(adapter) {
+  farms = Array.isArray(adapter) ? adapter.filter(Boolean) : (adapter ? [adapter] : []);
+  subs.forEach((f) => f());
+}
+export const useFarms = () => useSyncExternalStore((f) => { subs.add(f); return () => subs.delete(f); }, () => farms);
+export const useFarm = () => useFarms()[0] || null;
 
 const mins = (s) => (!Number.isFinite(s) ? '—' : s < 60 ? `≈ ${Math.max(1, Math.round(s))} s` : s < 3600 ? `≈ ${Math.round(s / 60)} min` : `≈ ${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`);
 const usd = (v) => (v < 0.995 ? `$${v.toFixed(2)}` : `$${v.toFixed(2)}`);
@@ -29,7 +33,9 @@ const Dot = ({ tone }) => <i className={`cf-dot is-${tone}`} />;
  * own render state), exportProject(), renderAudio() → bytes, saveFile(blob, name), icons, onBusy(bool)
  */
 export function FarmPane({ project, frames, fps, mode, spp, pixels, title, full, probe, renderHere, here, hereProgress, stopHere, exportProject, renderAudio, saveFile, icons, children }) {
-  const host = useFarm();
+  const hosts = useFarms();
+  const [hostIdx, setHostIdx] = useState(0);
+  const host = hosts[Math.min(hostIdx, Math.max(0, hosts.length - 1))] || null;
   const [est, setEst] = useState(null);        // this computer: { sec, low, high } (a probe)
   const [probing, setProbing] = useState(false);
   const [cat, setCat] = useState(null);         // the farm's catalog { gpus, startSec }
@@ -129,6 +135,7 @@ export function FarmPane({ project, frames, fps, mode, spp, pixels, title, full,
   const head = (t, s) => ({ title: t, sub: s });
   let h = head('Render', `${title} · ${Math.round((frames / fps) * 10) / 10} s · ${mode === 'final' ? `Final ${spp} spp` : 'Draft'}`);
   let body = null;
+  let choosing = false;
   if (left.length && view === 'choose') {
     const rate = left.reduce((s, p) => s + (p.usdPerHr || 0), 0);
     body = (<section className="glm-sec"><h3 className="glm-h">Pod left on <span>from an earlier render</span></h3>
@@ -137,12 +144,14 @@ export function FarmPane({ project, frames, fps, mode, spp, pixels, title, full,
         <button type="button" className="glm-go cf-go-sm" onClick={async () => { await host.endPods(left.map((p) => p.id)); setLeft([]); }}>{icons.stop}End it · stop billing</button></div></section>);
   } else if (view === 'key') {
     h = head(`Connect ${name}`, 'Only for this page');
-    body = (<section className="glm-sec"><h3 className="glm-h">Your {name} key</h3>
-      {full && <ol className="cf-steps"><li>{name} ▸ Settings ▸ API Keys</li><li>Create key · Read/Write</li><li>Paste it here</li></ol>}
-      <div className="cf-keyrow"><input className="glm-in" type="password" autoComplete="off" spellCheck="false" placeholder="rpa_…" aria-label={`${name} key`} value={key} onChange={(e) => setKey(e.target.value)} />
+    const isColabHost = host.id === 'colab';
+    body = (<section className="glm-sec"><h3 className="glm-h">{host.keyLabel || `Your ${name} key`}</h3>
+      {full && !isColabHost && <ol className="cf-steps"><li>{name} ▸ Settings ▸ API Keys</li><li>Create key · Read/Write</li><li>Paste it here</li></ol>}
+      {full && isColabHost && <ol className="cf-steps"><li>Generate a Google OAuth token with scope <code>colaboratory</code></li><li>Paste it here (kept in memory for this page only)</li></ol>}
+      <div className="cf-keyrow"><input className="glm-in" type="password" autoComplete="off" spellCheck="false" placeholder={host.keyPlaceholder || 'rpa_…'} aria-label={host.keyLabel || `${name} key`} value={key} onChange={(e) => setKey(e.target.value)} />
         <button type="button" className="glm-btn" onClick={async () => { setKeyMsg({ tone: '', text: 'Testing…' }); const r = await host.connect(key.trim()); setKeyMsg(r.ok ? { tone: 'good', text: r.message } : { tone: 'bad', text: r.message }); if (r.ok) { setKey(''); host.catalog().then(setCat, () => {}); } }}>Test</button></div>
       {keyMsg ? <p className={`glm-status is-${keyMsg.tone || 'plain'}`}>{keyMsg.tone && <Dot tone={keyMsg.tone === 'good' ? 'good' : 'bad'} />}{keyMsg.text}</p>
-        : !full && <p className="glm-status">{name} ▸ Settings ▸ API Keys · Read/Write</p>}
+        : !full && <p className="glm-status">{host.keyHint || `${name} ▸ Settings ▸ API Keys · Read/Write`}</p>}
       {full && <p className="glm-status">Asked again when this page reopens</p>}
       <button type="button" className="glm-go" disabled={!host.connected()} onClick={() => { setView('choose'); start(); }}>{icons.film}Render on {name}{row ? ` · ≈ ${usd(row.usd)}` : ''}</button></section>);
   } else if (view === 'info') {
@@ -192,8 +201,20 @@ export function FarmPane({ project, frames, fps, mode, spp, pixels, title, full,
       <p className="glm-status cf-amber"><Dot tone="warn" />Computer busy · keep this chat open</p></section>);
   } else {
     // choose
+    choosing = true;
     const podLabel = !connected ? 'not connected' : null;
     body = (<section className="glm-sec"><h3 className="glm-h">Where to render <span>{full ? `${Math.round(Math.sqrt(pixels * 16 / 9))}×${Math.round(Math.sqrt(pixels * 9 / 16))} · ${frames} frames` : `${fps} fps`}</span></h3>
+      {hosts.length > 1 && (
+        <div className="cf-two" role="tablist" aria-label="Cloud provider" style={{ marginBottom: 6 }}>
+          {hosts.map((hItem, idx) => (
+            <button key={hItem.id || hItem.name || idx} type="button" role="tab" aria-selected={idx === hostIdx}
+              className={`glm-btn${idx === hostIdx ? ' is-on' : ''}`}
+              onClick={() => { setHostIdx(idx); setGpuId(null); setPods(null); setCat(null); setKeyMsg(null); setPick('pod'); }}>
+              {hItem.name || `Farm ${idx + 1}`}{hItem.connected?.() ? ' ✓' : ''}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="glm-fmts cf-where" role="group" aria-label="Where to render">
         <button type="button" aria-pressed={pick === 'here'} onClick={() => setPick('here')}><b>This computer</b><span>{probing ? 'Measuring…' : mins(est?.sec)} · <em className="cf-busy">busy</em></span></button>
         <button type="button" aria-pressed={pick === 'pod'} onClick={() => setPick('pod')}><b>{name}{podLabel && <small className="cf-tag">{podLabel}</small>}</b><span>{row ? `${mins(row.sec)} · ≈ ${usd(row.usd)}` : 'Prices…'}</span></button>
@@ -214,5 +235,6 @@ export function FarmPane({ project, frames, fps, mode, spp, pixels, title, full,
         : <button type="button" className="glm-go" onClick={start}>{connected ? icons.film : icons.cloud}{connected ? `Render on ${name} · ≈ ${usd(row?.usd || 0)}` : `Connect ${name}`}</button>}
     </section>);
   }
-  return children({ estimate: est, probing, farm: { head: h, body, info: view === 'choose' ? () => setView('info') : null } });
+  // (chatswitch) `choosing`: the choice of where to render is on screen (the page puts its 3D renderer above it)
+  return children({ estimate: est, probing, farm: { head: h, body, info: view === 'choose' ? () => setView('info') : null, choosing } });
 }

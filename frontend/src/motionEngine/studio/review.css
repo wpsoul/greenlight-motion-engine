@@ -175,19 +175,20 @@ body:not(.rv-mode-edit) .rv-edit-toolbar{display:none}
 .rv-act[data-act=del]:hover:not(:disabled){color:#ff8a8f;background:rgba(239,68,68,.1)}
 .ve-nav-layer.is-muted .ve-nav-name,.ve-nav-layer.is-muted .ve-nav-glyph{opacity:.45}
 @media(max-width:650px){.rv-edit-toolbar{left:6px;right:6px;overflow-x:auto;scrollbar-width:none}.rv-act{min-width:38px;padding:3px 3px 2px}}
-/* (chatswitch) a 3D film's Draft 3D | Final 3D at the toolbar's end (worldSwitch.js): the app's Render dialog pair and its player bar's
-   dot, green under Final; the trace's samples before it (the player bar's status). The start badge: the app's WorldLoadBadge over the picture */
-.rv-w3d{flex:none;margin-left:auto;display:inline-flex;align-items:center;gap:8px;height:38px;padding-left:6px}
-.rv-w3d-status{font:400 11px/1 system-ui,-apple-system,sans-serif;color:#8a8f8c;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* (chatswitch) a 3D film's Draft 3D | Final 3D in the player bar, after Loop and before the time (worldSwitch.js): the app's own player-bar
+   control (videoEditor.css .ve-world-final, .ve-ratio-toggle, .ve-world-final-btn, -status: one button, its dot green under Final, the
+   trace's samples before it). The chat layout's places for it: chat.css. The start badge: the app's WorldLoadBadge over the picture */
+.glm-app .rv-w3d{flex:none;display:inline-flex;align-items:center;gap:4px;order:2;margin-left:auto}
+body:not(.original) .glm-app .glm-transport .rv-w3d ~ .glm-time{margin-left:0}
+.glm-app .rv-w3d-toggle{display:flex;align-items:center;gap:6px;height:26px;padding:4px 9px;border:1px solid #333;border-radius:6px;background:transparent;color:#bbb;font:12px/1 system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s}
+.glm-app .rv-w3d-toggle:hover:not(:disabled){background:#2a2a2a;border-color:#444;color:#fff}
+.glm-app .rv-w3d-toggle.on{color:#fff}
+.glm-app .rv-w3d-toggle:disabled{opacity:.45;cursor:not-allowed}
+.rv-w3d-toggle i{width:7px;height:7px;border-radius:50%;background:#5b5b64;transition:background-color .2s cubic-bezier(.4,0,.2,1)}
+.rv-w3d-toggle.on i{background:#35d6a0}
+.rv-w3d-status{margin-right:4px;font:12px/1 system-ui,-apple-system,sans-serif;color:#8a8a93;font-variant-numeric:tabular-nums;white-space:nowrap}
 .rv-w3d-status[data-done="1"]{color:#35d6a0}
 .rv-w3d-status:empty{display:none}
-.rv-w3d-seg{display:inline-flex;gap:2px;padding:2px;border:1px solid #2a2e30;border-radius:8px;background:#151718}
-.glm-app .rv-w3d-seg button{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:0;border-radius:6px;background:none;color:#8f9793;font:500 11px/1 system-ui,-apple-system,sans-serif;white-space:nowrap;cursor:pointer;transition:background .15s,color .15s}
-.glm-app .rv-w3d-seg button:hover:not(:disabled){background:rgba(255,255,255,.045);color:#edf1ee}
-.glm-app .rv-w3d-seg button.on{background:#262b2f;color:#eef2f0}
-.glm-app .rv-w3d-seg button:disabled{opacity:.45;cursor:not-allowed}
-.rv-w3d-seg i{width:7px;height:7px;border-radius:50%;background:#5b5b5f;transition:background .2s cubic-bezier(.4,0,.2,1)}
-.rv-w3d-seg button.on i{background:#35d6a0}
 .rv-w3d-load{position:absolute;z-index:9;transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);padding:9px 12px;border:1px solid #2a2a2a;border-radius:8px;background:#121212f0;box-shadow:0 10px 25px #00000080;pointer-events:none;animation:rv-w3d-in .48s cubic-bezier(.645,.045,.355,1) both}
 .rv-w3d-load[hidden]{display:none}
 .rv-w3d-load-meta{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:7px;color:#d6d6d6;font:12px/1.2 system-ui,-apple-system,sans-serif}

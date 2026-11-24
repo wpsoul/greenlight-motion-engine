@@ -295,6 +295,7 @@ export function drawTextWithLetterSpacing(ctx, text, x, y, letterSpacing) {
       ctx, text, x, y, letterSpacing, measurePlainText,
       (plain, px, py = y) => drawPlainTextWithLetterSpacing(ctx, plain, px, py, letterSpacing),
       (ch, gx, gy) => ctx.fillText(ch, gx, gy),
+      'fill',
     );
     return;
   }
@@ -338,6 +339,7 @@ export function strokeTextWithLetterSpacing(ctx, text, x, y, letterSpacing) {
       ctx, text, x, y, letterSpacing, measurePlainText,
       (plain, px, py = y) => strokePlainTextWithLetterSpacing(ctx, plain, px, py, letterSpacing),
       (ch, gx, gy) => ctx.strokeText(ch, gx, gy),
+      'stroke',
     );
     return;
   }

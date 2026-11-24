@@ -7,30 +7,66 @@
 > and titles are the script's scenes. Ignore the `/api/...` routes and the Rig's settings below. To check the picture, use
 > look_at_video's critique in a chat, or `npx greenlight-motion check` locally.
 
-# GreenLight Dash — build 3D in the Scene, with no Blender
+# GLEA — build 3D in the Scene, with no Blender
 
 > New to the 3D Scene? Start with world3d-quickstart.md (GreenLight Dash only): the smallest good Scene, the ten fields that matter, where to read next.
-> Read [video-projects.md](video-projects.md) for the versioned-write contract and [video-3d.md](video-3d.md) for model layers and the Rig. Load only what the task needs.
+> Read [video-projects.md](video-projects.md) for the versioned-write contract, [video-3d.md](video-3d.md) for a device, a model file or a character brought into a Scene and [video-characters.md](video-characters.md) for posing one. Load only what the task needs.
 > Before you build, read the field notes: [video-world3d-notes.md](video-world3d-notes.md), what real films taught (wrong ways and the right one, with values), and in the app your user's own: `GET /api/agent/engine-notes/world3d` (engine notes (GreenLight Dash only)).
 
 The Scene layer (the `rig` clip) can hold a whole world that an agent wrote as JSON: geometry from a node graph, materials, lights, simulations and keyframes. It renders together with the 3D layers on the timeline, in **Draft 3D** while the user works and path traced in **Final 3D**. Nothing here needs Blender or any other install, but **a 3D Scene needs the WebGPU engine**: in an editor on WebGL, or on a computer with no WebGPU, the preview and the Scene panel show a notice instead of the Scene (the panel's "Switch to WebGPU" sets the engine), and 2D layers keep drawing. Renders and stills of a project with a Scene always run on WebGPU, automatically, whatever the app's engine or the request's `renderer`.
 
+
+## Which 3D: choose first
+
+Three tools make 3D in a video. Choose per object before you build, then keep one tool per object for the whole film.
+
+| The object | Tool |
+|---|---|
+| A real thing: the client's product, anatomy, a face, hands, a device, furniture, any GLB / .blend model (BlenderKit) | **3D Scene** (this page) |
+| Physics and simulation: falling, stacking, cloth, liquid, sand, smoke, particles living among objects, a character with bones and poses | **3D Scene** (sim.md (GreenLight Dash only), [video-3d.md](video-3d.md), [video-characters.md](video-characters.md)) |
+| Any other 3D object | **WebGL page** as an HTML clip (webgl-reel-3d/README.md (GreenLight Dash only)) |
+| Graphic 3D | **WebGL page**, or the editor's own layers and effects |
+
+| What the light and materials must do | Mode |
+|---|---|
+| A normal shot: the object reads by its shape and colour | **WebGL page** (live, milliseconds a frame) or **3D Scene Draft** (live, 0.3–2 s a render frame) |
+| What only path tracing shows: thick or layered glass and liquids with real refraction, **caustics**, **subsurface scattering** (skin, wax, marble, soap, fruit, milk), light in fog and smoke, colour bleeding and soft area shadows — anything a WebGL page cannot fake and Draft shows poorly | **3D Scene Final** |
+| A polished film where the most 3D quality is the point (a brand or product launch, a premium deliverable), when the user wants it | **3D Scene Final** for the whole film |
+
+Rules that decide at once:
+- **Preview = render.** A WebGL page and Draft are live: what the user scrubs is what renders. Final is not live: check Final
+  shots with Final stills of their key frames and get them approved before the full render.
+- **Render time.** Estimate a Final render before you start it (rendering.md (GreenLight Dash only)). When the estimate is longer
+  than the user will want to wait on this computer, **offer** the render farm (render-farm.md (GreenLight Dash only): the user's
+  own RunPod GPUs, paid by the user). It is the user's choice: many render Final locally for free. Never start it unasked.
+- **Live budget.** A WebGL page stays live at ≤ about 33 ms a frame at 1080×1920; heavier means simplify.
+- **Words in 3D.** Letters standing in the world (depth, shadows, path traced) are 3D Text in the Scene; a word behind a
+  WebGL page's object is that page with `?alpha=1` and an editor text layer under it.
+- **One object, one tool for the whole film.** Mixing tools by shot type is fine when the design system holds light and colour together.
+- The user's explicit choice wins over these tables.
+
+Default for Reels and story films: real things in Draft, any other 3D as WebGL pages, Final only for shots that need glass,
+caustics or subsurface realism — or for the whole film when the user asks for maximum quality.
+
 ## Contents
 
-- [The defaults: never and prefer](#the-defaults-never-and-prefer)
+- [The defaults: never and prefer](#the-defaults-never-and-prefer): [never](#never)
 - [Turn it on and write a scene](#turn-it-on-and-write-a-scene)
 - [Filming the Scene with the Camera layer](#filming-the-scene-with-the-camera-layer): [units and axes](#units-and-axes), [free move](#a-free-move-a-push-in-with-a-slight-orbit-and-a-focus-pull), [path move](#a-path-move-a-crane-and-orbit-round-an-object), [rig](#a-rig-a-built-in-camera-rig-round-an-object-and-a-saved-preset), [zoom](#a-zoom-onto-a-scene-object-and-back), [from scene.camera](#from-scenecamera-to-the-camera-layer), [check the framing](#check-the-framing-without-a-final)
-- [The scene format](#the-scene-format): [materials](#materials), [glass and liquids](#glass-and-liquids), [glowing surfaces](#glowing-surfaces), [procedural materials](#procedural-materials), [texture graphs](#texture-graphs-smart-materials-with-wear-and-dirt-graph), [animated materials](#animated-materials-edge-glow-live-noise-beam-sweep-graph-presets), [`translucency` and `subsurface`](#light-through-a-sheet-light-into-a-body-translucency-and-subsurface), [`iridescence`, `metal`, `anisotropy`, `roundEdges`](#thin-film-real-metals-brushed-metal-round-edges-iridescence-metal-anisotropy-roundedges), [car paint, dust, toon](#car-paint-dust-and-toon-flakes-coatbump-dust-toon), [the material library](#the-material-library-preset), [`displacement`](#real-relief-from-a-height-displacement), [`reveal`](#a-surface-that-comes-and-goes-reveal), [objects and graphs](#objects-and-graphs-blender-outside-houdini-inside)
-- [Motion design: one clock per move](#motion-design-one-clock-per-move): [clocks and drives](#clocks-and-drives), [expressions](#expressions-a-drivers-scripted-expression), [ƒx on keys](#the-editors-ƒx-on-scene-keys-fx), [follow path](#follow-path-path), [riding an object](#riding-a-scene-object-parent-and-worldparent), [the pattern](#the-pattern), [a worked example](#a-worked-example)
-- [Ops](#ops): [solids](#solids), [sheets and points](#sheets-and-points), [modifiers](#modifiers-one-input-the-node-before-unless-in-says-otherwise), [several inputs](#several-inputs-set-in), [points to copies](#points-to-copies), [harder shapes](#harder-shapes), [rooms and furniture](#rooms-and-furniture), [escape hatch](#escape-hatch)
+- [The scene format](#the-scene-format): [materials](#materials), [glass and liquids](#glass-and-liquids), [cloth](#cloth-fabric), [glowing surfaces](#glowing-surfaces), [procedural materials](#procedural-materials), [texture graphs](#texture-graphs-smart-materials-with-wear-and-dirt-graph), [animated materials](#animated-materials-edge-glow-live-noise-beam-sweep-graph-presets), [`translucency` and `subsurface`](#light-through-a-sheet-light-into-a-body-translucency-and-subsurface), [`iridescence`, `metal`, `anisotropy`, `roundEdges`](#thin-film-real-metals-brushed-metal-round-edges-iridescence-metal-anisotropy-roundedges), [car paint, dust, toon](#car-paint-dust-and-toon-flakes-coatbump-dust-toon), [the material library](#the-material-library-preset), [`displacement`](#real-relief-from-a-height-displacement), [`reveal`](#a-surface-that-comes-and-goes-reveal), [objects and graphs](#objects-and-graphs-blender-outside-houdini-inside)
 - [Lights in the scene](#lights-in-the-scene): [kelvin, watts, lumens, IES](#light-in-a-lighting-designers-units-kelvin-power-lumens-ies), [highlight placement](#put-the-highlight-where-you-want-it-highlight), [studio presets](#studio-presets-type-studio), [light and shadow linking](#which-light-reaches-what-tags-light-linking-and-shadow-linking), [light mix and passes](#light-mix-and-light-passes-looklightmix-renderlightpasses), [ray visibility and holdouts](#what-each-kind-of-ray-sees-visibility-holdout), [render passes and masks](#render-passes-and-masks-renderpasses-lookpassmix-world-mattes)
+- [The Rig: backdrop, Rig lights and environment](#the-rig-backdrop-rig-lights-and-environment)
 - [Shadows in Draft](#shadows-in-draft)
+- [Motion design: one clock per move](#motion-design-one-clock-per-move): [clocks and drives](#clocks-and-drives), [audio clocks](#audio-clocks-audio), [a character speaks](#a-character-speaks-posespeech), [expressions](#expressions-a-drivers-scripted-expression), [ƒx on keys](#the-editors-ƒx-on-scene-keys-fx), [follow path](#follow-path-path), [riding an object](#riding-a-scene-object-parent-and-worldparent), [the pattern](#the-pattern), [a worked example](#a-worked-example)
+- [Ops](#ops): [solids](#solids), [sheets and points](#sheets-and-points), [modifiers](#modifiers-one-input-the-node-before-unless-in-says-otherwise), [several inputs](#several-inputs-set-in), [points to copies](#points-to-copies), [splat ops](#gaussian-splat-ops), [harder shapes](#harder-shapes), [editing a mesh, UVs and decals](#editing-a-mesh-uvs-and-decals), [deforming, sculpting and organic shapes](#deforming-sculpting-and-organic-shapes), [rooms and furniture](#rooms-and-furniture), [escape hatch](#escape-hatch)
 - [Fog and haze](#fog-and-haze)
 - [Smoke and fire](#smoke-and-fire)
+- [Particles: snow, dust, smoke, sparks, bokeh, stars](#particles-snow-dust-smoke-sparks-bokeh-stars)
 - [Cloth and soft bodies](#cloth-and-soft-bodies)
 - [Water, sand, snow and goo](#water-sand-snow-and-goo)
 - [Rigid bodies](#rigid-bodies)
 - [Pictures in the world (`inWorld`)](#pictures-in-the-world-inworld)
+- [The 3D view of a Scene](#the-3d-view-of-a-scene)
 - [Motion blur](#motion-blur)
 
 ## The defaults: never and prefer
@@ -44,8 +80,7 @@ user's own request wins over a default. Check each one on a still before you rep
   `"inspect": true` and read `scene.inspect.overlaps` ([Check your work](#check-your-work)): each pair with
   `intersecting: true` is either meant (a stem in its vase, liquid in its bottle, a cap on its neck, a label on glass, a thing
   resting on its support) or a fault: a flower inside a bottle, a prop sunk into a desk, a strap through a body. Fix a fault by
-  moving, turning or bending the part, never by scaling the hero. `inspect` reads the rest pose: for keyed or simulated
-  objects also look at stills of the times where they come closest.
+  moving, turning or bending the part, never by scaling the hero. `inspect` measures models, rigged and skinned objects, rigid bodies and imported parts as they stand at the still's time, and every other scene object where it is written (its keys, drives and path not applied): for objects that move or simulate, also look at stills (with `views`) at the times where they come closest.
 - **The camera inside the Scene.** Leave `scene.camera` out and film the Scene with the timeline's Camera layer
   ([video-camera.md](video-camera.md)): its keys, eases, paths, depth of field, Camera Rig and presets are what the user can see and
   edit in the editor; a `scene.camera` has no rows there. Use every mode the Camera layer has, whichever fits the move: a
@@ -69,7 +104,7 @@ Everything lives on the `rig` clip's item, in `rig`. Write it through the ordina
   "env": { "source": "preset", "preset": "studio_small_03_1k", "intensity": 0.6 },
   "exposure": 1,
   "look": { "contrast": 1.3, "saturation": 1.1, "bloom": 0.1, "glare": 0, "halation": 0.05, "vignette": 0.15, "grain": 0.1 },
-  "render": { "mode": "final", "spp": 64, "bounces": 8, "denoise": true },
+  "render": { "mode": "final", "spp": 32, "bounces": 8, "denoise": true },
   "scene": {
     "lights": [{ "id": "key", "type": "sun", "dir": [0.4, 1, 0.3], "intensity": 3, "size": 2 }],
     "materials": { "clay": { "base": "#c9a184", "roughness": 0.6 } },
@@ -78,17 +113,17 @@ Everything lives on the `rig` clip's item, in `rig`. Write it through the ordina
 }
 ```
 
-- Every Rig is a 3D Scene drawn by this world renderer, on the WebGPU engine only, unless `rig.renderer` is `"classic"`. Write `"renderer": "world"` anyway: only with it does `"lights": []` mean no Rig lights instead of coming back as the default key, fill and rim (below).
+- Every Rig is a 3D Scene drawn by this world renderer, on the WebGPU engine only. Write `"renderer": "world"`: only with it does `"lights": []` mean no Rig lights instead of coming back as the default key, fill and rim (below). `"classic"` is the old per-layer renderer that old projects keep: never write it.
 - The project's Camera layer films it ([below](#filming-the-scene-with-the-camera-layer)): a camera clip at 1.6 m, 0.4 m up, looking at the ball is
   `{ "cameraMoveMode": "free", "cameraLookAt": "@ball", "camY": -37.04, "camDolly": 566 }` on a 1920 × 1080 project.
-- `scene` holds `objects`, `materials`, `lights`, `camera`, `env`, `sims`, `layers2d`, `volumes` (baked only) and `physics`, in the format below. `rig.env.tint` colours the environment's light, in Draft and Final. The Rig's own backdrop, lights and environment join it, and every `model3d` layer on the timeline stands in the same world, so objects shadow each other.
-- The letters of a 3D Text layer (`text3d`, [below](#3d-text-in-the-world)), and those of a flat text layer with `textInWorld` ([below](#flat-text-in-the-world)). Shadows in the world come only from what it holds (scene objects, the backdrop, model layers, 3D Text, flat letters with `castShadow`, sims), so a flat layer's `shadowPlate.castShadow` casts none on it.
+- `scene` holds `objects`, `materials`, `lights`, `env`, `clocks`, `sims`, `layers2d`, `fog`, `physics`, `caustics`, `textureBudget`, `volumes` (a `.blend` import's baked smoke and fire) and `camera` (only for [what the Camera layer cannot do](#what-only-scenecamera-does)), in the format below. `rig.env.tint` colours the environment's light, in Draft and Final. The Rig's own backdrop, lights and environment join it, and every `model3d` layer on the timeline stands in the same world, so objects shadow each other.
+- The letters of a 3D Text layer (`text3d`, [below](#3d-text-in-the-world)) and of a flat text layer with `textInWorld` ([below](#flat-text-in-the-world)) stand in the same world. Shadows in the world come only from what it holds (scene objects, the backdrop, model layers, 3D Text, flat letters with `castShadow`, sims), so a flat layer's `shadowPlate.castShadow` casts none on it.
 - A model the world draws takes no `opacity` or `blendMode`: bring it in or out with scale, position or rotation keys.
 - A `scene.camera` takes the shot from the Camera layer: it films from its own `at` and `target`, keys included, and the Camera layer's move
   only steers it from there. Write one only for what the Camera layer cannot do ([the list](#what-only-scenecamera-does)). A `.blend` import
   puts its shot on the Camera layer (blender.md (GreenLight Dash only)).
 - `render` is what every render and still of the project uses: `mode` `"draft"` (the default) or `"final"`. Final traces every frame, so expect seconds per frame. Like Draft, it renders on WebGPU, which every render and still of a project with a Scene uses automatically (rendering.md (GreenLight Dash only)).
-- Final's quality fields, with their defaults and ranges: `spp` [64, 1–4096], `bounces` [8, 1–32], `transparentBounces` [5, 0–32] (layers of glass a ray passes through), `glossy` [0.5, 0–1] (blurs reflections of reflections so they don't sparkle; glass whose caustic the caustic pass draws stays sharp), `clamp` [0 = off, up to 1000] (caps one sample's brightness against fireflies), `denoise` [true], `denoiseLook` ["clean" (the default: the denoiser alone, smoothest, with its large network in every render), "natural" (a fifth of the traced picture, its fireflies out, mixed back over the denoised one, so some grain and surface detail stay: set it for that grain; a Scene that sets it keeps it) or "raw" (the samples the denoiser read, shown without it)], and `exposure` [1, 0.05–4], which scales Final's picture only, to match Draft or a Cycles frame (a `.blend` import sets it).
+- Final's quality fields, with their defaults and ranges: `spp` [32, 1–4096], `bounces` [8, 1–32], `transparentBounces` [5, 0–32] (layers of glass a ray passes through), `glossy` [0.5, 0–1] (blurs reflections of reflections so they don't sparkle; glass whose caustic the caustic pass draws stays sharp), `clamp` [0 = off, up to 1000] (caps one sample's brightness against fireflies), `denoise` [true], `denoiseLook` ["clean" (the default: the denoiser alone, smoothest; on an Apple, NVIDIA or AMD GPU it takes its large network in every render and from 32 samples in the preview), "natural" (a fifth of the traced picture, its fireflies out, mixed back over the denoised one, so some grain and surface detail stay: set it for that grain; a Scene that sets it keeps it) or "raw" (the samples the denoiser read, shown without it)], and `exposure` [1, 0.05–4], which scales Final's picture only, to match Draft or a Cycles frame (a `.blend` import sets it).
 - `"lightPasses": true` keeps each light group's light apart in Final, so `look.lightMix` rebalances a finished trace without tracing
   again ([Light mix and light passes](#light-mix-and-light-passes-looklightmix-renderlightpasses)).
 - Bounces by kind of surface, each under `bounces` and unset by default (then only `bounces` limits it): `diffuseBounces` [0–32] (off
@@ -115,7 +150,17 @@ Everything lives on the `rig` clip's item, in `rig`. Write it through the ordina
   frames), so its picture is not the denoised one's samples. To see exactly what the denoiser starts from, keep `denoise: true` and set
   `denoiseLook: "raw"`: same trace, same samples, the denoiser still runs (same time), only the picture shown or rendered is its input.
   Natural, Clean and Raw are the same trace shown three ways; in the editor's preview a change between them shows at once.
-- Final ends its light paths in a radiance cache of the room's light after their first bounce, in stills and video renders alike. In a room, `spp: 32` looks like 64 without it, in about half the time and with no extra flicker. In an open scene lit mostly by the sky it gains little, so halving the samples there is not free. `"radianceCache": false` in `render` turns it off.
+- Final ends its light paths in a radiance cache of the room's light after their first bounce, in stills and video renders alike. The default `spp: 32` is enough for most Scenes: in a room, an open scene under the sky, glass with liquid and a beam in fog it flickered no more than 64 and traced 1.55 to 1.93 times faster, for under one display level more error per frame. Raise it to 64 for a little more accuracy in a room's shadow edges, and to 128–256 for glass and liquid close-ups (inside glass 32 loses more fine refracted detail than 64). `"radianceCache": false` in `render` turns it off.
+- `softReuse` [false]: a Final video also carries the soft (matte) light of the frame before into each frame. Leave it unset: every
+  video frame is already steadied against the one before after the denoiser, and carrying the light makes each frame draw new samples,
+  so reflections, coats and glows boil (at 16 samples, through the export: a glossy desk interior flickered 18 % more with it, an
+  emissive night desk 25 %, a product on a floor 8 %). Set it `true` only for a shot whose light is nearly all matte (9/10 or more) with
+  much of the frame lens-blurred, delivered at a high bitrate (`"format": "mov-prores4444"`): 7 to 19 % cleaner frames as ProRes,
+  0.5 to 2 % in an MP4.
+- A Final video of a moving shot: `spp` 16 to 24 with the defaults. More samples do not calm what looks like flicker: on a moving shot
+  almost all the frame-to-frame change is the picture's own motion (99.5 % on a measured 1080 × 1920 shot, where 32 samples instead of
+  16 lowered the flicker number 1.5 % for twice the time). Judge flicker on a part of the frame nothing moves through, and against
+  another renderer's video only after matching their brightness (a darker light moves more levels for the same motion).
 - `exposure` (the Rig's, default 1) multiplies the light every view takes, in Draft and Final. `1/1.35` (0.741) is Blender's view at
   exposure 0, so Blender's view exposure *e* is `"exposure": 2^e / 1.35` here (−0.2 is 0.645, 0.5 is 1.048) with the same
   `look.view`; through AgX a `.blend` import also divides by its AgX match step (2^0.275) and the look's own step. A `.blend`
@@ -152,9 +197,7 @@ Everything lives on the `rig` clip's item, in `rig`. Write it through the ordina
 - `look.aberration` (0 to 1) is a lens's lateral chromatic aberration: red and blue fringes that grow toward the corners (1 is about
   0.8 % of the half width at the corners). Draft and Final.
 - `look.tone: "plate"` films the picture through sRGB alone instead of the film curve (AgX with `contrast` and `saturation`): for objects put into real footage, whose environment and floor were read off the footage the same way, so a grey the footage shows at half brightness comes back at half, and a sky reflected in chrome is as bright as the sky in the shot. Set it with `contrast: 1, saturation: 1`; the footage call (GreenLight Dash only) sets all three. With it, `look.soften` (px, 0–3) blurs the world's picture where it joins the layers below, coverage with it, to the footage's own softness, and `look.black` (0–0.15) lifts the world's surfaces' darks to the footage's black level (toward `look.blackTint`, [r, g, b] at unit brightness, default grey; a catcher's shadow is never lifted); 0 (the default) skips both. While `soften` is on, `look.grain` is laid on after that blur (so the blur does not take the footage's grain away again). `look.sharpen` (0–1) adds the world's own fine detail back as a camera's sharpening does, inside the objects only (never at their outline); `look.wrap` (0–1) wraps the light of the layers right under the Scene onto the objects' edges (a light wrap: a dark object on a bright table, a window behind it), only where those layers are full-frame, camera-locked footage at the bottom of the stack. The footage call measures and sets all of them; `env.keyDir` ([x, y, z], y up) names the direction the environment's key light comes from, which Draft's directional shadow follows.
-- <a id="model-layers-in-the-world"></a>A `model3d` layer turns in the world as a scene object does, as 3D Text does: `rotateX` is `rot[0]`, `rotateY` is `rot[1]`, and `rotation` / `rotateZ` keeps its on-screen sense (clockwise as you face it, `rot[2]` negated). A model turned like an object at `rot: [rx, ry, rz]` takes `rotateX: rx, rotateY: ry, rotateZ: -rz`, keys included; `model3dConfig.baseRotation` reads the same way (its `x`, `y`, `z` as `rotateX`, `rotateY`, `rotateZ`). It keeps that turn while an effect takes it out of the world for its own pass, and in the editor's 3D view. A model in a channel locked to the camera, inside a sequence, or with no Rig / `renderer: "classic"` turns in the editor's own sense (Rotate X / Y the opposite of `rot`).
-- Every `model3d` layer keeps its `screen` and `screens` artwork, its GLB clips and its pose ([video-3d.md](video-3d.md#characters--the-pose-pipeline-model3dconfigpose): crossfades, morphs, bones, look-at and IK aimed at Scene objects by `"@id"`, a Scene object held by a bone with `attach`) in the world, in both modes. Its colour filters, its Grow Fill and the real-3D Overlay Effects with `inWorldScene: "onObject"` run in the world on the model itself, in Draft and Final alike, and it keeps its shadow. While an effect with `inWorldScene: "ownPass"` (RGB Split, Digital Glitch, Pixel Stretch, Slit Scan, Spectral Curtain, Flash Blink) is live, the model leaves the world for its own pass, and so does a model with a blur or any other flat effect: it then casts no shadow and Final does not trace it; it stays where the world showed it, lit and filmed as the world lights and films it. Effects with `inWorldScene: "skipped"` are not available on a model in a world Scene ([effects-depth.md](video-effects.md#in-a-world-scene-rigrenderer-world)). `"renderer": "classic"` turns the world off for the whole Rig.
-- <a id="a-device-from-the-preset-table"></a>A device from the [preset table](video-3d.md#bundled-device-presets) (a phone, a tablet, a laptop, an iMac) goes in ready-made as a `model3d` layer on a channel of its own, not locked to the camera (that takes it out of the world): the clip's `url` is `model-preset:<id>`, and `model3dConfig` has `source: "preset"`, the same `preset`, that row's `baseRotation.y`, and its picture in `screen` (`{ "url": "/media/….png", "fitMode": "cover" }`, a video url, or `layer`); `screens` naming a preset's display stays black under its cover glass. It stands where `panX` / `panY` (% of the frame) and `panZ` (px) put it, one world unit being 1000 px, as [3D Text](#placing-3d-text-in-the-world) does, and under `scene.camera` it stays at that place in the world. With `fit: "height"`, `fitValue` is its height in % of the frame's height (55 on a 1920-tall frame is 1.056 units); `anchor: "base"` puts its lowest point at its place, so it stands on a floor at height y with `panY` = −y × 1000 / H × 100. `placeOnRigFloor` stands it only on the Rig's cyclorama floor, so set it `false` on a floor of your own. The Scene's lights and environment light it (the layer's own `env`, `lights` and `shadow` are not read there), it casts and takes the Scene's shadows, and its screen glows in Draft and Final and lights the set in Final. Example below.
+- <a id="model-layers-in-the-world"></a><a id="a-device-from-the-preset-table"></a>A `model3d` layer (a device from the [preset table](video-3d.md#bundled-device-presets), a model file, a character) stands in the world as a scene object does, lit, shadowed and traced by it: [video-3d.md](video-3d.md#a-model-layer-in-the-scene) has its contract (its timeline span, place and size in metres, what the Scene reads and ignores), and [video-characters.md](video-characters.md) its pose. It turns as a scene object does: `rotateX` is `rot[0]`, `rotateY` is `rot[1]`, and `rotation` / `rotateZ` keeps its on-screen sense (clockwise as you face it, `rot[2]` negated), so a model turned like an object at `rot: [rx, ry, rz]` takes `rotateX: rx, rotateY: ry, rotateZ: -rz`, keys included; `model3dConfig.baseRotation` reads the same way. It keeps that turn while an effect takes it out of the world for its own pass, and in the editor's 3D view. A model in a channel locked to the camera turns in the editor's own sense (Rotate X / Y the opposite of `rot`). Which of its effects run on it in the world and which take it out: [effects-depth.md](video-effects.md#in-a-3d-scene).
 - A material's `maps` and an object's `model` take media URLs (`"maps": { "base": "/media/…" }`, `"model": "/media/….glb"`). `env.hdri` takes an `.hdr` URL. A picture in `maps.base` is multiplied by the material's `base`, so leave `base` out (white) to show the picture's own colours.
 - The environment lights everything, shadows included, so it sets how dark a sun's shadow can be. With the studio preset and a sun at 3, Final measured the shadow at 58% of the lit floor with the environment at 0.05, 87% at 0.2 and 98% at 0.6, where the frame is nearly white. For a sunny look with clear shadows keep the environment at 0.05 to 0.15; the 0.6 above is a soft studio look.
 - `"lights": []` on a Rig with `"renderer": "world"` means no Rig lights: the scene's own lights and the environment light the world. Leave `lights` (or `renderer`) out to get the Rig's default key, fill and rim, which cast no shadows and so lighten every shadow your sun casts. An `ambient` or `hemisphere` Rig light adds its intensity to the environment's and its colour tints the share it adds, as it rests and as a colour key (`scc:<lid>:col`) moves it, as on a classic Rig (a red one at 1.5 over an environment at 0.5: the 1.5 it adds is red, the environment's own 0.5 stays as it is; a dark `#20222a` at 0.05 adds almost nothing). A `hemisphere`'s `color` tints the environment's upper half and its `groundColor` the lower half. With no environment map (`env.source: "none"`) an `ambient` or `hemisphere` lights the world as a flat environment of its own colour, as bright as on a classic Rig. A Solid or picture backdrop is as opaque as its `opacity` (0.6 lets 40 % of the layers below through), at rest and keyed (`sc:cyc:opacity`).
@@ -167,17 +210,7 @@ A new Scene layer, whole, as it goes into the project's `clips` and `channels` (
   "items": [{ "id": "i-rig", "clipId": "c-rig", "trimStart": 0, "trimEnd": 6, "freeStart": 0, "rig": { "renderer": "world", "lights": [], "scene": { } } }] }]
 ```
 
-A preset phone standing in that Scene with its picture on the display: on a 1080 × 1920 frame it is 1.056 units tall and stands on a
-floor whose top is at y = −0.5 (`panY` 26.04), turned as an object at `rot: [0, -22, 0]` (add the clip to `clips` and the channel
-after the Scene's):
-
-```json
-{ "id": "c-phone", "source": "REMOTE", "mediaType": "model3d", "url": "model-preset:iphone_pro_max", "proxyUrl": null, "name": "iPhone 17 Pro Max", "duration": 6 }
-{ "id": "ch-phone", "name": "Phone", "visible": true, "unsnapped": true,
-  "items": [{ "id": "i-phone", "clipId": "c-phone", "trimStart": 0, "trimEnd": 6, "freeStart": 0, "panX": 0, "panY": 26.04, "panZ": 0, "rotateY": -22,
-    "model3dConfig": { "source": "preset", "preset": "iphone_pro_max", "fit": "height", "fitValue": 55, "anchor": "base", "placeOnRigFloor": false,
-      "baseRotation": { "x": 0, "y": 180, "z": 0 }, "screen": { "url": "/media/admin/{board_id}/app-screen.png", "fitMode": "cover" } } }] }
-```
+A preset device standing in that Scene, its clip, channel and size: [video-3d.md](video-3d.md#devices-from-the-preset-table).
 
 ## Filming the Scene with the Camera layer
 
@@ -327,7 +360,9 @@ Camera layer's `camLensK1` is a solved footage lens), `autoExposure`, `noise`, `
 - `POST /api/world3d/validate` with the project's `data` names a Scene object a camera targets that does not exist (`"@hero"` misspelled,
   with `didYouMean`), a rig or path with no `camPathT` keys (it stands still), path anchors without handles, and a Scene that films from
   its own camera (`scene_camera`).
-
+- **Motion critique (no render):** `POST /api/world3d/motion-check` `{ "data": <project data>, "fps?": 30 }` (or `GET /api/moodboards/{board}/video-projects/{project}/motion-check[?fps=30]`; fps 1–240, default the project's `renderFps`, else 30) measures every motion track frame by frame as the app plays it: layer and Camera layer tracks through the editor's eases, `easeSlice` and track ƒx, and each Scene object's, camera's and flat card's `at`/`target`/`rot`/`scale`/`along`/`bank`/`fov`/`lens` on the item's own clock (timeline minus the item's start) with its `fx` and its `drive` on the clocks (each through its `filter`). Each row gives speed, acceleration, holds and stillness in its own unit; issues are `velocity_jump`, `linear_stop`, `dead_hold` (nothing in the picture moves for 2 s within a shot), `too_many_keys` and `ease`. What it cannot evaluate (a Custom ƒx, a drive expression, Camera tracks a rig, live path or Smart Zoom overrides, a nested sequence) is listed in `skipped`. It does not check framing or cut cadence ([video-projects.md](video-projects.md#motion-critique--lockstep-retiming)).
+- **Lockstep retiming:** `POST /api/moodboards/{board}/video-projects/{project}/retime` `{ "ops": [...], "apply?": false, "expected_version": 7 }` applies ops in order, each on the times the one before left: `hold` `{at, delta}` (everything at `at` stands still for `delta` s; a move under way is cut there with its curve kept, adding keys listed as `keys_added`), `insert` `{at, delta}` (time inserted: a move through `at` plays slower), `stretch` `{start, end, factor | newDuration}`, `move_cut` (or `moveCut`) `{at, to}` (rolls the cut at `at`), `start_at` (or `startAt`) `{target, t, kind?, item?}` (an item at `t` timeline seconds, or a Scene clock, sim, object or flat card at `t` Scene seconds). Timeline items, layer and Camera keys, Scene keys and clocks move together; a sim is retimed only at its clip (`freeze`, `speed`, `time`, `start`, `duration`), never its pulses or ops. What runs on its own time (baked .blend motion, ƒx and `fx`, `time` expressions, clock filters, pose clips) is moved, not warped, and named in `warnings`. Start with `"apply": false` to inspect `changes` and `warnings`, then `"apply": true` with `expected_version`; an apply that changes nothing saves nothing.
+- **Camera move composer & motion by reference:** `GET /api/world3d/camera-moves` + `POST /api/world3d/camera-moves/compose` compose the library's moves (the list gives their ids) into a clean Camera clip + item; a move from a reference video (`target: "scene"`, `channelKind: "rig"`, `objectId`): motion-reference.md (GreenLight Dash only).
 
 ## The scene format
 
@@ -450,6 +485,7 @@ at 3 s, and moving the layer along the timeline moves its whole animation with i
     lens, `projection` below; look aberration 0.45, vignette 0.28, bloom 0.06 over 1.2), `"phone"` (lag 0.35 s, centre metering, strength 0.9, -3 to +5; noise 0.5;
     distortion 0.03; aberration 0.12, vignette 0.1, bloom 0.05, localTone 0.35), `"cinema"` (no auto-exposure; noise 0.25; halation 0.05,
     vignette 0.15, bloom 0.06). It fills only what the camera and the look leave out: a field the scene writes wins, 0 included.
+    Move such a camera at a robot's or a walker's pace (0.3 to 1.5 m/s) through light and shade.
   - Window glare is `look.bloom`: it glows from the light as exposed, in proportion to how far over `bloomThreshold` it is, so a window
     many times over white flares and a white wall does not. With `autoExposure` opening up in a dark room the window flares more, as a
     camera's does.
@@ -459,7 +495,8 @@ at 3 s, and moving the layer along the timeline moves its whole animation with i
   ```
 - Lights are in [Lights in the scene](#lights-in-the-scene): where each kind stands and where it points.
 - `env` (`hdri`, `intensity` [1] (it scales `flat` too), `rotation` degrees, `tint`, `flat`, `background`, `opaque`) merges over the Rig's environment
-  (`rig.env`, a bundled preset by default; `hdri` takes an `.hdr` URL, the presets are `/hdr/<preset>.hdr`). It lights everything, but
+  (`rig.env`, a bundled preset by default; `hdri` takes an `.hdr` URL, the presets are `/hdr/<preset>.hdr`: the ten ids are in
+  [the Rig's environment](#the-rig-backdrop-rig-lights-and-environment)). It lights everything, but
   where no object is, the frame shows what lies below the Scene layer (the project background, black by default), not the panorama:
   set `"opaque": true` to see the environment there (a sky through a window, a studio around a product), or `background` to a colour
   (`"#e9e4dc"`) for a plain backdrop. `"background": "none"` keeps the frame see-through even so. A colour background is only what the
@@ -467,6 +504,18 @@ at 3 s, and moving the layer along the timeline moves its whole animation with i
   source: the scene's `env.intensity` when it sets one, else `rig.env.intensity` (the Rig panel's Environment Intensity). A Rig strength moved
   off its default 1 does nothing while the scene sets another (its keys still scale the scene's in proportion): the validator and the
   still's `scene.warnings` say so at `rig.env.intensity`; keep one of the two.
+- `env.sky` is a physical sky instead of a picture (Blender's Nishita sky): the sky's light and a sun disc worked out from the air and
+  baked into the environment, which Draft's sun shadow and Final's light sampling follow by themselves. `sunElevation` [25] (degrees,
+  −18 dusk to 90 overhead), `sunAzimuth` [35] (degrees about +y: 0 is +z, 90 is +x), `sunSize` [0.545] (degrees across),
+  `sunIntensity` [1], `sunDisc` [true] (the disc seen in the sky), `altitude` [0] (metres, up to 59 000), `air` [1] (the blue
+  scattering), `dust` [1] (haze and the glow at the horizon), `ozone` [1] (deep twilight blues), each 0 to 10, `groundAlbedo`
+  [[0.22, 0.21, 0.19]] (the lower half), `width` [512] × `height` [256] (the baked map). It takes the place of `hdri`; `intensity` and
+  `tint` work on it as on a map, and `"background": "env"` with `opaque` shows it. Its numbers but `groundAlbedo`, `width` and
+  `height` are keyable inside `sky` (`keys`, `drive`, `fx`), baked again in place on each frame they change: a sunset is
+  `"keys": { "sunElevation": [{ "t": 0, "v": 40 }, { "t": 6, "v": 2 }] }`.
+  ```json
+  "env": { "sky": { "sunElevation": 22, "sunAzimuth": 40, "air": 1, "dust": 1.2 }, "intensity": 1, "background": "env", "opaque": true }
+  ```
 - `env.view` is the view out of the windows: a picture the eye sees where the sky shows (through an opening or a `pane`), at the
   picture's own resolution, while the room is lit by the environment as before (nothing that lights reads it). Without one the sky
   map shows there, a 1k panorama blurred about 8 times through a window at 1080p. A photo of the street: `"view": { "image":
@@ -511,10 +560,10 @@ at 3 s, and moving the layer along the timeline moves its whole animation with i
   matte ([Which light reaches what](#which-light-reaches-what-tags-light-linking-and-shadow-linking), [What each kind of ray sees](#what-each-kind-of-ray-sees-visibility-holdout)).
 - `"portal": true` marks an opening the environment's light comes in through: the window or open door of a closed room. Give it a flat `plane` the size of the opening, standing in it (`{ "op": "plane", "size": [w, h] }` then `{ "op": "transform", "rot": [90, 0, 0] }` for a wall that faces ±z), placed at the opening's inner face. It is never drawn, casts nothing and does nothing without an environment. In Final most of the environment's light samples then aim through the scene's portals, so a room lit only through its window is clean much sooner; light that comes in elsewhere is still found. Up to 8 portals; leave them out of an open set (no ceiling or missing walls). A set built with the `room` op needs none: while the camera is inside that room its window openings are portals by themselves (doors are not), unless the scene has portal objects of its own (then only those count).
 - A material with `emission` lights the set in Final as a light: a screen, lit keys, an LED panel or a bulb is sampled directly, so the light it throws on what is near is clean at the usual samples (emission maps included: a screen lights the keyboard in its own colours). Glows share the light samples with the lights and the environment by how much each brings where it lands, so a small glow beside a sun costs the sun nothing. Not for a glow that is transparent, alpha-cut, translucent or subsurface, on a mesh with several materials, skinned or with shape keys, past the 16th glowing object or 65 536 glowing triangles, nor in a scene with a Grow Fill or a `reveal`: those glows still light the set, only noisier.
-- A material with `screen` shows a video or a layer of the same project on any object (a tablet, a TV, a billboard built with ops): `"screen": { "url": "/media/….mp4" }` or `{ "layer": "<item or channel id>" }` (an HTML clip live from its page with no bake, a video in step with the timeline, an image). The picture lies over the object's UVs as a map in `maps` does (give it `uvPlanar` with `fit`, or `uvBox`), and glows (`"shading": "screen"`, default) or is the surface's colour under the set's light (`"lit"`). `look: "monitor"` makes it a monitor: glass coat with soft reflections (`glass` [0.1], its roughness) over a near-black panel, blacks lifted by `blackLevel` [0.02]. `strength` [1] scales the glow; the material's `uvScale` / `uvOffset` / `uvRotation` place the picture on the uvs as they place its maps (a converted device's display keeps the window of its atlas the import wrote there, so put `screen` on that material or copy those three fields; outside 0..1 the picture's edge pixels stretch, it does not repeat); `fit` `cover` (default) / `contain` / `stretch`; a url video takes `offset` (seconds) and `loop` [true]; `resolution: [w, h]` lays an HTML page out at that size. The material's own fields (`base`, `roughness`, `coat`, …) still win. A glowing screen lights the set in Final as a light (see `emission` above), following the picture it shows; with `look: "monitor"` Draft gets a soft light from it too, in the picture's average colour (no shadows; `"light": false` leaves it out). A model's glowing screen (`model3d` `screens`) without that look lights, in Draft, what stands in front of it within about one and a half screen diagonals (a keyboard under a monitor). The canvas is the source's own size and is uploaded again only when the source shows another frame: a paused video or a still page never restarts Final. MP4/MOV only for video.
+- A material with `screen` shows a video or a layer of the same project on any object (a tablet, a TV, a billboard built with ops): `"screen": { "url": "/media/….mp4" }` or `{ "layer": "<item or channel id>" }` (an HTML clip live from its page with no bake, a video in step with the timeline, an image). The picture lies over the object's UVs as a map in `maps` does (give it `uvPlanar` with `fit`, or `uvBox`), and glows (`"shading": "screen"`, default) or is the surface's colour under the set's light (`"lit"`). `look: "monitor"` makes it a monitor: glass coat with soft reflections (`glass` [0.1], its roughness) over a near-black panel, blacks lifted by `blackLevel` [0.02]. `strength` [1] is how much light the screen throws (what it lights, its reflection in the desk and in mirrors); how bright its picture LOOKS is `brightness` [1, the page as it is; 0-4]. The camera sees a glowing screen's picture in the page's own colours, past the Scene's `exposure`, `view`, `look` contrast and saturation and its bloom, glare and halation (the lens's depth of field, motion blur, vignette and grain still apply, and the glass's reflections lie over it), so a page reads as it does in a browser at any `strength` and in any room: never tune `strength`, `exposure`, `view` or `bloom` to make a page look right, and focus the lens on the screen (`camera.focus`) when its text must be read. `filmed: true` sends the picture through the film as a light instead (a neon sign meant to bloom); the material's `uvScale` / `uvOffset` / `uvRotation` place the picture on the uvs as they place its maps (a converted device's display keeps the window of its atlas the import wrote there, so put `screen` on that material or copy those three fields; outside 0..1 the picture's edge pixels stretch, it does not repeat); `fit` `cover` (default) / `contain` / `stretch`; a url video takes `offset` (seconds) and `loop` [true]; `resolution: [w, h]` lays an HTML page out at that size. The material's own fields (`base`, `roughness`, `coat`, …) still win. A glowing screen lights the set in Final as a light (see `emission` above), following the picture it shows; with `look: "monitor"` Draft gets a soft light from it too, in the picture's average colour (no shadows; `"light": false` leaves it out). A model's glowing screen (`model3d` `screens`) without that look lights, in Draft, what stands in front of it within about one and a half screen diagonals (a keyboard under a monitor). The canvas is the source's own size and is uploaded again only when the source shows another frame: a paused video or a still page never restarts Final. MP4/MOV only for video.
 - A spot light with a `radius` is a disc of light that glossy surfaces reflect cleanly in Final (as an area light is), not only a soft shadow.
 - `layers2d` are flat pictures and words standing in the world: `kind: "image"` with `src` (a media url), or text (`text`, `fontPx` [160], `weight` [700], `font`, `color` [`#ffffff`]). `height` is in metres [0.2] (or give `width`; the other follows the picture), `at` and `rot` place it, `opacity` fades it. Objects in front hide it unless `ignoreDepth: true`. `receiveShadow: true` makes it a lit card that takes the set's shadows, and `castShadow: true` throws its shape's shadow. `screen: { "x", "y" }` (0..1 of the frame) pins it to the screen instead, with `height` then a fraction of the frame height [0.05]. `kind: "layer"` with `layer: "<item or channel id>"` stands a layer of the same project in the world as a card: an HTML clip (live, no bake), a video or an image, at its own aspect, hidden by what is in front and hiding what is behind, in Draft and Final; with `receiveShadow: true` it is lit by the set and traced in Final, without it it keeps its exact colours. Hide the source layer's channel to show it only in the world. In the editor only `kind: "layer"` cards reach the world. `"parent": "<object id>"` makes a card ride a scene object (`at` and `rot` an offset in its space), and `drive` and `fx` move it like an object's ([Motion design](#motion-design-one-clock-per-move)).
-- `sims` are simulations on the GPU (particles, smoke and fire, curves, and cloth, hair, sand and soft bodies; more solvers to come): a recipe such as `sparks_in_wind`, `pulse_explosion` or `cloth_drop_on_sphere`, or a whole `sim/1` graph of emitters, forces, fields, colliders and agent-written step snippets. They draw as lit objects, are traced in Final, and repeat exactly on every scrub and render. Everything about them is in sim.md (GreenLight Dash only). (The old `particles` field is gone and is ignored.)
+- `sims` are simulations on the GPU: particles, smoke and fire, curves, cloth, hair, grains and soft bodies (XPBD), rigid bodies and fracture, and water, sand, snow and goo (MPM). A recipe such as `sparks_in_wind`, `pulse_explosion` or `cloth_drop_on_sphere`, or a whole `sim/1` graph of emitters, forces, fields, colliders and agent-written step snippets. They draw as lit objects, are traced in Final, and repeat exactly on every scrub and render. Everything about them is in sim.md (GreenLight Dash only). `scene.particles` is not a field (validate warns `removed_field`): write `sims`.
 
 ### Materials
 
@@ -662,7 +711,7 @@ Three.js and Blender names do not work here: `emissive` is `emission`, `emissive
 - `emission` is the colour the surface gives off (black, the default, is none) and `emissionStrength` multiplies it. In Final a glowing
   surface is a real light: it lights what is around it, and the strength sets how much. A monitor in a dark room is about 1 to 2 (a
   night desk scene uses 1.2 for its screen and 2 for glowing mouse pads), a bulb or a neon tube that lights the room 8 to 15 (its bulb
-  is 12), a city picture seen through a window at night 0.3 to 0.5. Draft shows it glowing (with `rig.look.bloom`); of what glows, Draft
+  is 12), a city picture seen through a window at night 0.3 to 0.5. For a `screen` this is only the light it throws: its picture looks like the page at any strength (`brightness` and `filmed` in the `screen` bullet). An `emission` or `maps.emission` picture is filmed as a light, through the exposure and the look. Draft shows it glowing (with `rig.look.bloom`); of what glows, Draft
   lights the set only from the four brightest small parts (under about 20 cm across, no picture: a bulb in a lampshade, so the shade
   glows from inside), out to 15 times their radius (at least 40 cm) and without shadows, and not from a part shut in by an opaque object a few times its
   size (a bulb in a metal lamp head, a pad under keys): give such a lamp a `spot` or `point` light for its Draft light. A light inside its
@@ -672,6 +721,8 @@ Three.js and Blender names do not work here: `emissive` is `emission`, `emissive
 - `emission` may be a colour temperature, `"2700K"`: a black body's colour at that many kelvin (a filament 2700, a candle flame 1900, a cool LED 4000 to 5000), with luminance 1, so `emissionStrength` still sets how bright.
 - `maps.emission` is a picture that glows in its own colours (a screen's content): set `emission` to `#ffffff` so the picture is not
   tinted, and `base` dark so the screen is black where the picture is.
+- A page, a UI or text the viewer must read on a surface: use `screen` (`url` or `layer`), not `maps.emission`: a `screen` is drawn as
+  the picture itself, sharp and in its own colours.
 - A small glowing object needs many samples to light a room without speckles; for a lamp, put a `point` light inside the bulb as well
   and keep the bulb's own `emissionStrength` for how it looks.
 - A lamp shade that glows from the bulb inside is `translucency` (below) with a `point` light inside, not emission.
@@ -688,7 +739,7 @@ A material can be a pattern instead of pictures. It is baked into tileable maps 
 }
 ```
 
-- `pattern`: `noise`, `marble`, `wood`, `grid` (a cutting mat), `tiles`, `bricks`, `checker`, `dots`, `brushed` (metal), `scratches`, `cells` (flagstones; negative `relief` is hammered metal), `terrazzo`, `weave` (fabric), `concrete`, `veins` (a petal's or a leaf's veins, [below](#petals-leaves-flowers-and-stems)). Each looks right with nothing else set.
+- `pattern`: `noise`, `marble`, `wood`, `grid` (a cutting mat), `tiles`, `bricks`, `checker`, `dots`, `brushed` (metal), `scratches`, `cells` (flagstones; negative `relief` is hammered metal), `terrazzo`, `weave` (fabric), `concrete`, `veins` (a petal's or a leaf's veins, [Veins, below](#deforming-sculpting-and-organic-shapes)). Each looks right with nothing else set.
 - Shared: `colors` (a ramp: `'#hex'`, `[at, '#hex']`), `scale` (repeats per UV tile, made whole so it tiles), `roughness` (a number or `[min, max]`), `metalness` (a number, or `[main, accent]` for metal lines), `bump` [1], `seed`, `size` [512] (up to 2048 for close-ups), `emit` (the lines, grout or dots glow).
 - Pattern params: `noise { octaves, warp }`, `marble { veins, warp }`, `wood { rings, planks }`, `grid { divisions [5] fine lines per major cell, minor [0.12] their strength from 0 to 1, width [1], groove [0] }` (`scale` is major cells per UV tile), `tiles { grout, stagger, variation }`, `bricks { aspect, mortar }`, `dots { radius, relief (-1 holes) }`, `brushed { direction 'u' | 'v' }`, `scratches { count, length }`, `cells { border, relief }`, `terrazzo { density, chipSize }`, `weave { style 'plain' | 'twill' | 'basket' }`, `concrete { pores, aggregate }`, `veins { kind 'petal' | 'leaf', count, fork, width, wander, vary, contrast, bleed, net, along, blotch, angle, aspect, wear }`.
 - `wood` runs along u: the grain and each board are long in u, and `planks` stacks that many boards across v (`rings` growth rings across a board). So lay u along the length of a board, a shelf or a table top; `uvRotation: 90` on the material turns it. `brushed` with `direction: "u"` brushes along u.
@@ -852,7 +903,7 @@ Film it with the Camera layer at `[0.03, 0.22, 0.95]` looking at `[0, 0.12, 0]`,
     "panel": { "graph": { "preset": "motionBeam", "axis": "x", "width": 0.22, "speed": 0.4, "intensity": 6, "tint": 0.4 }, "coat": 0.3 },
     "bottle": { "graph": { "preset": "sweep", "mode": "sheen", "angle": 62, "start": 0.3, "duration": 1, "gap": 0.5, "intensity": 4, "sheenGlow": 0.4, "base": "#c8392b", "roughness": 0.5 }, "coat": 0.3 },
     "floor": { "base": "#0e0f12", "roughness": 0.1, "coat": 0.6 },
-    "glass": { "transmission": 1, "roughness": 0.02, "ior": 1.5, "thickness": 0.006 }
+    "glass": { "transmission": 1, "roughness": 0.02, "ior": 1.5 }
   },
   "objects": [
     { "id": "floor", "material": "floor", "graph": [{ "op": "plane", "size": [10, 10] }] },
@@ -903,8 +954,8 @@ Film it with the Camera layer at `[0.03, 0.22, 0.95]` looking at `[0, 0.12, 0]`,
 }
 ```
 
-- `iridescence` (0 to 1) is a thin film on the surface: soap, oil, coated glass, heat-tinted or coated metal. Its colour turns with the angle and with `iridescenceThickness` in nanometres (default 400; 200 to 800 shows colours, thicker turns pastel). `iridescenceIOR` is the film's own (default 1.33 soap water, 1.45 oil, 1.4 a lens coating). A pair `[min, max]` lays a soft swirl of thicknesses over the surface, so the colours run in bands (needs uvs). A soap bubble is `transmission: 1, ior: 1, roughness: 0, iridescence: 1` (both sides of a film are drawn by themselves, no `doubleSided` needed; it casts no shadow); a coated bottle is glass with `iridescence` 0.5 to 1. The rim of a bubble turns green, gold and magenta as in Cycles. In the editor, glass and bubbles in front of an empty, see-through background keep their reflections and rims when the layer is composited, in the preview, Draft and Final: what they reflect goes over the layers below as light.
-- `metal` makes a real metal from its complex index of refraction: `gold`, `silver`, `copper`, `aluminium`, `chrome`, `iron`, `titanium`, or `{ "n": [r, g, b], "k": [r, g, b] }` for any other (Blender's Metallic BSDF Physical Conductor numbers work as they are). It sets `metalness` 1 and the colour, so leave `base` out; `roughness`, `coat`, `iridescence` and maps work as usual. Its edges keep the metal's own colour, which a `base` colour on `metalness: 1` cannot.
+- `iridescence` (0 to 1) is a thin film on the surface: soap, oil, coated glass, heat-tinted or coated metal. Its colour turns with the angle and with `iridescenceThickness` in nanometres (default 400; 200 to 800 shows colours, thicker turns pastel). `iridescenceIOR` is the film's own (default 1.33 soap water, 1.45 oil, 1.4 a lens coating). A pair `[min, max]` lays a soft swirl of thicknesses over the surface, so the colours run in bands (needs uvs; `iridescenceSeed` [1] moves the swirl). A soap bubble is `transmission: 1, ior: 1, roughness: 0, iridescence: 1` (both sides of a film are drawn by themselves, no `doubleSided` needed; it casts no shadow); a coated bottle is glass with `iridescence` 0.5 to 1. The rim of a bubble turns green, gold and magenta as in Cycles. In the editor, glass and bubbles in front of an empty, see-through background keep their reflections and rims when the layer is composited, in the preview, Draft and Final: what they reflect goes over the layers below as light.
+- `metal` makes a real metal from its complex index of refraction: `gold`, `silver`, `copper`, `aluminium`, `chrome`, `iron`, `titanium`, or `{ "n": [r, g, b], "k": [r, g, b] }` for any other (or `metalN` and `metalK` beside it; Blender's Metallic BSDF Physical Conductor numbers work as they are). It sets `metalness` 1 and the colour, so leave `base` out; `roughness`, `coat`, `iridescence` and maps work as usual. Its edges keep the metal's own colour, which a `base` colour on `metalness: 1` cannot.
 - `anisotropy` (0 to 1) is brushed metal: highlights stretch across the brush lines. `brush: "linear"` (default) runs the lines along `brushAxis` in the object's own space (default `[1, 0, 0]`); `brush: "spun"` lays them in circles around `brushAxis` (default `[0, 1, 0]`), the turned look of a watch dial, a pan base or a speaker cap, whose highlight is a streak through the middle. `anisotropyRotation` turns the lines (degrees). 0.6 to 0.9 with `roughness` 0.15 to 0.3 reads as brushed.
 - `roundEdges` (metres) rounds a mesh's sharp edges at render time, in the shading only: CAD parts, boxes and extrusions catch a thin highlight along every edge as a product shot's bevelled ones do. 0.002 to 0.01 for objects of 10 to 30 cm; keep it under a third of the thinnest wall. Draft and Final both round them (Draft from the mesh's sharp edges worked out once when the scene builds, up to 200 000 triangles a mesh; past that Draft shows the edges sharp and `scene.warnings` says so), and only edges of the same object round; for a silhouette that is round too, model it with the `bevel` op. It costs Final time where such objects fill the frame (+50 to 70 % on a close product shot of such parts), so give it to the hero objects, not the room.
 - A `.blend` import carries Principled Thin Film (thickness and IOR) and a Metallic BSDF set to Physical Conductor (its n and k, as `metal`).
@@ -934,7 +985,12 @@ Film it with the Camera layer at `[0.03, 0.22, 0.95]` looking at `[0, 0.12, 0]`,
   costs a bake at build and nothing per frame. A `coat` stays glossy over it: lower `coat` on a dusty car.
 - `toon` is cel shading for motion design: `true` or `{ steps [3] bands of light, shade [0.35] the darkest band as a share of the colour,
   outline [true], outlineWidth [2] px, outlineColor ["#000000"] }`. The surface takes its light in hard bands of `base` and an outline
-  follows its silhouette and creases at a constant width on screen. Draft and Final draw it the same (cel shading is the raster's; in
+  follows its silhouette and creases at a constant width on screen. `ramp` gives the bands their own colours (`["#hex", …]` or
+  `[[at, "#hex"], …]`, `at` 0 deep shadow to 1 full light, up to 16 stops; `rampSmooth` [false] blends between them) and `shadowColor`
+  tints the darkest band. `specularSize` [0] (0.1 to 0.4) adds a hard-edged highlight disc (`specularSmooth` [0.02], `specularStrength`
+  [1], `specularColor` ["#ffffff"]); `rimStrength` [0] a Fresnel rim along the silhouette (`rimWidth` [0.35], `rimSmooth` [0.08],
+  `rimColor` ["#ffffff"], `rimLitOnly` [true]: on the lit side only); `pattern` ["none"] `"dots"`, `"hatch"` or `"lines"` breaks the
+  band edges into a halftone or an ink hatch on the screen (`patternScale` [8] px, `patternStrength` [0.35]). Draft and Final draw it the same (cel shading is the raster's; in
   Final the object still casts its traced shadow and bounces its colour onto the set). A light's shadow falls on it only on the side
   facing that light, read 1 cm off its surface (its bands already draw where it turns from the light, down to `shade` on the far side;
   its own shadow there laid stair-stepped dashes along the bands), and no ambient occlusion patches its bands. Other surface fields do not apply to it.
@@ -1009,6 +1065,320 @@ ones after it, and nothing before. Ops never change their inputs and give the sa
 
 `"bypass": true` on a node switches it off, and what fed it goes straight through. A graph the user edits in the editor is written back to these same fields, with every node given an `id` and an explicit `in`.
 
+## Lights in the scene
+
+`rig.scene.lights[]` are lights in metres, in the same space as the objects. Each has an `id` (unique: keys and the critique name it),
+a `type`, `color` (sRGB, or a colour temperature such as `"3200K"`) [`#ffffff`], `intensity` [1] and `castShadow` [true]. The `type` decides which other fields it reads, and a
+field of another type is ignored (the validator says so):
+
+| type | Where it is and where it points | Size and shape | `intensity` |
+|---|---|---|---|
+| `sun` | `dir` [[0.4, 1, 0.3]]: points FROM the set TOWARD the sun (any length). `[0, 1, 0]` noon overhead; y below 0 lights from underneath. Parallel rays everywhere. | `size` [1]: degrees across the sky; 0.5 the real sun (crisp shadows), 2 to 5 hazy. | Irradiance, Blender's Sun Strength: 1 to 4 daylight. |
+| `area` | `at` [[0, 2, 0]]: the panel's centre. `target` [[0, 0, 0]]: the point it faces. It lights only the side facing `target`. | `width`, `height` [1, 1] metres: `width` lies level (horizontal), `height` along the panel's up; `circular: true` makes it a disc `width` across; `spread` [180] degrees narrows its cone (a softbox grid). | The panel's radiance (light leaving it straight out), so its light is intensity × area: halve the width and double the intensity for the same light. A 0.5 m panel about 1 m from the subject: 3 to 10. Twice the distance needs four times the intensity. |
+| `spot` | `at` [[0, 2, 0]]: the lamp. `target` [[0, 0, 0]]: what it points at. | `angle` [30]: HALF the cone, degrees. `penumbra` [0.3]: soft edge 0 to 1. `radius` [0]: bulb size in metres (softer shadows). | Candela-like, falling off with distance squared: 1 to 5 for a lamp about 0.5 m away. |
+| `point` | `at` [[0, 2, 0]]: the bulb; it shines every way. | None: a point light has no size, so its shadows stay hard (`radius` does nothing on it). For a soft little lamp use a small `area` with `circular: true`, or a `spot` with `radius`. | As a spot. A candle flame: 0.1 to 0.3, warm (`#ffb35c`). |
+
+```json
+"lights": [
+  { "id": "key", "type": "area", "at": [-0.6, 0.7, 0.6], "target": [0, 0.12, 0], "width": 0.6, "height": 0.6, "intensity": 6 },
+  { "id": "rim", "type": "spot", "at": [0.5, 0.6, -0.7], "target": "@bottle", "angle": 20, "penumbra": 0.5, "intensity": 4 },
+  { "id": "sun", "type": "sun", "dir": [-0.5, 0.6, 0.4], "intensity": 2, "size": 1.5 }
+]
+```
+
+`at` and `target` take numbers or an object to follow (`"@bottle"`, below). A fifth type, `studio`, is a ready set of lights sized to a
+subject ([Studio presets](#studio-presets-type-studio)); `highlight` places a light by where its reflection must land
+([below](#put-the-highlight-where-you-want-it-highlight)).
+
+- Classic product light: a big `area` key 30 to 60 degrees to one side of the camera and a little above, aimed at the subject; a `spot`
+  or a strip `area` behind the subject for a rim on glass edges; the environment low (0.1 to 0.3) for fill. A key standing right behind
+  the camera lights the subject flat. The still's critique says where each light stands against the shot ([Check your work](#check-your-work)).
+- `spread` in degrees on an `area`. `intensity` is the light leaving the panel straight out, so a narrow spread keeps its power only if you raise it by `tan(h) / (tan(h) - h)`, where `h` is half the spread in radians. That is how a Blender light comes across.
+- `texture: { "image": url }` or `{ "pattern": "window" }` (or `blinds`, `leaves`) on a `spot` or `area`: the spot projects it, the
+  panel wears it. In Draft and Final alike a panel's picture lights each point with the part of it that point sees: the floor under a
+  stained-glass panel takes each pane's colour, and a glossy surface reflects the picture. `gobo: { "pattern" | "image", "distance", "scale", "rotation", "extent" }` on any light puts real geometry between it
+  and the set, out of frame, so the shadow carries the pattern.
+- `castShadow: false` on any light: it lights but throws no shadow.
+- Scene lights have no `parent` and no `keys`. To follow an object, name it: `"target": "@bottle"` aims a `spot` or `area` at the
+  middle of that object's box, `"at": "@bulb"` puts the light there, and `{ "object": "bottle", "point": [0, 0.12, 0] }` names a point
+  in the object's own space (its `at`, `rot` and `scale` apply). A light that names an object is placed again on every frame the object
+  moves (its keys, a body that falls), in Draft and Final.
+- A light inside a closed object (a bulb in its glass, a point light in a candle's flame) is shut in by it: give that object
+  `castShadow: false` so the light gets out. In Final a point light inside a closed glass jar does light the table through the glass.
+- A light itself is never drawn: a panel or a bulb inside the frame is invisible to the camera, in Draft and Final. Glossy surfaces
+  and glass reflect an `area` panel in Final (the long highlight of a strip softbox on a bottle). To see a lamp, model it and give it
+  `emission`.
+- Light from a glowing surface (a screen, a bulb's glass) is the material's `emission` ([glowing surfaces](#glowing-surfaces)).
+
+### Light in a lighting designer's units: `kelvin`, `power`, `lumens`, `ies`
+
+```json
+"lights": [
+  { "id": "bulb", "type": "point", "at": [0, 1.9, 0], "kelvin": 2700, "power": 60 },
+  { "id": "down", "type": "point", "at": [-0.8, 2.4, -0.3], "ies": "downlight", "color": "3000K", "lumens": 900 },
+  { "id": "wash", "type": "point", "at": [0, 2.4, -0.35], "ies": "/media/…/wallwasher.ies", "iesRotation": 90 },
+  { "id": "accent", "type": "spot", "at": [1, 2.4, 0], "target": "@vase", "ies": "spot", "intensity": 6 }
+]
+```
+
+- Colour temperature: `kelvin` (800 to 40 000) or `color: "3200K"`: the colour of a black body at that temperature, the same as
+  Blender's Blackbody, with luminance 1, so `intensity` still says how bright. 1900 a candle, 2700 a warm bulb, 3200 tungsten, 4000 a
+  cool white LED, 5600 daylight, 6500 overcast. With both, `color` tints the temperature's colour.
+- `power` in watts as Blender counts them (a Blender light's Power carries over as it is): a `point` or `spot` gives power / 4π per
+  steradian (`intensity` = power / 12.57), an `area` panel's radiance is power / (π × its area). `lumens` at Blender's 683 lumens per
+  watt. `intensity` wins when both are given; a `sun`'s `intensity` is already W/m². Real bulbs are dim at the default exposure (an 800 lm
+  bulb is intensity 0.09, where a lamp in a product shot is 1 to 5): raise `exposure` as a camera would indoors, or use `intensity`.
+- A Blender scene's lights carry over as they are: an area light's Power as `power`, a sun's Strength as `intensity`, the World's
+  strength as `env.intensity` and its mapping's turn as `env.rotation`. On a matte plate Final matches Cycles within 0.5 % for each (an
+  area light of 10 W at 2 m: 0.1875 against 0.1869). Where lit surfaces come out darker than the Blender frame, look for what differs
+  in the scene (the room, what stands between the light and the surface, the meshes), not at the lights.
+- `ies` on a `point` or `spot`: a luminaire's measured light by direction (an IES LM-63 file: its media URL, or `{ "text": "<the file>" }`),
+  or a preset: `downlight` (a recessed downlight's wide cone cut off at about 60°), `spot` (a tight 12° beam with a faint halo), `flood`
+  (a broad beam to about 50°), `wallwash` (thrown to one side, up a wall), `batwing` (an office troffer, brightest about 35° off the axis),
+  `pendant` (mostly down, a soft glow up). The profile is the beam: a spot's `angle`, `penumbra` and `radius` no longer apply. Its axis
+  (the profile's 0°) points at `target` (a `point` without one: straight down). `iesRotation` (degrees) turns it around the axis; aimed
+  straight down its C0 plane points along +z and C90 along -x, as in Blender, so a file lights the same here and there. Brightness:
+  `intensity` is the profile's brightest direction; `power` or `lumens` its whole light; none of them, a file's own candela (÷ 683). In
+  Draft and Final alike (measured against Cycles' IES texture: within 1 level of 255 in Final); its shadow is a point light's.
+
+### Put the highlight where you want it: `highlight`
+
+On a glossy object the bright reflection of a light (the highlight) moves when the light moves. Say where it must land and the light
+is placed for it: on the mirror direction from the surface there (the half-way vector between the camera and the light is the
+surface's normal), corrected for the material's roughness, `distance` metres out, aimed at the point. It works on `area`, `spot`,
+`point` and `sun` (a sun gets its `dir`), and replaces their `at` and `target`. It is solved again when the object or the camera moves.
+
+```json
+{ "id": "kicker", "type": "area", "width": 0.08, "height": 0.4, "intensity": 30,
+  "highlight": { "object": "bottle", "screen": [0.56, 0.38], "distance": 0.7 } }
+```
+
+- `screen`: where in the rendered picture, [u, v] from its top left (0 to 1), through the camera that films the Scene (the Camera layer, or
+  `scene.camera`; at the project's own frame: `videoSize`); the camera's ray there must meet the object. Or `point`: a point in the
+  object's own space; the surface point the camera sees nearest it is used.
+- `distance` [the light's own `at` distance, else 2.5 times the object's size]: further is a smaller, crisper highlight from the same
+  panel; a bigger panel (`width`, `height`) is a bigger, softer one. The panel stands where the solve puts it, and nothing moves it out
+  of the way: keep it smaller than its distance, and check with the still's `critique.lights` (each light's place as built, a studio
+  preset's parts too) that the floor or another object does not stand in front of it.
+- The surface's own normal there decides the reflection: pick a point on a smooth stretch, a few millimetres from a crease or a profile
+  corner (a lathe profile's points are creases unless smoothed), where a small error in the point moves the normal a lot.
+- The light's other fields work as on any light: its links (`lights`, `excludes`, `shadowFrom`, `shadowExcludes`) choose what it lights
+  and what shadows it, and do not change where it is put.
+- The highlight lands within a pixel or two of the point in Draft and Final. On a straight stretch of a round body (a cylinder's side)
+  the reflection is a line along it: the line passes through the point, and where along it the brightest part falls depends on the
+  panel's height. On a very rough surface (roughness 0.6 and up) it is a broad glow whose brightest pixel is less sharply placed.
+
+### Studio presets: `"type": "studio"`
+
+One entry stands for a whole studio set-up, sized to the subject and placed against the camera:
+
+```json
+{ "id": "studio", "type": "studio", "preset": "bottleStrip", "subject": "bottle", "intensity": 1 }
+```
+
+| `preset` | Lights (each an `area` light named `<id>.<part>`) | For |
+|---|---|---|
+| `threePoint` | `key` 45 degrees to one side and 30 up, `fill` big and soft on the other side (no shadow), `rim` strip behind | people, products, anything |
+| `topSoftbox` | `top` a big panel overhead, `fill` low and soft in front (no shadow) | table tops, food, cosmetics, packshots |
+| `rim` | `left` and `right` strips behind | outlines, dark subjects on dark |
+| `bottleStrip` | `left` and `right` tall narrow strips a little behind the sides, `top` soft overhead (no shadow) | glass and glossy bottles: a clean line down each edge |
+
+- `subject` (an object id) sizes and aims them: its box, children included. Left out: every object no wider than 2 m (floors and walls
+  left out). `side` ["left"] is the key's side as the camera sees it; `distance` [1] scales how far they stand; `intensity` [1] scales
+  them all (1 lights the subject as a studio would, whatever its size); `color` tints them; `castShadow`, `lights`, `excludes`,
+  `shadowFrom` and `shadowExcludes` go to every part.
+- Mix a preset with lights of your own (a `highlight` light for the one reflection that matters). The still's critique lists each part.
+
+### Which light reaches what: `tags`, light linking and shadow linking
+
+Give objects `tags` and let each light pick objects by them. The same rule holds in Draft and Final.
+
+```json
+"objects": [
+  { "id": "bottle", "tags": ["hero", "glass"], "material": "glass", "graph": [ … ] },
+  { "id": "backdrop", "tags": ["set"], "material": "paper", "graph": [ … ] }
+],
+"lights": [
+  { "id": "key", "type": "area", "at": [-0.6, 0.7, 0.6], "target": [0, 0.12, 0], "width": 0.5, "height": 0.5, "intensity": 8, "lights": ["hero"] },
+  { "id": "wash", "type": "spot", "at": [0, 1.4, 1.2], "target": [0, 0.3, -0.5], "angle": 30, "intensity": 6, "excludes": ["hero"] },
+  { "id": "sun", "type": "sun", "dir": [-0.4, 1, 0.3], "intensity": 2, "shadowExcludes": ["glass"] }
+]
+```
+
+- `lights: [tags]`: the light lights only objects with one of these tags. `excludes: [tags]`: it never lights objects with one of
+  them. Both may be given; `excludes` wins.
+- `shadowFrom: [tags]`: only objects with one of these tags throw this light's shadow (the light passes through the rest).
+  `shadowExcludes: [tags]`: objects with one of them throw no shadow from this light, while they still shadow every other light and
+  are still lit by this one. For an object that shadows no light at all, use the object's `castShadow: false`.
+- A child object has its parent's tags too. An object with no tags (and the Rig's backdrop, `model3d` layers and 3D Text, which take
+  no tags) is lit by a light only when that light has no `lights` list, and shadows it only when it has no `shadowFrom` list.
+- A tag no object has is an `unknown_ref` error from validate (`didYouMean` names the close ones). Up to 15 lights in a scene may
+  carry link fields; past that, validate warns and the extra lights light every object.
+- Glossy surfaces still reflect a linked `area` panel in Final, but only surfaces it lights do.
+
+### Light mix and light passes: `look.lightMix`, `render.lightPasses`
+
+`rig.look.lightMix` changes each light group's strength and colour over what the lights themselves say, without touching the scene:
+
+```json
+"look": { "lightMix": { "key": { "intensity": 1.4, "color": "#ffe2c4" }, "studio": { "intensity": 0.7 }, "environment": { "intensity": 0.5 }, "emission": { "intensity": 2 } } },
+"render": { "mode": "final", "spp": 32, "lightPasses": true }
+```
+
+- A group is a light's `group` (lights with one group change together), else the light's own `id`; a studio preset's parts are one
+  group named by the preset's `id`. `environment` is the environment's light (not the background the camera sees) and `emission` the
+  glowing surfaces; those two take `intensity` only, and `emission` changes only in Final with passes.
+- Draft takes the mix at once (the lights' own numbers). A Final without passes traces again with the mixed lights.
+- `"lightPasses": true` in `render`: Final keeps each light group's light apart while it traces (up to 6 groups, plus the environment and
+  the glows; lights past the sixth group stay as they are), so a new mix on a finished Final is mixed and denoised again in a moment
+  instead of traced again. The mixed picture is the traced one with each group's light reweighed: exact, the same as tracing the lights
+  at those strengths. It needs `denoise`, turns the radiance cache and the video light reuse off for that render (a room traces slower),
+  and takes 16 bytes a pixel for each group (33 MB a group at 1080p; a 4K frame keeps two light groups apart).
+- A light mix is also how to try a balance: render once, then change only `lightMix`.
+
+### What each kind of ray sees: `visibility`, `holdout`
+
+- `visibility` on an object: `{ "camera": false }` leaves it out of the picture while it still throws its shadow and shows in
+  reflections (a bounce card or a flag that must not be seen). `{ "reflection": false }` keeps it out of glossy reflections (chrome,
+  glass, lacquer) while it still bounces light onto matte surfaces; `{ "refraction": false }` keeps it from being seen through glass
+  and liquids; `{ "indirect": false }` takes its bounce light away and what matte surfaces bounce onto it. `{ "shadow": false }` is
+  `castShadow: false`. Each is true unless set false. `camera` and `shadow` work in Draft and Final; `reflection`, `refraction` and
+  `indirect` are Final's (Draft traces no such rays).
+- `"holdout": true` on an object cuts a hole in the picture where the camera sees it: those pixels are see-through (alpha 0), so the
+  layers below the Scene layer show there, whatever `env.background` and `env.opaque` say. The object still hides what is behind it,
+  still casts its shadow and still shows in reflections, in Draft and Final. Use it to leave room for footage or another layer that
+  must pass in front of part of the set. For a floor that shows only the shadows on it, use `catcher` (real 3D in footage (GreenLight Dash only)).
+
+```json
+"objects": [
+  { "id": "card", "tags": ["fill"], "visibility": { "camera": false, "reflection": false }, "material": "white", "graph": [{ "op": "plane", "size": [0.6, 0.8] }, { "op": "transform", "rot": [90, 0, 0] }] },
+  { "id": "doorway", "holdout": true, "graph": [{ "op": "box", "size": [0.9, 2, 0.05] }] }
+]
+```
+
+### Render passes and masks: `render.passes`, `look.passMix`, world mattes
+
+The Scene's picture split into passes, and masks of its objects, made by the Scene itself and used in the same project: no other
+render, no compositing program.
+
+- `rig.render.passes.show` makes the Scene layer show one pass instead of its picture, in the preview, stills and renders (render a
+  still or a video of the project to get the pass as media):
+  - light passes, Final only (Draft shows the picture): `"diffuse"` (light off matte surfaces and the diffuse part of every material,
+    direct and bounced), `"specular"` (reflections, refraction through glass, a clear coat, sheen), `"emission"` (what the camera sees
+    straight: glowing surfaces, lights and the background). The three add up to the picture and are filmed with its curve and `look`,
+    each through the denoiser.
+  - data passes, Draft and Final, shown as they are (no curve, no look, no denoiser): `"albedo"` (surface colour, unlit), `"normal"`
+    (world-space normal, rgb = n × 0.5 + 0.5), `"depth"` (white near, black far: `depthRange` [near, far] metres, else from the nearest thing in view to 2.5 times the focus distance; sharp, never
+    blurred by depth of field), `"objects"` and `"materials"` (an ID colour each; the same name is always the same colour), `"mask"`
+    (white where `mask.objects` / `mask.materials` are, black elsewhere, each edge pixel its share of coverage). In Final the IDs and
+    the mask come from the traced samples (a cryptomatte of two ranks a pixel), so they follow depth of field; Draft draws them with the
+    raster, 4x multisampled.
+- `rig.look.passMix` `{ "diffuse": 1, "specular": 1, "emission": 1 }` rebalances Final's light by kind after the trace, as a compositor
+  would from the passes: `{ "specular": 1.5 }` makes every reflection and refraction half as bright again, `{ "diffuse": 0.8 }` darkens
+  the matte light. It is exact (the passes add up to the picture), changing it later is one denoise, not a new trace; Draft is
+  unchanged. Unset or all 1 traces exactly as before.
+- **World matte**: any layer's `trackMatte` can take its matte from the Scene's objects instead of another layer: `"trackMatte":
+  { "sourceId": "<the Scene layer's item id>", "mode": "alpha", "objects": ["bottle"] }` (or `"materials": ["glass"]`, or both). The
+  layer then shows only where those objects are in the Scene's picture (an object covers everything under it), `"alphaInverted"`
+  everywhere but there, with soft edges where they cover part of a pixel, in Draft and Final (Final's from its samples). Unlike an
+  ordinary matte the Scene stays in the picture. Put the matted layer above the Scene layer: on a `cameraLocked` channel it lies flat
+  over the picture (a title, a picture on a screen); on an ordinary channel it stands in the 3D space and the Scene's depth still hides it
+  where the set is in front of its plane. Camera-locked layers and the Scene: the Scene's channel always stays at the top, under the camera
+  (the editor and every load put it there), so its place in `channels` says nothing; the Scene is drawn right above the frame's footage.
+  The background plate under the Scene is the `cameraLocked` footage and pictures (`video`, `image`) at the very bottom of the stack (only
+  `cameraLocked` channels under them, the Scene's own not counting), with whatever is stacked under them; every `cameraLocked` layer stacked
+  above the topmost of them (text, shape, HTML, a template, particles, a sequence, a picture with an ordinary channel under it) is drawn
+  over the Scene, in stacking order, matte or not. Up to three different object sets per project; each costs one flat draw a frame in
+  Draft and nothing to the trace but a few bytes a pixel. Use it for a title that passes behind a product (`alphaInverted` on the
+  product), a picture or video shown only on one object, or a grade on one object (a copy of the footage graded and matted to it).
+
+```json
+"render": { "mode": "final", "spp": 128, "passes": { "show": "mask", "mask": { "objects": ["bottle", "cap"] } } },
+"look": { "passMix": { "specular": 1.4 } }
+```
+
+## The Rig: backdrop, Rig lights and environment
+
+Next to `scene`, the Scene layer's `rig` carries a set of its own: a backdrop
+(`cyclorama`), Rig lights (`lights`) and an environment (`env`). They stand in the same world as the scene's objects, lit and traced like
+them. A Scene built in metres usually turns the first two off (`"cyclorama": { "shape": "none" }`, `"lights": []`) and lights itself
+with `scene.lights` and `scene.env`. The editor's Scene panel starts a new Scene from a Rig look (a backdrop and Rig lights), so users'
+projects often have them. Field help: `GET /api/world3d/help?path=rig.cyclorama.<field>` (`rig.lights`, `rig.env`).
+
+**Backdrop** (`rig.cyclorama`): `shape` `cyc` [default] | `floor` | `wall` | `corner` | `room` | `cylinder` | `dome` | `disc` | `none`;
+`width` [3.4], `height` [1.6], `depth` [1.8] in multiples of the composition height (0.01–100, so a backdrop keeps its size at any
+resolution: `width` 3.4 is 3.67 m at 1080p), `curve` [0.3] (0–1: the floor-to-wall sweep); `x`, `y`, `z` (px), `rotX`, `rotY`, `rotZ`
+(degrees), `scale` [1]. Its floor is at y = −0.42 × the composition height / 1000 metres (−0.454 m at 1080p) moved by `y`, centred on
+x = z = 0 (`wall` and `none` have none). A scene built around y = 0 (a table top, a product) is best with `shape: "none"` and a floor or
+backdrop object of its own. A model layer with `placeOnRigFloor` stands on this floor. `material`:
+
+- `mode: "solid"` [default]: `color` [`#d8d8d8`], `roughness`, `metalness`, `opacity` (a backdrop at 0.6 lets 40 % of the layers below
+  through), `receiveShadow` [true], `castShadow` [false].
+- `mode: "image"`: the picture `imageUrl` (a media url) on the backdrop, multiplied by `color` (leave it white for the picture's own
+  colours).
+- `mode: "shadowCatcher"`: transparent but for the shadows the set casts on it, in `shadowColor` [`#000000`] at `opacity` strength, over
+  the layers below (objects standing on footage or on the project background). `light` (0–4, default 0) also lays the objects' bounce
+  light and reflections (on a glossy floor, by `roughness`) onto the footage in Final, the floor traced in its `color` or wearing
+  `imageUrl` (a picture of the real floor laid across `width` × `depth`, x along `width`, the far edge at the picture's top); Draft shows
+  the shadow alone. The footage call (GreenLight Dash only) sets all of it.
+
+**Rig lights** (`rig.lights[]`, at most 8): with `"renderer": "world"`, `[]` means none; left out, the default key, fill and rim (no
+shadows) light the scene ([Turn it on](#turn-it-on-and-write-a-scene) for how `ambient` and `hemisphere` add to the environment). Each
+has `lid` (unique, `/^[A-Za-z0-9_-]{1,12}$/`: keys address the light by it), `type` `directional` | `point` | `spot` | `area` | `ambient`
+| `hemisphere`, `name`, `on`, `color` and `intensity` [1] (0–100: what the subject receives, as a directional light of that strength
+gives, whatever the distance; a `point` or `spot` then falls off around the subject). The others are placed around the rig origin: `az`
+(±360°, around the vertical, measured from +Z, the camera's side, toward +X: 0 is in front of the subject toward the camera, 90
+camera-right, −90 camera-left, 180 behind), `elev` [30] (±90°, above the horizon, 90 overhead) and `dist` [3000] (composition px, 1000 a
+metre). `spot` and `area` aim at `targetX`, `targetY`, `targetZ` (px, +Y up; default the origin).
+
+- `castShadow` [false]: the light casts; leave it off on a fill, or it throws a second shadow.
+- `shadowSoftness` [1] (0–10) is the light's size, and the subject stays as bright: a directional light is a sun 1 + 2 × softness
+  degrees wide, an area panel is scaled by it, a spot or point lamp grows with it and with its distance.
+- `spot`: `angle` [32] (1–89°), `penumbra` [0.5] (0–1). `point`: `range` [0], `decay` [2] (0–4). `area` (a softbox: soft wrap-around
+  light for products and glossy or metal surfaces): `width` × `height` [800 × 800 px], bigger at the same `intensity` only softer, and
+  `spread` [180] (1–180°: narrows the panel to a pool of light, like a grid on a soft box). `hemisphere`: `groundColor`.
+- `texture` (on `directional`, `spot`, `area`) is what the light shines through: `{ "pattern": "window" }` (or `blinds`, `leaves`), or an
+  image: `{ "url": "/media/…/gobo.png", "name": "gobo.png" }`. A spot projects it in colour; a directional or an area light casts the
+  pattern from something out of frame, and keeps that shadow even with `castShadow` off; an image on an area light sits on the panel, so
+  it shows in reflections in Final and tints the set in Draft.
+- Switch a light off with `on: false` or `intensity: 0`, never by removing it: its keys address it by `lid`.
+
+**Environment** (`rig.env`): `source` `preset` [default] | `custom` (an `.hdr` media `url`) | `none`; `preset` is one of the ten bundled
+HDRIs, served at `/hdr/<preset>.hdr` (what `scene.env.hdri` takes): `studio_small_03_1k` (Studio Small, the default),
+`st_fagans_interior_1k` (Interior), `empty_warehouse_01_1k` (Warehouse), `potsdamer_platz_1k` (Potsdamer Platz, a city square),
+`venice_sunset_1k` (Venice Sunset), `kiara_1_dawn_1k` (Dawn), `lebombo_1k` (Lebombo, an apartment), `rooitou_park_1k` (Park),
+`forest_slope_1k` (Forest Slope), `dikhololo_night_1k` (Night). `intensity` [1] (0–5), `exposure` [1] (0.05–8, multiplies the Scene's
+`exposure`), `rotY` (degrees: the world turns its environment about the vertical only; `rotX` and `rotZ` do nothing here), `tint`.
+`scene.env` merges over it.
+
+**Keys on the Rig** go in the Scene item's `propertyKeyframes` (`sc:` numeric, `scc:` colour; the prefix alone decides how a track
+interpolates):
+
+| Key | Range |
+| --- | --- |
+| `sc:<lid>:intensity` | 0–100 (every light type) |
+| `sc:<lid>:az` \| `elev` \| `dist` \| `shadowSoftness` | as the fields; not on `ambient` / `hemisphere` |
+| `sc:<lid>:angle` \| `penumbra` | `spot` only |
+| `sc:<lid>:width` \| `height` \| `spread` | `area` only (px; `spread` in degrees) |
+| `scc:<lid>:col` | the light's colour; on an `ambient` / `hemisphere` it tints the light it adds to the environment |
+| `sc:cyc:x` \| `y` \| `z` \| `rotX` \| `rotY` \| `rotZ` \| `scale` \| `opacity` | `opacity` is the shadow strength on a `shadowCatcher`, the backdrop's own opacity otherwise |
+| `scc:cyc:col` | the backdrop's colour (`shadowColor` on a `shadowCatcher`) |
+| `sc:env:intensity` \| `exposure` \| `rotX` \| `rotY` \| `rotZ` | the environment (a `scene.env.intensity` of its own follows the keyed one by the same ratio) |
+| `sc:g~<material>:<param>` | a number of a Scene material's animated texture graph (`edgeGlow`, `fractalNoise`, `motionBeam`, `sweep`, or a library name for one): the preset's range ([animated materials](#animated-materials-edge-glow-live-noise-beam-sweep-graph-presets)) |
+
+Not keyable (a track is dropped on load): a light's `type`, adding or removing a light, `castShadow`, the backdrop's `shape` and sizes,
+`env.source`, `preset` and `url`. A track naming a `lid` that is gone is dropped on the next save.
+
+The editor writes `item.rigLook` (`{ id, name, hash }`: the Rig look a user applied in the Scene panel, one of its 24 or a saved one;
+applying a look replaces the backdrop, the Rig lights and the environment and keeps `scene`, `renderer`, `render`, `look` and
+`exposure`) and `item.rigAi` (the Scene panel's AI video): do not write them. The world ignores `rig.shadows` (`mode`, `maxCasters`) and
+a light's `shadowBias`, `shadowNormalBias` and `shadowMapSize`, which belong to the old per-layer renderer (`"renderer": "classic"`, kept
+only so old projects open: never write it).
+
+## Shadows in Draft
+
+The editor's Draft preview leaves shadows out unless the Rig's `"render": { "draftShadows": true }` (next to `renderer` and `scene`) asks for them, because they are about half of what a big frame costs, so a shadow missing from the preview is not a fault. Renders and stills always have them, in Draft and Final. A light with a pattern keeps its shadow in the preview, because its shadow map draws the pattern. Without shadows the preview still lets the sky light a room only through its openings, and lights an open set's backdrop from what stands in front of it, as renders do: a room lit through its window is as bright in the preview as in a render, shadows aside.
+
 ## Motion design: one clock per move
 
 Motion that reads as designed is not many keyed tracks that happen to overlap. It is the way a Blender motion designer rigs a move with
@@ -1036,11 +1406,120 @@ whole move is two clock keys and a few remap points per channel.
   `target`, `fov`, `lens`, `focus`, `fStop`, `orthoHeight`, `shift`, `tilt`, `iso`, `shutter`; a card's `at` and `rot`. Not `visible`.
 - A list of terms combines them, and so do keys and a drive on the same field: **`scale` multiplies, every other field adds**. A logo that
   grows in on move 1 and shrinks out on move 2 is `"scale": [{ "clock": "move1", "map": [[0.8, 0, "appleOut"], [0.97, 1]] }, { "clock": "move2", "map": [[0, 1, "natural"], [0.24, 0]] }]`;
-  a spin keyed for an entry plus a spin driven by the move is `keys.rot` and `drive.rot` together.
+  a spin keyed for an entry plus a spin driven by the move is `keys.rot` and `drive.rot` together. A drive on a field with no keys
+  replaces the field's own value (an `at` or `rot` as written is not added): give the field one key, its base, for the drive to add to
+  (a camera whose `at` is driven with no `at` key starts at the world's origin).
 - A scale of 0 hides a thing completely (it stands at a millionth of its size); use `visible` keys to switch a thing off between moves.
 - Times: with the clock above (keys 56 frames apart at 30 fps, Glide Soft) u reaches 0.05 three frames after its first key, 0.24 at
   11, 0.30 at 15, 0.45 at 37, 0.58 at 50, 0.80 at 57, 0.86 at 59, 0.97 at 77 and 0.99 at 94; the last key's own time (56) is u 0.77.
   Keys 30 frames apart: 0.24 at 8, 0.30 at 11, 0.58 at 29, 0.86 at 35, 0.97 at 56. Put each event at the u where it should happen.
+
+### Audio clocks (`audio`)
+
+A clock can follow a song instead of keys: `scene.clocks.<name>.audio` makes its value the loudness of one band of the sound, frame by
+frame, the same in the preview, a still and a render (the envelope is measured from the file, never from what is playing).
+
+```json
+"clocks": {
+  "kick": { "audio": { "source": "timeline", "band": "bass", "threshold": 0.25, "attack": 0.01, "release": 0.15 } },
+  "hats": { "audio": { "clipId": "Song", "band": "treble", "mode": "onset", "release": 0.08 } }
+}
+```
+
+- Which sound: `source: "timeline"` (the timeline's earliest audio item, by start; the earliest video item when there is no audio),
+  `clipId` (a clip of the project by id or name: its earliest item), or `url` (a file: `/media/…` WAV, MP3, AAC, or a video's sound). A
+  clip or the timeline is read where its item plays, on the Scene's own clock (the timeline's less the Scene layer's start): a song
+  placed at 5 s on the timeline with its first 2 s trimmed off gives, 5 s after a Scene layer that starts at 0, the file's 2 s mark. A
+  video item's sound follows its speed. With `url` the file's 0 is the Scene's 0. `offset` (s) [0] delays the song further either way.
+  Every audio clock reads 0 before its sound starts, and past its end (the file's, or its item's) falls to 0 through its own `release`,
+  reaching 0 three releases after.
+- `band` ['bass']: `full`, `sub` (20–60 Hz), `bass` (60–250), `lowMid` (250–500), `mid` (500–2000), `highMid` (2–6 kHz), `treble`
+  (6–20 kHz), `speech` (150–3000 Hz: a voice's vowels and loud consonants, what a jaw follows), or `[minHz, maxHz]`. `mode` ['rms']: `rms` (loudness), `peak` (the loudest frequency in the band), `flux` / `onset` (how
+  much the band rises: hits and transients).
+- The value: the band's measure divided by its loudest moment in the song (`normalize` [true]), then `threshold` (0–0.99 [0]: below it
+  reads 0 and the rest is stretched back to 0–1; 0.2–0.4 keeps only the hits), times `gain` [1], then a follower: `attack` (s [0.01],
+  how fast it rises) and `release` (s [0.12], how fast it falls; 0.3–0.6 breathes). `smooth` (frames, 0–12 [0]) first averages the
+  measure over that many frames each side, and `fps` (10–240 [60]) is the envelope's rate.
+- Read it as any clock: a `drive` with its `map` on an object, the camera or a card, an expression's variable, a `filter` ƒx on it, or a
+  sim op's number (sim.md (GreenLight Dash only)). A pumping speaker cone, 1 to 1.25 times its size on each kick:
+  `"drive": { "scale": { "clock": "kick", "map": [[0, 1, "linear"], [1, 1.25]] } }`.
+- A sound that cannot be read is named in the render's `scene.warnings` and its clocks read 0; the rest of the Scene builds. The
+  standalone engine (`greenlight-motion-3d`) reads `clipId` and `"timeline"` from a project.json; a Rig or a bare scene names its file
+  with `url`.
+
+### A character speaks (`pose.speech`)
+
+A character speaks a voice clip: its mouth follows the words, the same in the preview, stills, Render Video and on the farm. The
+character is a `model3d` layer (`model3dConfig.pose`) or a Scene object with a `skeleton` (its `pose`; a jaw bone only, a Scene object
+has no morphs). The voice is an audio clock on the voice's clip; the mouth shapes are data on that clock, made once on this computer.
+
+```json
+"clocks": { "voice": { "audio": { "clipId": "Narration", "band": "speech", "attack": 0.02, "release": 0.07 } } }
+"pose":   { "speech": { "clock": "voice" } }
+```
+
+Then `POST /api/world3d/lipsync` `{ "moodboardId", "projectId", "clock": "voice", "apply": true, "expected_version": 7 }` hears the words
+and stores them as mouth shapes on the clock (`clocks.voice.lipsync`). One call writes all of it: add `"clip": "Narration"` (makes or
+re-points the clock) and `"speakers": ["<model layer item id>", "@<Scene object id>"]` (gives each `pose.speech`). Without `apply` it
+answers the project as it would store it (`data`); with `url` alone it answers just the track.
+
+- **What it hears with:** the on-device speech model (App settings ▸ Speech to text: word times; free, the sound never leaves the
+  computer), then each word's sounds from an English dictionary and letter rules, laid on the voice's loudness: a b, p or m is a
+  closed lip held over the voice's dip, a vowel opens on its loud moment, a pause of 0.25 s or more gets its rest keys, and a t, d, n, k
+  or g packed between its neighbours gets no key of its own. `words` (`[{ word, start, end }]`,
+  the file's seconds: captions you have) skips the speech model; `text` (the script) corrects misheard words and keeps their times;
+  `language` [auto]. With no speech model downloaded, or a language other than English, the mouth follows the sound alone (`route:
+  "audio"`: loudness peaks as vowels, their shape guessed from the spectrum) and `warnings` says so; `route: "words"` refuses instead.
+- **Answer:** `lipsync`, `route` (`words` | `audio`), `engine` (`local`, `given`, `none`), `language`, `keys`, `words`, `bytes`,
+  `warnings`, `applied`, `version`. About 9-12 keys a second of speech, 1.5 KB for 7 s. `layer` picks the Scene layer (item id) when
+  there are several.
+- **Without `lipsync`** the jaw follows the clock's loudness alone (`gate` [0.08] of it reads as shut): a mouth that opens and closes
+  with the voice, no shapes, and most b, p and m only half shut (2 of 14 closed on a measured clip, against 14 of 14 with the words
+  and 12 of 14 with `route: "audio"`, which needs no speech model): make the lipsync whenever you can. Make the lipsync again when the clip's file changes (`speech_stale` in the warnings). A clock's place is
+  its clip's item (start, trim, speed), so moving the item moves the mouth with it.
+- **How it moves** (measured against two speakers' faces and Audio2Face-3D on the same sound): each key is a bump of dominance, so
+  neighbouring sounds blend: vowels and b, p, m, f, v own the lips' shape, the tongue sounds only colour it; the jaw is its own channel
+  that opens on every syllable and comes back up between them (part way for a t or n, most of the way for a b, p or m), so it opens and
+  closes visibly on about 70 % of syllables, as Audio2Face-3D's does, without a new whole shape every frame; a b, p or m seals the lips on
+  a frame (ARKit's `mouthClose` meets `jawOpen`; a model without a lip-closing shape shuts its jaw instead); the face moves 45 ms ahead of
+  the sound; a short pause holds the jaw a little open, a long one rests it. With a lipsync the face lives too: blinks (about 22 a
+  minute, most as a pause begins, none within 0.9 s of another), small eye darts (ARKit `eyeLook*`, else the eye bones: LeftEye /
+  RightEye, CC_Base_L_Eye, eye.L), a brow lift and a little smile on
+  the stressed beats; all from the track, the same on every render, and each can be turned off (`blink`, `eyes`, `brows`, `cheeks`). A
+  model without those shapes shows none of it.
+- **The model's own names:** Oculus / Ready Player Me `viseme_sil … viseme_U` and VRChat `vrc.v_*` take each shape whole; VRM `aa ih ou
+  ee oh` and VRoid `Fcl_MTH_A…O` take the five vowels; ARKit `jawOpen` with `mouthFunnel`, `mouthPucker`, `mouthSmile_L`, … opens the
+  jaw and shapes the lips; one `jawOpen` / `mouthOpen` opens it (`jawOpen`, found or named in `morphs`, takes a talking share: 0.45 at
+  the widest vowel, as `jawOpen` 1 is the whole drop); a bone named jaw (Jaw, mixamorig:Jaw, CC_Base_JawRoot, DEF-jaw,
+  lowerJaw) turns about the model's side-to-side axis when no morph opens the mouth. A still with `inspect` answers
+  `scene.poses["<id>"].mouth`: `{ set, jaw, jawTurns, head, morphs, brows, blink, eyes, cheeks }` (with a `morphs` map, set `custom` and
+  its names; `blink` the lids it blinks, `eyes` whether it has the eyeLook shapes); a model
+  with none of these warns `speech_no_mouth`.
+- **A character from a `.blend`** speaks as a model layer: `POST /api/blender/projects/to-glea` makes its GLB with the shape keys as
+  morphs and the armature as a skin. The Scene import (`to-world`) bakes shape keys and the armature into still meshes, so nothing there
+  can speak.
+- Speech adds to what the pose's morphs and bones set (keys stay), on top of clips. With motion blur on, a speaking face counts as
+  moving while its lipsync changes it, blinks and darts included (a long pause with no blink renders sharp: 4-14 % of the frames of the
+  measured clips); without a lipsync, or on a clock with a `url`, the whole voice counts as moving.
+
+| `speech` field | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `clock` | a clock's name | required | The Scene clock that plays the voice. |
+| `amount` | `0–2` | `1` | How wide the mouth opens (0.6 a murmur, 1.3 a shout). Keyable. |
+| `emphasis` | `0–3` | `1` | A slight nod of the head (1.2° at 1, down and back over about 0.6 s), a brow lift (`browInnerUp`, `browOuterUp_*`) and a little smile (`mouthSmile_*`, `cheekSquint_*`) on the stressed beats: each phrase's first vowel and a clearly louder vowel, at most one in 0.8 s. 0 none; 2 for an animated speaker. Keyable. |
+| `blink` / `eyes` | bool | `true` / `true` | With a lipsync: blinks (`eyeBlink_L/R`, or a blink morph) and eye darts (ARKit `eyeLook*`); `false` turns each off. |
+| `brows` / `cheeks` | bool | `true` / `true` | The brow lift / the smile and cheek on the stressed beats; `false` turns each off (the nod stays: `head: false` stops it). |
+| `jaw` | `"auto"` \| bone name \| `false` | `"auto"` | A named bone turns even when morphs open the mouth; `false` never. |
+| `jawAngle` | degrees `0–45` | `18` | The jaw bone's turn at a full opening. |
+| `jawAxis` / `forward` | `[x, y, z]` | the model's side axis / `[0, 0, 1]` | The jaw's turn axis in its own frame; the model's front in the file. |
+| `head` | `"auto"` \| bone name \| `false` | `"auto"` | The bone the nod turns. |
+| `morphs` | `{ "<shape or open>": "<morph>" }` \| `false` | found by name | The model's own morph per shape (`open`, `sil`, `PP`, `FF`, `TH`, `DD`, `kk`, `CH`, `SS`, `nn`, `RR`, `aa`, `E`, `I`, `O`, `U`); `false`: the jaw alone. |
+| `gate` | `0–0.9` | `0.08` | Without a lipsync: the loudness under which the mouth stays shut. |
+| `mesh` / `on` | node name / bool | every mesh / `true` | Only this mesh's morphs; `false` leaves the mouth to the pose. |
+
+`lipsync` (written by the route, read as it is): `{ "v": 1, "route", "lang", "source": { "duration", "sha1", "file" }, "words":
+[[start, end, word]], "keys": [[t, shape, open]] }`, the file's seconds, one key per sound (a closed lip two: its hold), `open` the jaw
+0..1. Check a still at a closed lip and an open vowel: the voice item's start plus the word's time in `lipsync.words`.
 
 ### Expressions (a driver's scripted expression)
 
@@ -1107,8 +1586,10 @@ leans toward `up` [[0, 1, 0]]; `bank` (degrees, keyable and drivable) rolls it a
 4. **Entries already moving at frame 0.** Key an entry from before 0 (`t` -0.333): the first frame is mid-move, not a start from rest.
 5. **Nothing at rest is dead still.** A resting logo turns slowly and constantly: a second clock keyed linear over the whole shot
    (`{ "keys": [{ "t": 0, "v": 0, "ease": "linear" }, { "t": 12, "v": 1 }] }`) driving a few degrees a second, added to its other turns.
-6. **Things ride things.** A title rides its logo (`worldParent`), a card its object (`parent`), an object its group (`parent`): one
-   move on the parent, nothing copied.
+6. **Things ride things.** A title rides its logo (`worldParent`), a card its object (`parent`), an object its group (`parent`: `at` in
+   the group's space, its own keys only its own motion, a `scale` key its size ratio), a sim its container (`transform.parent`,
+   sim.md (GreenLight Dash only)): one move on the parent, nothing copied. A part placed once, or carried by a copy of the
+   group's keys, slides against the rest when the group turns.
 7. **Motion blur on** (`"motionBlurEnabled": true`, a 180 degree shutter is Blender's 0.5 frame): drives, ƒx and paths blur like keys.
 
 ### A worked example
@@ -1186,6 +1667,7 @@ the middle of a graph does not chain from the node above it: build the parts, th
 
 - `box { size [1], segments [1], bevel [0], bevelSegments [4] }`: `size` is one number (a cube) or `[x, y, z]`, and so is `segments`. `bevel` is the rounding radius, real rounded edges and corners, too big is clamped. `bevelSegments` counts around a 90-degree edge and rounds up to even; 1 is a flat chamfer. Its own uvs are for patterns: a picture (`maps.base`) comes out upside down on its front and back and turned a quarter on the other four faces; for a picture use `decal`, `uvTriplanar`, or `uvPlanar` with the flips given there.
 - `sphere { radius [0.5], segments [32], rings [16] }`.
+- `quadSphere { radius [0.5], segments [16] }`: spherified cube (all-quad topology with uniform cell sizes and no UV pinching at the poles). `segments` is subdivisions per cube face.
 - `cylinder { radiusTop [0.5], radiusBottom [0.5], height [1], radial [32], bevel [0], bevelSegments [4], caps [true] }`: `bevel` rounds both rims.
 - `cone { radius [0.5], height [1], radial [32], bevel [0], bevelSegments [4] }`.
 - `torus { radius [0.5], tube [0.15], radial [16], tubular [48] }`: lies flat around Y. `radial` goes round the tube, `tubular` round the ring.
@@ -1195,7 +1677,7 @@ the middle of a graph does not chain from the node above it: build the parts, th
   - `polygon`: `[[x, y], ...]`, with `holes: [[[x, y], ...], ...]`.
   - `shape`: `{ outer, holes }`, `{ rect: [w, h], radius }` or `{ circle: r }`.
   - `svg`: a path `d` string or a whole `<svg>`. M L H V C S Q T A Z, absolute and relative, holes from nesting. `size` fits the longer side to that many metres, `center` [true], `flipY` [true].
-- `tube { path **required**, radius [0.02], radial [12], closed [false], tension [0.5], segments [auto], caps [true] }`: Blender's curve with bevel depth. `path` is `[[x, y, z], ...]`, a spline through those points. `tension` 0 is the straight polyline.
+- `tube { path **required**, radius [0.02], radial [12], closed [false], tension [0.5], segments [auto], caps [true], miterScale [1] }`: Blender's curve with bevel depth. `path` is `[[x, y, z], ...]`, a spline through those points. `tension` 0 is the straight polyline; `miterScale` > 1 prevents cross-section pinching at sharp bends.
 - `text { text **required**, size [0.2], depth [0.05], bevel [0], bevelSegments [3], curveSegments [6], align ['center'] }`: Droid Sans Bold. `size` is about the capital height. Letters stand on y = 0 and run along +X. `align` is left, center or right.
 
 ### Sheets and points
@@ -1250,6 +1732,15 @@ Sheets lie flat on XZ facing +Y, unlike three's upright plane. Point sources mak
 
 Meshes, points and instances are different kinds of output. A modifier needs a mesh, and says so if it gets something else.
 
+### Gaussian Splat ops
+
+- `splat { source, data, upright [true], maxCount }`: loads a preloaded `.ply`, `.splat`, or `.spz` Gaussian splat cloud (or raw `data`) into the graph so downstream splat ops can trim, recolor, transform, reveal, or merge it. A file is stood upright on load, as every capture is (training writes Y down); `upright: false` keeps the file's own axes, for one already Y up. Raw `data` is taken as it is. `maxCount` keeps every n-th splat.
+- `splatCrop { min, max, box, sphere, center, size, invert [false], feather [0] }`: crops a splat cloud to a box (`min`/`max`, `box`, or `center`+`size`) or `sphere` (`[x, y, z, r]` or `{ center, radius }`), optionally inverting the mask or softening the edge with `feather`.
+- `splatTransform { at [[0, 0, 0]], rot [[0, 0, 0]], scale [1] }`: translates, rotates (Euler XYZ degrees), and scales splat positions and ellipsoids in local space; a scale of `[x, y, z]` stretches along those axes whatever way each blob is turned, and spherical harmonics bands 1 to 3 turn with the rotation (a non-uniform scale is no turn: they follow its rotation).
+- `splatTint { color [[1, 1, 1]], exposure [0], saturation [1], contrast [1], hue [0] }`: color-grades splat DC and spherical harmonics (`exposure` in EV stops, `hue` in degrees).
+- `splatOpacity { opacity [1], scale [1], cull [0.01], gamma [1] }`: multiplies splat opacity, applies optional `gamma`, and drops splats below `cull`.
+- `splatReveal { progress [1], mode ['radial'], origin [[0, 0, 0]], axis [[0, 1, 0]], feather [0.15], scalePop [1], seed [0] }`: animated reveal (`'radial'`, `'plane'`, `'height'`, or `'random'`) fading and popping splats in over `progress` 0..1.
+
 ### Harder shapes
 
 - `sdf { shapes **required**, blend [0.1], resolution [64], voxel }`: solids that melt into each other like clay. A source. Each shape is `{ type, at, rot, ... }`, where `rot` is degrees, as on objects:
@@ -1270,9 +1761,17 @@ Meshes, points and instances are different kinds of output. A modifier needs a m
   Each shell gets its own air. `pin` (`box`, `sphere` or `mask`) holds points still. Normals come out smooth.
 - `drape { steps [150], thickness [0.004], friction [0.6], floor, pin, gravity, stretch [0], bend [0.002], resolution [64] }` with `in: [cloth, collider, ...]`: the first input falls onto the rest and settles: a tablecloth, a throw over a chair, a sheet over a statue. The cloth needs vertices (`grid` with 48 to 96 segments). `floor` is a height it cannot pass. Inputs from `@object` arrive in that object's own space, so give the cloth the same placement or line them up with `transform`. The cloth does not collide with itself, and colliders thinner than two grid cells need a higher `resolution`.
 - `project { direction [[0, -1, 0]], offset [0], from [0] }` with `in: [what, onto]`: lays a mesh on another, like shrinkwrap. Each point drops to the first surface along `direction`, and points that miss go, unless `keep: true`. `offset` keeps it clear of the surface and `from` starts the ray further back.
-- `ribbon { path **required**, width [0.1], twist [0], taper [1], closed, tension, segments }`: a flat strip along a path. A source. Give its material `doubleSided: true`.
+- `ribbon { path **required**, width [0.1], twist [0], taper [1], closed [false], tension [0.5], segments [auto], miterScale [1] }`: a flat strip along a path. A source. Give its material `doubleSided: true`; `miterScale` > 1 expands sharp bends.
 - `wrangle { code **required**, seed }`: runs on every point. `P`, `N` and `uv` are arrays to change in place, with `i`, `count` and `noise(x, y, z)` to hand: `"P[1] += noise(P[0] * 4, 0, P[2] * 4) * 0.1"`.
 - `deletePoints { box | sphere | mask }`: takes points away, and every triangle using one. `box` is `{ min, max }`, `sphere` is `[x, y, z, radius]`, and `mask` is an expression over `P`, `N`, `uv` and `noise` that is above 0.5 for the points to go.
+- `parts { by ['loose'], keep, drop, box, boxMode ['center'], center [false], ground [false], weldTolerance [1e-5] }`: cuts a mesh into its parts and keeps some of them. `by` is `'loose'` (pieces joined by shared points), `'material'` (material slots, named by their regions), `'object'` (the objects an import was made of: an import's own `parts`, below) or `'both'` (loose pieces within each material, or within each object of an import). `keep` and `drop` take a part's index, its name, its material's or object's name, a substring of one, a glob (`'petal*'`) or a list of these; `box` (`{ min, max }`, metres) keeps the parts whose middle is in it (`boxMode: 'center'`), that lie wholly inside it (`'inside'`) or that touch it (`'overlap'`). They run keep, then box, then drop. `center` moves the kept parts so their middle in x and z is on the origin (their height stays); `ground` puts their lowest point at y = 0. Points within `weldTolerance` metres join; `0` joins only triangles that share a point of the mesh, so parts that merely touch come apart. Slots, vertex groups, colours, shape keys and the uv seams and pins marked before it come along, moved with the parts.
+  - Inspect lists what it found on the object (`parts`, while `parts` is the graph's last node): `count`, `kept`, `totalTriangles`, `keptTriangles`, `moved` (what `center` and `ground` moved it by) and the kept parts then the largest, at most 50 (`more` counts the rest), each with `index`, `name`, `materials` (all it uses, most triangles first), `object`, `triangles`, `bbox`, `size`, `center` and `kept`. A pick that keeps nothing fails, naming the 50 largest parts.
+  - **An import, with no Blender step:** a `model` (.glb/.gltf) or a converted .blend object (`mesh`) takes the same fields as its own `parts`, cut once as it loads (an import without `parts` loads and is shared as before). A model's parts by `'object'` are its glTF nodes and by `'material'` its materials, by their names; its loose pieces stay within one node. A converted .blend is already one object per Blender object and material, so cut it `by: 'loose'`, its parts named after the object. Parts are found where the import stands before its `at`, `rot` and `scale` (a .blend object at its `matrix`, a model's nodes as the file places them), so a `box` reads in the metres inspect shows. `center` and `ground` put the kept part on the object's origin: a model's `at`; a .blend object's own origin (its `matrix`'s translation), which `at` moves it from as for any import. Copies of one .blend mesh (`placements`) share one cut, made in the mesh's own space, each copy's part centred on its own origin. A model keeps its materials, textures, skin and clips; a dropped mesh's node stays, empty. Not for an import that changes as it plays (`bent`, `remade`, `grains`, `flock`), nor `center` / `ground` on one with baked motion. A graph cannot cut an import (`@id` of a `model` or `mesh` object holds no mesh).
+    ```json
+    { "id": "rose", "name": "Bouquet", "material": "petal", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.4,0.9,0, 1], "mesh": { "url": "/media/…/geometry.bin", "position": [0, 56532], "index": [56532, 98304], "indexType": "uint32" },
+      "parts": { "keep": 2, "center": true, "ground": true } }
+    { "id": "lens", "model": "/media/…/camera.glb", "at": [0.3, 0, 0], "parts": { "by": "object", "keep": ["Lens*", "Focus ring"] } }
+    ```
 - `assign { material [1], name, box | sphere | mask | region | facing | group }`: gives picked triangles another material. Name them on the object: `"materials": ["paint", "chrome"]`, where the number is the place in that list. `name` makes the slot a named region that later nodes pick with `region` (a new name with no `material` takes the next free slot). Every op carries the slots on: ops that keep or split triangles exactly, and ops that build a new surface (`boolean`, `remesh`, `softUnion`, `decimate`, `wireframe`) by nearest surface. A slot past the object's `materials` list wears the object's own `material`.
 
 ### Editing a mesh, UVs and decals
@@ -1287,6 +1786,9 @@ Edits work on the faces of a mesh you already have, as nodes, so the whole histo
 - `bridge { segments [1], twist [0], material, name, pick }`: joins two open loops with a band. With a pick, the picked faces go first and the holes they leave are joined (two facing panels make a tunnel); without, the mesh's own two open loops. Unequal loops zip with triangles.
 - `weld { distance [0.0001] }`: merges points closer than that, drops collapsed and doubled triangles. Closes cracks between parts.
 - `fillHoles { sides [0], material }`: caps open loops of up to `sides` edges (0 any), flat in their own plane.
+- `loopCircle { radius, flatten [true], influence [1], axis, angle [30], pick }`: rounds an open boundary or picked region's border loop into a regular circle in its best-fit plane (Blender LoopTools Circle).
+- `loopSpace { influence [1], angle [30], pick }`: redistributes points along an open boundary or picked region's border loop at equal arc-length intervals (Blender LoopTools Space).
+- `loopFlatten { axis, influence [1], angle [30], pick }`: flattens an open boundary or picked region's border loop onto its best-fit plane or the plane across `axis` (Blender LoopTools Flatten).
 - `recalcNormals { angle [30], inside [false] }`: turns every face the same way as its neighbours and every part outward. For imported or scripted meshes that shade black in patches.
 - `setNormals { mode ['smooth'], direction, center, axis, pick }`: hand-set normals on the picked faces (all if none): `smooth` (no hard edges), `flat`, `direction` (foliage cards facing up), `outward` from `center` (a soft bush), `cylinder` (away from the `axis` through `center`). Later ops keep them where the surface stays (moves, mirrors, booleans, unwraps, decals, edits elsewhere); ops that reshape it (`smooth`, `subdivide`, `bevel`, `remesh`) work them out again.
 - `vertexGroup { name **required**, weight [1], mode ['set'], falloff, pick }`: a named weight per point, 0 to 1, stored as `mesh['group:<name>']` (a Float32Array per vertex). `box`/`sphere` give 1 inside (`falloff: 'linear' | 'smooth'` fades a sphere to its edge), a `mask` its own value (`"P[1] * 2"`), the face picks keep their points. `mode`: set, replace, add, subtract, max, multiply. Ops that take a `group` read it; groups ride through every op, interpolated on new points.
@@ -1583,249 +2085,6 @@ PointSet = { count, P: Float32Array, N: Float32Array, pscale: Float32Array, orie
 
 In the editor, `attrib`, `script` and string masks run in an isolated evaluator: an opaque-origin frame with no network, no storage and no way to see the page, stopped after 20 seconds. They can compute anything and reach nothing, so they cannot fetch, and everything they need arrives through `input`, `ops` and `ctx`.
 
-## Lights in the scene
-
-`rig.scene.lights[]` are lights in metres, in the same space as the objects. Each has an `id` (unique: keys and the critique name it),
-a `type`, `color` (sRGB, or a colour temperature such as `"3200K"`) [`#ffffff`], `intensity` [1] and `castShadow` [true]. The `type` decides which other fields it reads, and a
-field of another type is ignored (the validator says so):
-
-| type | Where it is and where it points | Size and shape | `intensity` |
-|---|---|---|---|
-| `sun` | `dir` [[0.4, 1, 0.3]]: points FROM the set TOWARD the sun (any length). `[0, 1, 0]` noon overhead; y below 0 lights from underneath. Parallel rays everywhere. | `size` [1]: degrees across the sky; 0.5 the real sun (crisp shadows), 2 to 5 hazy. | Irradiance, Blender's Sun Strength: 1 to 4 daylight. |
-| `area` | `at` [[0, 2, 0]]: the panel's centre. `target` [[0, 0, 0]]: the point it faces. It lights only the side facing `target`. | `width`, `height` [1, 1] metres: `width` lies level (horizontal), `height` along the panel's up; `circular: true` makes it a disc `width` across; `spread` [180] degrees narrows its cone (a softbox grid). | The panel's radiance (light leaving it straight out), so its light is intensity × area: halve the width and double the intensity for the same light. A 0.5 m panel about 1 m from the subject: 3 to 10. Twice the distance needs four times the intensity. |
-| `spot` | `at` [[0, 2, 0]]: the lamp. `target` [[0, 0, 0]]: what it points at. | `angle` [30]: HALF the cone, degrees. `penumbra` [0.3]: soft edge 0 to 1. `radius` [0]: bulb size in metres (softer shadows). | Candela-like, falling off with distance squared: 1 to 5 for a lamp about 0.5 m away. |
-| `point` | `at` [[0, 2, 0]]: the bulb; it shines every way. | None: a point light has no size, so its shadows stay hard (`radius` does nothing on it). For a soft little lamp use a small `area` with `circular: true`, or a `spot` with `radius`. | As a spot. A candle flame: 0.1 to 0.3, warm (`#ffb35c`). |
-
-```json
-"lights": [
-  { "id": "key", "type": "area", "at": [-0.6, 0.7, 0.6], "target": [0, 0.12, 0], "width": 0.6, "height": 0.6, "intensity": 6 },
-  { "id": "rim", "type": "spot", "at": [0.5, 0.6, -0.7], "target": "@bottle", "angle": 20, "penumbra": 0.5, "intensity": 4 },
-  { "id": "sun", "type": "sun", "dir": [-0.5, 0.6, 0.4], "intensity": 2, "size": 1.5 }
-]
-```
-
-`at` and `target` take numbers or an object to follow (`"@bottle"`, below). A fifth type, `studio`, is a ready set of lights sized to a
-subject ([Studio presets](#studio-presets-type-studio)); `highlight` places a light by where its reflection must land
-([below](#put-the-highlight-where-you-want-it-highlight)).
-
-- Classic product light: a big `area` key 30 to 60 degrees to one side of the camera and a little above, aimed at the subject; a `spot`
-  or a strip `area` behind the subject for a rim on glass edges; the environment low (0.1 to 0.3) for fill. A key standing right behind
-  the camera lights the subject flat. The still's critique says where each light stands against the shot ([Check your work](#check-your-work)).
-- `spread` in degrees on an `area`. `intensity` is the light leaving the panel straight out, so a narrow spread keeps its power only if you raise it by `tan(h) / (tan(h) - h)`, where `h` is half the spread in radians. That is how a Blender light comes across.
-- `texture: { "image": url }` or `{ "pattern": "window" }` (or `blinds`, `leaves`) on a `spot` or `area`: the spot projects it, the
-  panel wears it. In Draft and Final alike a panel's picture lights each point with the part of it that point sees: the floor under a
-  stained-glass panel takes each pane's colour, and a glossy surface reflects the picture. `gobo: { "pattern" | "image", "distance", "scale", "rotation", "extent" }` on any light puts real geometry between it
-  and the set, out of frame, so the shadow carries the pattern.
-- `castShadow: false` on any light: it lights but throws no shadow.
-- Scene lights have no `parent` and no `keys`. To follow an object, name it: `"target": "@bottle"` aims a `spot` or `area` at the
-  middle of that object's box, `"at": "@bulb"` puts the light there, and `{ "object": "bottle", "point": [0, 0.12, 0] }` names a point
-  in the object's own space (its `at`, `rot` and `scale` apply). A light that names an object is placed again on every frame the object
-  moves (its keys, a body that falls), in Draft and Final.
-- A light inside a closed object (a bulb in its glass, a point light in a candle's flame) is shut in by it: give that object
-  `castShadow: false` so the light gets out. In Final a point light inside a closed glass jar does light the table through the glass.
-- A light itself is never drawn: a panel or a bulb inside the frame is invisible to the camera, in Draft and Final. Glossy surfaces
-  and glass reflect an `area` panel in Final (the long highlight of a strip softbox on a bottle). To see a lamp, model it and give it
-  `emission`.
-- Light from a glowing surface (a screen, a bulb's glass) is the material's `emission` ([glowing surfaces](#glowing-surfaces)).
-
-### Light in a lighting designer's units: `kelvin`, `power`, `lumens`, `ies`
-
-```json
-"lights": [
-  { "id": "bulb", "type": "point", "at": [0, 1.9, 0], "kelvin": 2700, "power": 60 },
-  { "id": "down", "type": "point", "at": [-0.8, 2.4, -0.3], "ies": "downlight", "color": "3000K", "lumens": 900 },
-  { "id": "wash", "type": "point", "at": [0, 2.4, -0.35], "ies": "/media/…/wallwasher.ies", "iesRotation": 90 },
-  { "id": "accent", "type": "spot", "at": [1, 2.4, 0], "target": "@vase", "ies": "spot", "intensity": 6 }
-]
-```
-
-- Colour temperature: `kelvin` (800 to 40 000) or `color: "3200K"`: the colour of a black body at that temperature, the same as
-  Blender's Blackbody, with luminance 1, so `intensity` still says how bright. 1900 a candle, 2700 a warm bulb, 3200 tungsten, 4000 a
-  cool white LED, 5600 daylight, 6500 overcast. With both, `color` tints the temperature's colour.
-- `power` in watts as Blender counts them (a Blender light's Power carries over as it is): a `point` or `spot` gives power / 4π per
-  steradian (`intensity` = power / 12.57), an `area` panel's radiance is power / (π × its area). `lumens` at Blender's 683 lumens per
-  watt. `intensity` wins when both are given; a `sun`'s `intensity` is already W/m². Real bulbs are dim at the default exposure (an 800 lm
-  bulb is intensity 0.09, where a lamp in a product shot is 1 to 5): raise `exposure` as a camera would indoors, or use `intensity`.
-- `ies` on a `point` or `spot`: a luminaire's measured light by direction (an IES LM-63 file: its media URL, or `{ "text": "<the file>" }`),
-  or a preset: `downlight` (a recessed downlight's wide cone cut off at about 60°), `spot` (a tight 12° beam with a faint halo), `flood`
-  (a broad beam to about 50°), `wallwash` (thrown to one side, up a wall), `batwing` (an office troffer, brightest about 35° off the axis),
-  `pendant` (mostly down, a soft glow up). The profile is the beam: a spot's `angle`, `penumbra` and `radius` no longer apply. Its axis
-  (the profile's 0°) points at `target` (a `point` without one: straight down). `iesRotation` (degrees) turns it around the axis; aimed
-  straight down its C0 plane points along +z and C90 along -x, as in Blender, so a file lights the same here and there. Brightness:
-  `intensity` is the profile's brightest direction; `power` or `lumens` its whole light; none of them, a file's own candela (÷ 683). In
-  Draft and Final alike (measured against Cycles' IES texture: within 1 level of 255 in Final); its shadow is a point light's.
-
-### Put the highlight where you want it: `highlight`
-
-On a glossy object the bright reflection of a light (the highlight) moves when the light moves. Say where it must land and the light
-is placed for it: on the mirror direction from the surface there (the half-way vector between the camera and the light is the
-surface's normal), corrected for the material's roughness, `distance` metres out, aimed at the point. It works on `area`, `spot`,
-`point` and `sun` (a sun gets its `dir`), and replaces their `at` and `target`. It is solved again when the object or the camera moves.
-
-```json
-{ "id": "kicker", "type": "area", "width": 0.08, "height": 0.4, "intensity": 30,
-  "highlight": { "object": "bottle", "screen": [0.56, 0.38], "distance": 0.7 } }
-```
-
-- `screen`: where in the rendered picture, [u, v] from its top left (0 to 1), through the camera that films the Scene (the Camera layer, or
-  `scene.camera`; at the project's own frame: `videoSize`); the camera's ray there must meet the object. Or `point`: a point in the
-  object's own space; the surface point the camera sees nearest it is used.
-- `distance` [the light's own `at` distance, else 2.5 times the object's size]: further is a smaller, crisper highlight from the same
-  panel; a bigger panel (`width`, `height`) is a bigger, softer one. The panel stands where the solve puts it, and nothing moves it out
-  of the way: keep it smaller than its distance, and check with the still's `critique.lights` (each light's place as built, a studio
-  preset's parts too) that the floor or another object does not stand in front of it.
-- The surface's own normal there decides the reflection: pick a point on a smooth stretch, a few millimetres from a crease or a profile
-  corner (a lathe profile's points are creases unless smoothed), where a small error in the point moves the normal a lot.
-- The light's other fields work as on any light: its links (`lights`, `excludes`, `shadowFrom`, `shadowExcludes`) choose what it lights
-  and what shadows it, and do not change where it is put.
-- The highlight lands within a pixel or two of the point in Draft and Final. On a straight stretch of a round body (a cylinder's side)
-  the reflection is a line along it: the line passes through the point, and where along it the brightest part falls depends on the
-  panel's height. On a very rough surface (roughness 0.6 and up) it is a broad glow whose brightest pixel is less sharply placed.
-
-### Studio presets: `"type": "studio"`
-
-One entry stands for a whole studio set-up, sized to the subject and placed against the camera:
-
-```json
-{ "id": "studio", "type": "studio", "preset": "bottleStrip", "subject": "bottle", "intensity": 1 }
-```
-
-| `preset` | Lights (each an `area` light named `<id>.<part>`) | For |
-|---|---|---|
-| `threePoint` | `key` 45 degrees to one side and 30 up, `fill` big and soft on the other side (no shadow), `rim` strip behind | people, products, anything |
-| `topSoftbox` | `top` a big panel overhead, `fill` low and soft in front (no shadow) | table tops, food, cosmetics, packshots |
-| `rim` | `left` and `right` strips behind | outlines, dark subjects on dark |
-| `bottleStrip` | `left` and `right` tall narrow strips a little behind the sides, `top` soft overhead (no shadow) | glass and glossy bottles: a clean line down each edge |
-
-- `subject` (an object id) sizes and aims them: its box, children included. Left out: every object no wider than 2 m (floors and walls
-  left out). `side` ["left"] is the key's side as the camera sees it; `distance` [1] scales how far they stand; `intensity` [1] scales
-  them all (1 lights the subject as a studio would, whatever its size); `color` tints them; `castShadow`, `lights`, `excludes`,
-  `shadowFrom` and `shadowExcludes` go to every part.
-- Mix a preset with lights of your own (a `highlight` light for the one reflection that matters). The still's critique lists each part.
-
-### Which light reaches what: `tags`, light linking and shadow linking
-
-Give objects `tags` and let each light pick objects by them. The same rule holds in Draft and Final.
-
-```json
-"objects": [
-  { "id": "bottle", "tags": ["hero", "glass"], "material": "glass", "graph": [ … ] },
-  { "id": "backdrop", "tags": ["set"], "material": "paper", "graph": [ … ] }
-],
-"lights": [
-  { "id": "key", "type": "area", "at": [-0.6, 0.7, 0.6], "target": [0, 0.12, 0], "width": 0.5, "height": 0.5, "intensity": 8, "lights": ["hero"] },
-  { "id": "wash", "type": "spot", "at": [0, 1.4, 1.2], "target": [0, 0.3, -0.5], "angle": 30, "intensity": 6, "excludes": ["hero"] },
-  { "id": "sun", "type": "sun", "dir": [-0.4, 1, 0.3], "intensity": 2, "shadowExcludes": ["glass"] }
-]
-```
-
-- `lights: [tags]`: the light lights only objects with one of these tags. `excludes: [tags]`: it never lights objects with one of
-  them. Both may be given; `excludes` wins.
-- `shadowFrom: [tags]`: only objects with one of these tags throw this light's shadow (the light passes through the rest).
-  `shadowExcludes: [tags]`: objects with one of them throw no shadow from this light, while they still shadow every other light and
-  are still lit by this one. For an object that shadows no light at all, use the object's `castShadow: false`.
-- A child object has its parent's tags too. An object with no tags (and the Rig's backdrop, `model3d` layers and 3D Text, which take
-  no tags) is lit by a light only when that light has no `lights` list, and shadows it only when it has no `shadowFrom` list.
-- A tag no object has is an `unknown_ref` error from validate (`didYouMean` names the close ones). Up to 15 lights in a scene may
-  carry link fields; past that, validate warns and the extra lights light every object.
-- Glossy surfaces still reflect a linked `area` panel in Final, but only surfaces it lights do.
-
-### Light mix and light passes: `look.lightMix`, `render.lightPasses`
-
-`rig.look.lightMix` changes each light group's strength and colour over what the lights themselves say, without touching the scene:
-
-```json
-"look": { "lightMix": { "key": { "intensity": 1.4, "color": "#ffe2c4" }, "studio": { "intensity": 0.7 }, "environment": { "intensity": 0.5 }, "emission": { "intensity": 2 } } },
-"render": { "mode": "final", "spp": 64, "lightPasses": true }
-```
-
-- A group is a light's `group` (lights with one group change together), else the light's own `id`; a studio preset's parts are one
-  group named by the preset's `id`. `environment` is the environment's light (not the background the camera sees) and `emission` the
-  glowing surfaces; those two take `intensity` only, and `emission` changes only in Final with passes.
-- Draft takes the mix at once (the lights' own numbers). A Final without passes traces again with the mixed lights.
-- `"lightPasses": true` in `render`: Final keeps each light group's light apart while it traces (up to 6 groups, plus the environment and
-  the glows; lights past the sixth group stay as they are), so a new mix on a finished Final is mixed and denoised again in a moment
-  instead of traced again. The mixed picture is the traced one with each group's light reweighed: exact, the same as tracing the lights
-  at those strengths. It needs `denoise`, turns the radiance cache and the video light reuse off for that render (a room traces slower),
-  and takes 16 bytes a pixel for each group (33 MB a group at 1080p; a 4K frame keeps two light groups apart).
-- A light mix is also how to try a balance: render once, then change only `lightMix`.
-
-### What each kind of ray sees: `visibility`, `holdout`
-
-- `visibility` on an object: `{ "camera": false }` leaves it out of the picture while it still throws its shadow and shows in
-  reflections (a bounce card or a flag that must not be seen). `{ "reflection": false }` keeps it out of glossy reflections (chrome,
-  glass, lacquer) while it still bounces light onto matte surfaces; `{ "refraction": false }` keeps it from being seen through glass
-  and liquids; `{ "indirect": false }` takes its bounce light away and what matte surfaces bounce onto it. `{ "shadow": false }` is
-  `castShadow: false`. Each is true unless set false. `camera` and `shadow` work in Draft and Final; `reflection`, `refraction` and
-  `indirect` are Final's (Draft traces no such rays).
-- `"holdout": true` on an object cuts a hole in the picture where the camera sees it: those pixels are see-through (alpha 0), so the
-  layers below the Scene layer show there, whatever `env.background` and `env.opaque` say. The object still hides what is behind it,
-  still casts its shadow and still shows in reflections, in Draft and Final. Use it to leave room for footage or another layer that
-  must pass in front of part of the set. For a floor that shows only the shadows on it, use `catcher` (real 3D in footage (GreenLight Dash only)).
-
-```json
-"objects": [
-  { "id": "card", "tags": ["fill"], "visibility": { "camera": false, "reflection": false }, "material": "white", "graph": [{ "op": "plane", "size": [0.6, 0.8] }, { "op": "transform", "rot": [90, 0, 0] }] },
-  { "id": "doorway", "holdout": true, "graph": [{ "op": "box", "size": [0.9, 2, 0.05] }] }
-]
-```
-
-### Render passes and masks: `render.passes`, `look.passMix`, world mattes
-
-The Scene's picture split into passes, and masks of its objects, made by the Scene itself and used in the same project: no other
-render, no compositing program.
-
-- `rig.render.passes.show` makes the Scene layer show one pass instead of its picture, in the preview, stills and renders (render a
-  still or a video of the project to get the pass as media):
-  - light passes, Final only (Draft shows the picture): `"diffuse"` (light off matte surfaces and the diffuse part of every material,
-    direct and bounced), `"specular"` (reflections, refraction through glass, a clear coat, sheen), `"emission"` (what the camera sees
-    straight: glowing surfaces, lights and the background). The three add up to the picture and are filmed with its curve and `look`,
-    each through the denoiser.
-  - data passes, Draft and Final, shown as they are (no curve, no look, no denoiser): `"albedo"` (surface colour, unlit), `"normal"`
-    (world-space normal, rgb = n × 0.5 + 0.5), `"depth"` (white near, black far: `depthRange` [near, far] metres, else from the nearest thing in view to 2.5 times the focus distance; sharp, never
-    blurred by depth of field), `"objects"` and `"materials"` (an ID colour each; the same name is always the same colour), `"mask"`
-    (white where `mask.objects` / `mask.materials` are, black elsewhere, each edge pixel its share of coverage). In Final the IDs and
-    the mask come from the traced samples (a cryptomatte of two ranks a pixel), so they follow depth of field; Draft draws them with the
-    raster, 4x multisampled.
-- `rig.look.passMix` `{ "diffuse": 1, "specular": 1, "emission": 1 }` rebalances Final's light by kind after the trace, as a compositor
-  would from the passes: `{ "specular": 1.5 }` makes every reflection and refraction half as bright again, `{ "diffuse": 0.8 }` darkens
-  the matte light. It is exact (the passes add up to the picture), changing it later is one denoise, not a new trace; Draft is
-  unchanged. Unset or all 1 traces exactly as before.
-- **World matte**: any layer's `trackMatte` can take its matte from the Scene's objects instead of another layer: `"trackMatte":
-  { "sourceId": "<the Scene layer's item id>", "mode": "alpha", "objects": ["bottle"] }` (or `"materials": ["glass"]`, or both). The
-  layer then shows only where those objects are in the Scene's picture (an object covers everything under it), `"alphaInverted"`
-  everywhere but there, with soft edges where they cover part of a pixel, in Draft and Final (Final's from its samples). Unlike an
-  ordinary matte the Scene stays in the picture. Put the matted layer above the Scene layer: on a `cameraLocked` channel it lies flat
-  over the picture (a title, a picture on a screen); on an ordinary channel it stands in the 3D space and the Scene's depth still hides it
-  where the set is in front of its plane. Camera-locked layers and the Scene: the Scene's channel always stays at the top, under the camera
-  (the editor and every load put it there), so its place in `channels` says nothing; the Scene is drawn right above the frame's footage.
-  The background plate under the Scene is the `cameraLocked` footage and pictures (`video`, `image`) at the very bottom of the stack (only
-  `cameraLocked` channels under them, the Scene's own not counting), with whatever is stacked under them; every `cameraLocked` layer stacked
-  above the topmost of them (text, shape, HTML, a template, particles, a sequence, a picture with an ordinary channel under it) is drawn
-  over the Scene, in stacking order, matte or not. Up to three different object sets per project; each costs one flat draw a frame in
-  Draft and nothing to the trace but a few bytes a pixel. Use it for a title that passes behind a product (`alphaInverted` on the
-  product), a picture or video shown only on one object, or a grade on one object (a copy of the footage graded and matted to it).
-
-```json
-"render": { "mode": "final", "spp": 128, "passes": { "show": "mask", "mask": { "objects": ["bottle", "cap"] } } },
-"look": { "passMix": { "specular": 1.4 } }
-```
-
-**The Rig's backdrop** (`rig.cyclorama`) stands in the same world: its floor is at y = −0.42 × the composition height / 1000 metres
-(−0.454 m at 1080p), centred on x = z = 0, and its sizes are multiples of the composition height (`width` 3.4 is 3.67 m at 1080p). A
-scene built around y = 0 (a table top, a product) is best with `"cyclorama": { "shape": "none" }` and its own floor or backdrop object.
-
-**Rig lights** (`rig.lights[]`, one set for every 3D layer, [video-3d.md](video-3d.md#scene-rig--one-set-for-every-3d-layer)) are placed differently:
-around the rig origin by `az` (degrees around the vertical, measured from +Z, the camera's side, toward +X: 0 is in front of the subject
-toward the camera, 90 camera-right, -90 camera-left, 180 behind the subject), `elev` (degrees above the horizon, 90 overhead) and `dist`
-(composition pixels; one world metre is 1000). A `spot` or `area` Rig light aims at `targetX`, `targetY`, `targetZ` in pixels, with +Y up.
-A Rig light's `intensity` is what the subject receives, as a directional of that strength would give, whatever its distance. With
-`"renderer": "world"`, write the scene's own lights in `rig.scene.lights` and set `rig.lights: []`.
-
-## Shadows in Draft
-
-The editor's Draft preview leaves shadows out unless the Rig's `"render": { "draftShadows": true }` (next to `renderer` and `scene`) asks for them, because they are about half of what a big frame costs, so a shadow missing from the preview is not a fault. Renders and stills always have them, in Draft and Final. A light with a pattern keeps its shadow in the preview, because its shadow map draws the pattern. Without shadows the preview still lets the sky light a room only through its openings, and lights an open set's backdrop from what stands in front of it, as renders do: a room lit through its window is as bright in the preview as in a render, shadows aside.
-
 ## Fog and haze
 
 `rig.scene.fog` fills the air of the set with an even medium that scatters light: dust in a room, haze, a smoky club. Beams show where
@@ -1880,8 +2139,8 @@ in sim.md (GreenLight Dash only).
 "sims": [{ "recipe": "campfire", "at": [0, 0, 0], "size": 0.3 }]
 ```
 
-`volumes` now holds only a `.blend` import's baked smoke and fire (`baked`), played back from its file; live `volumes` entries
-(`preset`, `sources`) are gone and are ignored.
+`volumes` holds only a `.blend` import's baked smoke and fire (`baked`), played back from its file: write live smoke and fire as
+`sims`.
 
 ## Particles: snow, dust, smoke, sparks, bokeh, stars
 
@@ -1902,12 +2161,15 @@ Recipes: `snow`, `dust_in_beam` (with a beam of light and the scene's `fog` for 
 "sims": [{ "recipe": "snow", "at": [0, 3, 0], "area": [5, 0.1, 4], "count": 7000 }, { "recipe": "embers", "at": [0, 0.05, 0] }]
 ```
 
+A particle layer ([video-particles.md](video-particles.md#particle-layer-or-3d-scene-sim)) is the other way: flat over the picture, unlit and
+never behind the Scene's objects.
+
 ## Cloth and soft bodies
 
 Cloth, hair, sand and soft bodies are a sim's XPBD pieces (sim.md (GreenLight Dash only) §2b): `rig.scene.sims` with a `cloth`, `hair`, `grains` or
 `softbody` maker, or a recipe (`cloth_drop_on_sphere`, `flag_in_explosion_wind`, `grains_on_cloth`, `hair_in_wind`). They run on the GPU,
 collide with themselves and with each other, and a cloth made from an object (`"mesh": "<object id>"`) takes that object's place. An
-object's own `sim` field is gone (it is ignored): write the cloth as a sim. To settle a cloth into a shape that never moves, use the
+object takes no `sim` field (validate warns `removed_field`): write the cloth as a sim. To settle a cloth into a shape that never moves, use the
 `drape` or `inflate` graph ops.
 
 ## Water, sand, snow and goo
@@ -1916,7 +2178,7 @@ Liquids, sand, snow and goo are a sim's MPM set (sim.md (GreenLight Dash only) �
 (`water_splash_with_debris`, `water_pour`, `sand_pour_pile`, `snowball_smash`, `goo_drop`). Every material shares one grid on the GPU, so
 they push each other; the sim's colliders, scene objects (`mpm.objects`) and its rigid pieces stand in the way, and the liquid pushes the
 pieces back (a crate floats). Water and goo draw as a real surface (refracting in Draft, traced as a dielectric in Final), sand as grains.
-The old `matter` field is gone and is ignored.
+`scene.matter` is not a field (validate warns `removed_field`): write `sims`.
 
 ## Rigid bodies
 
@@ -1939,6 +2201,14 @@ Objects that fall, hit and stack. Add `rigid` to any object. On a `model3d` laye
 - `physics.floor` is the ground's height, or `null` for none. With no `physics` block, the editor puts the floor at the set's floor and uses a gravity of `[0, -5, 0]`.
 - The fall is a sim: checkpoints make seeking back exact, and a render gets the same fall every time.
 - A layer with `physics` on starts from wherever the layer stands. Moving the layer starts the fall again, and keyframes on its position are not followed.
+
+## Pictures in the world (`inWorld`)
+
+An HTML clip (a HyperFrames page included, drawn live with no bake), a video or an image layer with `"inWorld": { "enabled": true }` on its item stands in the world the same way, as one flat card of its picture (its own aspect, fitted in the frame as the layer shows it, no bars): placed by the layer transform (`panZ` is real depth, Rotate 3D a real turn), hidden by what stands in front and hiding what stands behind, filmed by the Scene's camera, in Draft and Final. `lit`, `castShadow` and `receiveShadow` work as for flat text; unlit (the default) the picture keeps its exact colours and is laid over the traced frame in Final, lit it is traced. The same layers stay flat as for flat text (effects, filters, Grow Fill, a camera-locked channel, inside a sequence). The card's canvas is the picture's own size and is drawn again only when the layer shows another frame.
+
+## The 3D view of a Scene
+
+The editor's 3D view (the cube button of the player bar) shows a world Scene's own geometry as untextured clay: every scene object, the backdrop and an import's meshes (a scatter, such as a `.blend`'s grass, with up to 400 000 triangles of its copies), placed as the shot sees them, with model layers, 2D layers and the Camera layer's proxy around them. Under `scene.camera` the clay stands where the Camera layer's proxy films it as that camera films the Scene (same place, same turn) and the proxy's frustum has the shot's field of view, so moving the Camera layer there frames the shot; with no `scene.camera` a world metre is 1000 px. Objects stand as the last frame the Scene drew them. It costs nothing while the view is closed: the clay is made when the view opens (over the world's own arrays, not a copy), drawn with one matcap (no light, shadow or texture), and freed when it closes.
 
 ## Motion blur
 
@@ -1965,7 +2235,7 @@ accumulation of sub-frames (each one a full trace):
   velocity (the spheres, points, sparks, cards and birds on the parabola of how their velocity turned over the sim's last frame: a swirl
   smears on its curve; cubes, chunks and leaves straight), birds beating their wings through the shutter (each at its own beats a second), a gas's smoke and fire carried along its own
   flow, in a dense box or on bricks (the gas an emitter puts in within the shutter stays at the emitter, and the burn's heat and smoke are
-  added for each sample's time; liquids stand as at the frame); bodies (`rigid`, model layers with `physics: "falls"`) as the solver takes
+  added for each sample's time), a liquid's surface and spray drops along their particles' velocities; bodies (`rigid`, model layers with `physics: "falls"`) as the solver takes
   them through the shutter, step by step (one that hits the floor inside the shutter bounces in the blur); lights that move (one that follows a moving object, one inside a model) and the
   Rig's own keys on its lights (`sc:<lid>:intensity` and the light's other numbers, `scc:<lid>:col`: each sample sees the light's
   colour, strength, place, size and cone at its own time); moving glowing surfaces (`emission`, a `screen`: their light comes from where

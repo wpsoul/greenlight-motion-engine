@@ -31,6 +31,7 @@ import { localPrs } from './keyframeParenting.js';
 import { GRID_KF_PREFIX } from './keyframeProps.js';
 import { TransitionEasing, currentEasing } from './types.js';
 import { contentRectInQuad } from './mediaFit.js';
+import { isBuiltinScriptId } from './essentialTemplates/builtin/scripts/index.js';
 
 export { GRID_KF_PREFIX };
 export { contentRectInQuad };
@@ -1876,14 +1877,33 @@ export function gridLayoutMixPoses(config, members, opts = {}) {
    the preview, paywalled at the render — the same as PRO motion templates,
    Running Glow and Neon Glow. The check walks the WHOLE saved editor state,
    because a grid can sit inside a sequence (containsProGlowEffect does the same
-   for the same reason). A grid with no members gates nothing: it draws nothing. */
-export const GRID_IS_PRO = true;
+   for the same reason). A grid with no members gates nothing: it draws nothing.
+   Free since 2026-11-23 (the owner: a Grid made by hand is free too): the flag is off and the check below stays,
+   with its script exemption, as the effects' did in 16.5.95, so the Grid can be gated again by this flag alone. */
+export const GRID_IS_PRO = false;
 
+/* A Grid a script template made is free (owner, 2026-11-23: "scripts with Grid: let them be free";
+   PLANS/ESSENTIAL_TEMPLATES.md §13.5). It goes by the container: a grid clip that sits directly in a sequence clip whose
+   `essential.kind` is exactly "script", and is one of the grids that template's build recorded (`recipe.grids`). A grid
+   added there by hand, one inside a plain sequence there, or one copied out onto another timeline is PRO as before.
+   A built-in script (§14: `essential.kind` is the id of a script that ships with the app) is the same thing and its
+   own grids are free the same way (owner 2026-11-23: every built-in script is free). With GRID_IS_PRO off (today)
+   every grid is free and this finds nothing. */
 export function containsProGridLayer(value, seen = new Set()) {
   if (!value || typeof value !== 'object' || seen.has(value)) return false;
   seen.add(value);
   if (GRID_IS_PRO && value.mediaType === 'grid' && value.sequence?.channels?.some((ch) => ch?.items?.length)) {
     return true;
+  }
+  if (value.mediaType === 'sequence' && (value.essential?.kind === 'script' || isBuiltinScriptId(value.essential?.kind)) && value.sequence && Array.isArray(value.sequence.clips)) {
+    const own = new Set(Array.isArray(value.essential.recipe?.grids) ? value.essential.recipe.grids : []);
+    // its own grids are free, but what is inside them is checked; the grid object itself is never marked as seen, so
+    // the same grid reached any other way (on the top level after an Ungroup, say) is PRO there
+    for (const c of value.sequence.clips) {
+      if (c && c.mediaType === 'grid' && own.has(c.id)) { if (containsProGridLayer(c.sequence, seen)) return true; }
+      else if (containsProGridLayer(c, seen)) return true;
+    }
+    return Object.entries(value).some(([k, v]) => containsProGridLayer(k === 'sequence' ? v.channels : v, seen));
   }
   if (Array.isArray(value)) return value.some((entry) => containsProGridLayer(entry, seen));
   return Object.values(value).some((entry) => containsProGridLayer(entry, seen));

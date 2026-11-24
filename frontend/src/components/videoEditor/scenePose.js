@@ -10,6 +10,7 @@
  */
 import * as THREE from 'three';
 import { makePoseRig, applyPose, sceneObjectMatrix, metresToEditor, poseInfo } from './modelPose.js';
+import { shapeFromSceneObject } from './handPose.js';
 import { buildBones, rigClips } from '../../world3d/rig/bind.js';
 
 const MM = new THREE.Matrix4().makeScale(1000, 1000, 1000);
@@ -19,12 +20,13 @@ export function createScenePoser() {
   const held = new Map();
 
   function entryFor(o, info) {
-    const key = JSON.stringify([info.joints, o.skeleton?.clips ?? null]);
+    const key = JSON.stringify([info.joints, info.frame ?? null, o.skeleton?.clips ?? null]);
     let e = held.get(o.id);
     if (e && e.key === key) return e;
     const root = new THREE.Object3D();
     root.matrixAutoUpdate = false;
-    const { container } = buildBones(info.joints);
+    // a rig of the model file's own bones (rig/bind.js ownRig) hangs them where the file does, its armature's turn and scale above them
+    const { container } = buildBones(info.joints, 'skeleton', info.frame);
     root.add(container);
     const clips = rigClips(o.skeleton, info.joints);
     e = { key, root, container, rig: makePoseRig(root, clips, null), history: new Map(), warnings: [], info };
@@ -61,6 +63,8 @@ export function createScenePoser() {
       };
       const ctx = {
         sceneRef: scene,
+        // (lipsync) the Scene's clock is this pose's own: `speech` reads its voice at the same time
+        sceneTime: (t) => t,
         resolve: (ref, t) => point(ref, t),
         resolveMatrix: (ref, t) => {
           if (typeof ref !== 'string') return null;
@@ -69,6 +73,14 @@ export function createScenePoser() {
           const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
           metresToEditor(mm).decompose(p, q, s);
           return mm.compose(p, q, s.set(1, 1, 1));
+        },
+        resolveShape: (ref, t) => {
+          if (typeof ref !== 'string') return null;
+          const sid = ref.replace(/^@/, '');
+          const so = objects.find((x) => x && x.id === sid);
+          if (!so) return null;
+          const mm = sceneObjectMatrix(scene, sid, Number.isFinite(t) ? t : time);
+          return mm ? shapeFromSceneObject(so, metresToEditor(mm)) : null;
         },
         attach: (id, matrix, w) => {
           if (id === o.id || !objects.some((x) => x?.id === id)) return false;

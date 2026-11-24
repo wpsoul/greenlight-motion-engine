@@ -13,6 +13,7 @@
 // ./localTemplates.js) are fetched from the backend and merged into the same
 // cache — every consumer keeps using the synchronous accessors unchanged.
 import { setMotionMediaClock, clearMotionMediaClock } from './motionVideo';
+import { isBuiltinScriptId } from '../essentialTemplates/builtin/scripts/index.js';
 
 // The media runtime behind template video params travels with this façade, so every
 // consumer (Player preview + export, inspector) shares one module instance.
@@ -134,29 +135,11 @@ export async function deleteLocalMotionTemplate(templateId) {
 // derived from the registry: the registry is dynamic-imported as its own chunk,
 // so a derived set would be empty until templates finish loading — long enough
 // for a timeline to render unbadged and a render to slip past the gate.
-export const PRO_MOTION_TEMPLATE_IDS = new Set([
-  'advanced-typewriter',
-  'gradient-sweep-text',
-  'comment-card',
-  'comment-thread-camera',
-  'connected-steps',
-  'media-orbit-burst',
-  'cascading-ticker',
-  'ask-anything-prompt',
-  'prompt-card-click',
-  'kinetic-typography',
-  'scatter-cards-flow',
-  'card-fan-cycle',
-  'social-post',
-  'tiled-gallery',
-  'card-corridor',
-  'tag-wall',
-  'card-stack-drop',
-  'card-stack-unstack',
-  'spawn-zoom-cards',
-  'ai-chat',
-  'dynamic-list',
-]);
+// EMPTY since 2026-11-23: every MotionFast template is free (the owner: "We will make all presets free. PRO will be
+// only ready templates in AI workflows", and "yes" to the old PRO templates). The checks below and the render gate
+// stay, as they did for the effects in 16.5.95, so one template can be gated again by listing its id here and
+// setting its module's `pro` (and the manifest's, tests/motion-lazy/generate_manifest.mjs).
+export const PRO_MOTION_TEMPLATE_IDS = new Set([]);
 
 export function isProMotionTemplate(templateId) {
   return PRO_MOTION_TEMPLATE_IDS.has(templateId);
@@ -164,10 +147,17 @@ export function isProMotionTemplate(templateId) {
 
 // Project sequences can contain other sequences, so inspect the complete saved
 // editor state rather than only the currently visible timeline level.
+// A MotionFast template rebuilt as ordinary layers (an Essential template,
+// essentialTemplates/) is the sequence clip carrying `essential.kind` = the
+// template id it ports: PRO follows that kind, so the free layers it is built
+// from don't make it free (PLANS/ESSENTIAL_TEMPLATES.md §7). A built-in script (§14: the kind is a MotionFast id that
+// ships as a script) is FREE whatever its MotionFast original costs (owner, 2026-11-23); the `motion` item of that
+// same template keeps its gate. Today PRO_MOTION_TEMPLATE_IDS is empty, so this finds nothing.
 export function containsProMotionTemplate(value, seen = new Set()) {
   if (!value || typeof value !== 'object' || seen.has(value)) return false;
   seen.add(value);
   if (isProMotionTemplate(value.motionTemplateId)) return true;
+  if (value.mediaType === 'sequence' && value.essential && isProMotionTemplate(value.essential.kind) && !isBuiltinScriptId(value.essential.kind)) return true;
   if (Array.isArray(value)) return value.some((entry) => containsProMotionTemplate(entry, seen));
   return Object.values(value).some((entry) => containsProMotionTemplate(entry, seen));
 }

@@ -47,7 +47,7 @@ import {
   Fn, If, Loop, Break, Discard, uniform, uniformArray, texture, uv,
   vec2, vec3, vec4, float, int, mat3, dot, mix, clamp, smoothstep, abs, max, min,
   length, fract, mod, atan, sin, cos, tan, sqrt, select, sign, bool, exp, screenCoordinate,
-  pow, step, modelViewProjection,
+  pow, step, modelViewProjection, fwidth,
 } from 'three/tsl';
 import { isAlphaExportMode } from './clipShader.js';
 import { makeTslSampler } from './tslSampler.js';
@@ -140,6 +140,9 @@ function buildClipNodes() {
   const uStabilizeSize = uniform(new THREE.Vector2(1, 1));
   const uCellCrop = uniform(new THREE.Vector2(1, 1));
   const uGridCell = uniform(0.0);
+  // The box the layer is cut to in its own pass (a Layer Mask that is one plain or rounded rectangle) — see clipShader.js.
+  const uBoxCrop = uniform(new THREE.Vector4(0, 0, 0, 0));
+  const uBoxRadius = uniform(new THREE.Vector2(0, 0));
   const uUvOffset = uniform(new THREE.Vector2(0, 0));
   const uUvScale = uniform(new THREE.Vector2(1, 1));
   const uFisheye = uniform(0.0);
@@ -716,6 +719,26 @@ function buildClipNodes() {
       });
     });
 
+    // The layer's box (uBoxCrop), cut here instead of by a mask pass — in the plate's own geometry, before the V
+    // flip, anti-aliased over one screen pixel, the plate's own edge left to the quad (clipShader.js says why).
+    const boxCov = float(1.0).toVar();
+    If(uBoxCrop.z.greaterThan(0.0), () => {
+      const pb = sampleUv.sub(0.5).mul(uCanvasSize).toVar();
+      const k = select(uBoxRadius.y.greaterThan(1e-4), uBoxRadius.x.div(max(uBoxRadius.y, 1e-4)), float(1.0));
+      const sk = vec2(1.0, k);
+      const q = abs(pb.sub(uBoxCrop.xy).mul(sk));
+      const h = uBoxCrop.zw.mul(sk);
+      const rr = min(uBoxRadius.x, min(h.x, h.y));
+      const dd = q.sub(h).add(rr);
+      const db = min(max(dd.x, dd.y), 0.0).add(length(max(dd, vec2(0.0)))).sub(rr).toVar();
+      const covBox = clamp(float(0.5).sub(db.div(max(fwidth(db), 1e-4))), 0.0, 1.0);
+      const eb = abs(pb).sub(uCanvasSize.mul(0.5));
+      const dq = max(eb.x, eb.y).toVar();
+      const covQuad = clamp(float(0.5).sub(dq.div(max(fwidth(dq), 1e-4))), 0.0, 1.0);
+      boxCov.assign(clamp(covBox.div(max(covQuad, 1e-4)), 0.0, 1.0));
+      If(boxCov.lessThanEqual(0.0), () => { Discard(); });
+    });
+
     If(uInputFlipV.greaterThan(0.5), () => {
       sampleUv.y.assign(float(1.0).sub(sampleUv.y));
     });
@@ -1022,6 +1045,9 @@ function buildClipNodes() {
       });
     });
 
+    // The box cuts the whole layer as the mask pass did (the letterbox path too: `outColor` is the single exit).
+    outColor.a.mulAssign(boxCov);
+
     // Depth mode (the 3D view). With depth writing on, transparent fragments
     // must be discarded or a layer would occlude with its empty pixels.
     If(uDepthCut.greaterThan(0.5).and(outColor.a.lessThan(0.02)), () => { Discard(); });
@@ -1048,7 +1074,7 @@ function buildClipNodes() {
     uTileFade, uClipPathInset, uLetterSpacing, uTintColor, uBgColor, uFlashColor,
     uFlashAmount, uBloomAmount, uBloomThreshold, uBloomRadius,
     uResolution, uCanvasSize, uStabilizeOn, uStabilizeLinear, uStabilizeOffset,
-    uStabilizeSize, uCellCrop, uGridCell, uUvOffset, uUvScale,
+    uStabilizeSize, uCellCrop, uGridCell, uBoxCrop, uBoxRadius, uUvOffset, uUvScale,
     uFisheye, uFisheyeFit, uFisheyeModel, uFisheyeCenter, uUvPreOffset, uUvRotate, uUvRotateCenter,
     uPerspTilt, uPerspAxis, uPerspDist, uPerspPivot, uPerspShade,
     uMirrorTile, uAlphaExport, uInputPremultiplied, uInputFlipV, uPlaneExpand, uWipeType, uWipeProgress,

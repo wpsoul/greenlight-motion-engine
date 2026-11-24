@@ -1,0 +1,102 @@
+/* Camera (camera.js): a Camera layer's controls. The rows, cells, segments, buttons and dots are the inspector's own
+   (.mi-xrow, .mi-ax, .mi-seg, .mi-mirror-btn, .mi-dot, review.css / lab.css); this adds only what they did not have yet: a
+   dot beside a row's label, a cell on a row of its own, the rig's tiles and shots, the map's place, the keys row, and the
+   preview's camera surface in the gizmo's look. The Camera Motion window, the map, Smooth path, the Zoom blocks and the
+   zoom framing surface bring the app's own styles (vite.motion-engine.config.js, editor-modal-css). */
+.mi-xhead .mi-dot,.mi-row>.mi-dot{flex:none;width:16px;height:16px;margin:0 auto 0 -6px;padding:0;border:0;background:none;display:grid;place-items:center;cursor:default}
+.mi-xhead .mi-dot{margin-left:2px}
+.mi-xhead .mi-dot:before,.mi-row>.mi-dot:before{content:'';width:6px;height:6px;border-radius:50%;background:transparent}
+.mi-xhead .mi-dot.on,.mi-row>.mi-dot.on{cursor:pointer}
+.mi-xhead .mi-dot.on:before,.mi-row>.mi-dot.on:before{background:#33efab}
+.mi-xhead .mi-dot.on:hover:before,.mi-row>.mi-dot.on:hover:before{box-shadow:0 0 0 3px rgba(51,239,171,.18)}
+.mi-cam-num{gap:6px}
+.mi-cam-cell{flex:none;width:112px}
+.mi-cam-cell .mi-ax-chip{align-self:stretch;min-width:12px}   /* no letter on a cell of its own: still a full-height drag handle */
+.lab-inspector .mi-ax.is-keyed .mi-ax-chip,.lab-inspector .mi-ax.is-keyed .mi-ax-suf{color:#74ceae}
+.lab-inspector .mi-ax.is-off{opacity:.55;pointer-events:none}
+.lab-inspector .mi-seg-btn.is-off{opacity:.45;cursor:default}
+.mi-cam-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:8px 0 4px}
+.lab-inspector .mi-cam-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;height:42px;padding:0 2px;border:1px solid #303537;border-radius:5px;background:transparent;color:#a4aaa6;font-size:10px;cursor:pointer}
+.lab-inspector .mi-cam-tile:hover{background:rgba(255,255,255,.04);color:#edf1ee}
+.lab-inspector .mi-cam-tile.on{background:#2b2f31;border-color:#4a5352;color:#edf1ee}
+.lab-inspector .mi-cam-tile span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lab-inspector .mi-cam-select{min-width:0;max-width:168px;height:25px;padding:0 6px;border:0;border-radius:4px;background:#1d2021;color:#dfe6e3;font:inherit;font-size:11px;cursor:pointer}
+.lab-inspector .mi-cam-select:focus{outline:none;background:#202326}
+.mi-cam-map{padding:2px 0 2px}
+.mi-cam-map .ve-scene-map{max-width:248px;margin:6px auto 4px}
+.mi-cam-keys{gap:6px}
+.lab-inspector .mi-cam-capture{flex:none;gap:6px;height:26px;padding:0 9px}
+.lab-inspector .mi-cam-capture svg{flex:none;color:#868d8b}
+.lab-inspector .mi-cam-capture.on svg{color:#74ceae}
+.mi-cam-nav{display:flex;align-items:center;gap:1px;min-width:0}
+.mi-cam-nav[hidden]{display:none}
+.mi-cam-count{margin-right:3px;color:#868d8b;font-size:10.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lab-inspector .mi-cam-nav .mi-icon-button:disabled{opacity:.35;cursor:default;background:transparent}
+.lab-inspector .mi-cam-del:hover{color:#ff8a8a}
+/* a Path camera: Add point beside Capture keys, its points on the row under them */
+.lab-inspector .mi-cam-addpoint:disabled{opacity:.45;cursor:default}
+.mi-cam-points[hidden]{display:none}
+.mi-cam-points .mi-cam-nav{margin-left:auto}
+/* the preview: over the frame (the gizmo's place); the app's grab cursor; viewfinder corners and a centre mark */
+.mi-cam-surface{position:absolute;left:0;top:0;transform-origin:0 0;z-index:5;pointer-events:none;touch-action:none}
+.mi-cam-surface.is-armed{pointer-events:auto;cursor:grab}
+.mi-cam-surface.is-armed.is-drag{cursor:grabbing}
+.mi-cam-sight{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+.mi-cam-ln{fill:none;stroke:#fff;stroke-width:1.5;vector-effect:non-scaling-stroke;opacity:.8}
+.mi-cam-sh{fill:none;stroke:rgba(0,0,0,.4);stroke-width:3.5;vector-effect:non-scaling-stroke}
+.mi-cam-ring{fill:none;stroke:rgba(142,164,255,.75);stroke-width:2;vector-effect:non-scaling-stroke}
+/* the gesture names, three seconds above the picture (the app's capture hint), in a band the preview leaves over itself
+   (body.mi-cam-band, camera.js), so they never lie on the picture whatever the frame's fit; fades on opacity only */
+body.mi-cam-band:not(.original) .glm-app .glm-view{margin-top:36px!important}
+.mi-cam-hint{position:absolute;top:-30px;left:50%;z-index:6;display:flex;gap:2px;padding:3px;border-radius:999px;background:rgba(17,19,20,.86);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);color:#868d8b;font-size:10.5px;white-space:nowrap;transform:translateX(-50%);opacity:0;transition:opacity .48s cubic-bezier(.645,.045,.355,1);pointer-events:none}
+.mi-cam-hint.is-on{opacity:1}
+.mi-cam-hint span{padding:2px 8px}
+.mi-cam-hint b{color:#dfe6e3;font-weight:600}
+/* a row's own pair (a count and its button), a sub-heading in a section, the mode toggles in the mirror buttons' look */
+.mi-cam-pair{display:flex;align-items:center;gap:8px;min-width:0}
+.mi-cam-meta{color:#868d8b;font-size:10.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mi-cam-sub{padding:10px 0 2px;color:#c8ceca;font-size:9.5px;font-weight:700;letter-spacing:.055em;text-transform:uppercase}
+.lab-inspector .mi-cam-toggle{flex:none;gap:6px;height:26px;padding:0 9px}
+.lab-inspector .mi-cam-toggle svg{flex:none;color:#868d8b}
+.lab-inspector .mi-cam-toggle.on svg{color:#74ceae}
+.lab-inspector .mi-cam-toggle:disabled{opacity:.45;cursor:default}
+.lab-inspector .mi-cam-smoothbtn,.lab-inspector .mi-cam-rm{display:inline-flex;align-items:center;gap:5px}
+.lab-inspector .mi-cam-smoothbtn[hidden]{display:none}
+.lab-inspector .mi-cam-rm:hover{color:#ff8a8a}
+/* Zoom: the app's blocks on the camera layer's bar (ZoomRangeLane), and its framing surface over the picture */
+.mi-cam-lane{position:absolute;inset:0;pointer-events:none}
+/* the block's × as the app draws it (videoEditor.css .ve-zoom-del, measured in the app: 12 px, 16 px line, white, centred,
+   the app's system font): the page's `.glm-app button { font: inherit; color: inherit }` gave it the bar's 10 px dark type */
+.glm-app .mi-cam-lane .ve-zoom-del{font:400 12px/16px system-ui,-apple-system,sans-serif;color:#fff;text-align:center;letter-spacing:normal}
+/* the block's label in the app's font and line (the bar's own are the page's) */
+.glm-app .mi-cam-lane .ve-zoom-block{font-family:system-ui,-apple-system,sans-serif;line-height:normal;letter-spacing:normal}
+/* The Camera and 3D Scene rows (PlayerPage.jsx pinCameraRows, lab.js; first on every page: rowOrder.js): in the app's sand, its values as videoEditor.css
+   gives them ("Camera channel": .ve-track-row-camera, .ve-clip-camera, .ve-clip-rig-thumb, .ve-channel-label-camera). A camera
+   bar is the sand clip, a 3D Scene bar the app's plain clip with the sand name; picked, both take the row's sand ring. */
+body:not(.original) .glm-app .glm-row.is-pin{background:rgba(196,173,120,.028)}
+body:not(.original) .glm-app .glm-row.is-pin .glm-layer{color:#ab9f83;font-weight:500;letter-spacing:.02em}
+body:not(.original) .glm-app .glm-row.is-pin .glm-layer i{display:none}
+body:not(.original) .glm-app .glm-row.is-pin .glm-layer>span{padding-left:7px}
+body:not(.original) .glm-app .glm-row.is-pin .glm-layer.t-camera{background:linear-gradient(180deg,rgba(196,173,120,.11),rgba(150,130,84,.15));box-shadow:0 0 0 1px rgba(196,173,120,.2)}
+body:not(.original) .glm-app .glm-row.is-pin .glm-layer.t-camera:hover{box-shadow:0 0 0 1px rgba(196,173,120,.38)}
+body:not(.original) .glm-app .glm-row.is-pin .glm-layer.t-rig{background:#1e1e1e;box-shadow:0 0 0 1px #333}
+body:not(.original) .glm-app .glm-row.is-pin .glm-layer.is-on{box-shadow:0 0 0 2px rgba(196,173,120,.6);color:#ab9f83}
+body:not(.original) .lab-track-label.is-pin{background:rgba(196,173,120,.028);color:#90866f}
+body:not(.original) .lab-track-label.is-pin:hover{background:rgba(196,173,120,.07);color:#b7ab8d}
+.mi-cam-zoombox{position:absolute;left:0;top:0;transform-origin:0 0;z-index:5;pointer-events:none}
+.mi-cam-zoombox.is-armed{pointer-events:auto}
+/* Smooth path…: the app's popover is portaled to the page's body; it gets what the app's root gives it there (the editor's
+   reset and font, as the engine build gives its other windows on .ve-kfp-overlay) */
+:where(.ve-smooth-pop,.ve-smooth-pop *){margin:0;padding:0;box-sizing:border-box}
+.ve-smooth-pop{font-family:'Inter','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
+:where(.ve-smooth-pop) :where(button,input,select,textarea){font-family:inherit}
+/* the Lens: the app's focus pad's place, the Focus / Blur sub-headings with their button or note, Pick in preview's surface */
+.mi-cam-pad{padding:2px 0}
+.mi-cam-pad .ve-scene-map{max-width:248px;margin:4px auto}
+.mi-cam-subrow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.lab-inspector .mi-cam-pick{display:inline-flex;align-items:center;gap:5px;height:22px;text-transform:none;letter-spacing:0;font-weight:500}
+.lab-inspector .mi-cam-pick.on{background:#2b2f31;color:#edf1ee}
+.lab-inspector .mi-cam-add{border:1px solid #303537;height:26px;padding:0 9px;border-radius:5px;color:#a4aaa6}
+.lab-inspector .mi-cam-add:disabled{opacity:.45;cursor:default}
+.mi-cam-pickbox{position:absolute;left:0;top:0;transform-origin:0 0;z-index:6;pointer-events:none;cursor:crosshair}
+.mi-cam-pickbox.is-on{pointer-events:auto}

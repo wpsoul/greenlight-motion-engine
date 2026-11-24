@@ -17,7 +17,7 @@ import { preloadForPreviewBuffer } from '../previewDeviceTier.js';
 import { getPreviewVideoSeekPolicy, resolveRateTrim, resolveStartAlignment } from '../previewMediaLifecycle';
 import { getTimelineEndTime, getTimelineLayout } from '../speedUtils';
 import { isContainerClip, SEQUENCE_MAX_DEPTH } from '../types';
-import { syncChannelStates } from './channelStates';
+import { ensureSequenceState, syncChannelStates } from './channelStates';
 import { resolveActiveIndex } from './compositeHelpers';
 import { calculateVideoTime } from './layerHelpers';
 import { ensureVideoFrameLoop as ensureVideoFrameLoopInEngine, getClipPlaybackUrl, normalizeUrl, queueTextureDisposal as queueTextureDisposalInEngine, recordPresentedMediaTime as recordPresentedMediaTimeInEngine } from './mediaTextures';
@@ -501,68 +501,94 @@ async function landStillFrame(engine, video, targetTime) {
   }
 }
 
-export async function seekAllVideosForTime(engine, env, time) {
-  const seekPromises = [];
-  for (const channel of env.channels) {
+/**
+ * The videos a frame at `time` shows, at any depth: per visible channel its active item, and inside a cross transition the item
+ * before it; a container item (sequence, grid, take; down to SEQUENCE_MAX_DEPTH) is entered at its own clock — the item's time
+ * through its offset, speed, trims and Posterize Time, the localTime renderChannel hands renderSequenceFrame — on its sequence state,
+ * whose elements its draw uses. Only what is on screen at `time` is visited. The ONE walk the export (exporter.js
+ * decodeAllVideosForTime: each video put on its frame by the decoder) and a still (seekAllVideosForTime: each video sought) position
+ * their videos by: a still of a video in a template used to seek only the top level and show a stale frame (or another card's).
+ *   visit(video, clip, sourceTime, instanceKey)      an element the frame draws, its clip and the source time it shows
+ *   onTransition(cs, item, itemLayout, timeInClip)   optional: the item is in its transition's overlap (the package's own media)
+ * Either may return a promise; the walk settles when all have, every layer at once.
+ */
+export async function visitVideosAtTime(engine, chs, cmap, layoutFor, states, time, visitors, depth = 0, scope = '') {
+  const { visit, onTransition } = visitors;
+  const instanceKeyOf = (it) => (scope ? `${scope}:${it.id}` : it.id);
+  const pending = [];
+  for (const channel of chs) {
     if (channel.visible === false) continue;
-    const layout = env.layoutMap.get(channel.id);
-    const cs = engine.channelStates.get(channel.id);
+    const layout = layoutFor(channel);
+    const cs = states.get(channel.id);
     if (!layout || !cs) continue;
-
     const activeIndex = resolveActiveIndex(layout, time);
     if (activeIndex < 0) continue;
-
     const item = channel.items[activeIndex];
     const itemLayout = layout[activeIndex];
-    const clip = env.clipsMap.get(item.clipId);
-    if (!clip || clip.mediaType !== 'video') continue;
-
+    const clip = cmap.get(item.clipId);
+    if (!clip) continue;
     const timeInClip = time - itemLayout.startTime;
-    // Posterize Time: a still of a posterized layer shows its held step.
-    const targetVideoTime = calculateVideoTime(item, posterizedTimeInClip(item, timeInClip, itemLayout.duration));
-    const useVideoA = activeIndex % 2 === 0;
-    const activeVideo = useVideoA ? cs.videos.a : cs.videos.b;
+    const inOverlap = activeIndex > 0 && itemLayout.overlapIn > 0 && timeInClip <= itemLayout.overlapIn;
+    if (inOverlap && onTransition) pending.push(onTransition(cs, item, itemLayout, timeInClip));
 
-    // Load source if needed
-    const clipSource = getClipPlaybackUrl(clip);
-    if (clipSource && normalizeUrl(activeVideo.src || '') !== normalizeUrl(clipSource)) {
-      activeVideo.src = clipSource;
-      activeVideo.preload = 'auto';
-      activeVideo.load();
-      await new Promise((r) => {
-        activeVideo.addEventListener('loadeddata', r, { once: true });
-        setTimeout(r, 5000);
-      });
+    // Posterize Time: a posterized layer's media sits on its held step (the same clock channelRender gives the layer).
+    const layerTimeInClip = posterizedTimeInClip(item, timeInClip, itemLayout.duration);
+    if (isContainerClip(clip) && depth < SEQUENCE_MAX_DEPTH) {
+      const st = ensureSequenceState(engine, item.id, clip);
+      if (st) {
+        const localTime = calculateVideoTime(item, Math.max(0, layerTimeInClip));
+        pending.push(visitVideosAtTime(
+          engine, clip.sequence.channels, st.clipsMap, (ch) => st.layouts.get(ch.id), st.channelStates, localTime, visitors, depth + 1,
+          instanceKeyOf(item),
+        ));
+      }
+      continue;
     }
 
-    seekPromises.push(landStillFrame(engine, activeVideo, targetVideoTime));
+    if (clip.mediaType !== 'video') continue;
+    const useVideoA = activeIndex % 2 === 0;
+    const activeVideo = useVideoA ? cs.videos.a : cs.videos.b;
+    pending.push(visit(activeVideo, clip, calculateVideoTime(item, layerTimeInClip), instanceKeyOf(item)));
 
-    // Also handle overlap (previous clip during transition)
-    const inOverlap = activeIndex > 0 && itemLayout.overlapIn > 0 && timeInClip <= itemLayout.overlapIn;
+    // the outgoing clip of a cross transition
     if (inOverlap) {
       const prevItem = channel.items[activeIndex - 1];
       const prevLayout = layout[activeIndex - 1];
-      const prevClip = env.clipsMap.get(prevItem.clipId);
+      const prevClip = cmap.get(prevItem.clipId);
       if (prevClip?.mediaType === 'video') {
         const prevTimeInClip = Math.max(0, Math.min(prevLayout.duration, time - prevLayout.startTime));
-        const prevTargetTime = calculateVideoTime(prevItem, prevTimeInClip);
         const previousVideo = useVideoA ? cs.videos.b : cs.videos.a;
-        const prevSource = getClipPlaybackUrl(prevClip);
-        if (prevSource && normalizeUrl(previousVideo.src || '') !== normalizeUrl(prevSource)) {
-          previousVideo.src = prevSource;
-          previousVideo.preload = 'auto';
-          previousVideo.load();
-          await new Promise((r) => {
-            previousVideo.addEventListener('loadeddata', r, { once: true });
-            setTimeout(r, 5000);
-          });
-        }
-        seekPromises.push(landStillFrame(engine, previousVideo, prevTargetTime));
+        pending.push(visit(previousVideo, prevClip, calculateVideoTime(prevItem, prevTimeInClip), instanceKeyOf(prevItem)));
       }
     }
   }
+  await Promise.all(pending);
+}
+
+// A still's seek: every video on screen at `time`, inside sequences and templates too (visitVideosAtTime), loaded if its element holds
+// another file and landed on its frame. Resolves to the elements it put on their frames, for the capture to take their new frames.
+export async function seekAllVideosForTime(engine, env, time) {
+  const sought = new Set();
+  const seekPromises = [visitVideosAtTime(engine, env.channels, env.clipsMap, (ch) => env.layoutMap.get(ch.id), engine.channelStates, time, {
+    visit: async (video, clip, targetTime) => {
+      sought.add(video);
+      // Load source if needed
+      const clipSource = getClipPlaybackUrl(clip);
+      if (clipSource && normalizeUrl(video.src || '') !== normalizeUrl(clipSource)) {
+        video.src = clipSource;
+        video.preload = 'auto';
+        video.load();
+        await new Promise((r) => {
+          video.addEventListener('loadeddata', r, { once: true });
+          setTimeout(r, 5000);
+        });
+      }
+      await landStillFrame(engine, video, targetTime);
+    },
+  })];
   seekPromises.push(seekParticleObjectVideos(engine, env, time));
   await Promise.all(seekPromises);
+  return sought;
 }
 
 export function syncTransitionSounds(engine, env, time) {

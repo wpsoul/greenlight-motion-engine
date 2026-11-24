@@ -1,5 +1,5 @@
-// Smart Zoom maths: the spring camera and the drawn cursor for screen recordings
-// (PLANS/SCREEN_RECORDER_SMOOTH_MOTION_PLAN.md). Look-dev'd in html/smart-zoom-lab/ against Screen Studio's measured
+// Smart Zoom maths: the spring camera and the drawn cursor for screen recordings.
+// Look-dev'd in html/smart-zoom-lab/ against Screen Studio's measured
 // export; the labs load THIS file as a classic-script bundle (tests/smart-zoom/build_lab.mjs → SmartZoom global).
 //
 // It is a LEAF on purpose: no imports, no DOM, no editor state. smartZoomCamera.js adapts it to the editor's
@@ -273,6 +273,52 @@ const lerp = (a, b, u) => a + (b - a) * u;
 function resolveSpring(presets, presetId, custom, fallback) {
   if (custom && Number(custom.stiffness) > 0) return { stiffness: +custom.stiffness, damping: +custom.damping, mass: +custom.mass || 1 };
   return presets[presetId] || presets[fallback];
+}
+
+// ── Ease zones: how long a zoom takes to set off before its range and to come back to rest after it ──────────────
+
+export const ZOOM_ZONE_MAX_MS = 6000;
+const settleCache = new Map();
+
+/** Ms a spring takes to bring a step within `tol` of its target and keep it there (a unit step from rest). */
+export function springSettleMs(spring, tol = 0.02) {
+  const key = `${spring?.stiffness}|${spring?.damping}|${spring?.mass}|${tol}`;
+  if (settleCache.has(key)) return settleCache.get(key);
+  const p = springParams(spring);
+  const out = [0, 0];
+  let x = 0;
+  let v = 0;
+  let lastOut = 0;
+  const dt = 1 / 480;
+  for (let i = 1; i <= ZOOM_ZONE_MAX_MS * 0.48; i += 1) {
+    springAdvance(p, x, v, 1, 0, dt, out);
+    x = out[0];
+    v = out[1];
+    if (Math.abs(1 - x) > tol) lastOut = i;
+  }
+  const ms = Math.round((lastOut + 1) * dt * 1000);
+  settleCache.set(key, ms);
+  return ms;
+}
+
+/**
+ * A zoom range's ease zones in ms of its own time: `leadMs`, how long before its start the camera sets off (the range's
+ * own `leadMs`, else the settings' preRollMs), and `releaseMs`, how long after its end the camera takes to be back at
+ * rest (the range's own `releaseMs`, never shorter than the spring needs: its settle time plus the target's glide).
+ * `settleMs` is that floor. The timeline draws both as faded ends of the block, and other zooms keep out of them.
+ */
+export function zoomZoneMs(range, settings) {
+  const o = Object.assign({}, CAMERA_DEFAULTS, settings);
+  const spring = resolveSpring(CAMERA_PRESETS, o.preset, o.spring, 'studio');
+  const settleMs = springSettleMs(spring) + Math.max(0, o.rampMs);
+  const own = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.min(ZOOM_ZONE_MAX_MS, Number(v)) : null);
+  const lead = own(range?.leadMs);
+  const release = own(range?.releaseMs);
+  return {
+    leadMs: lead !== null ? lead : Math.max(0, Number(o.preRollMs) || 0),
+    releaseMs: Math.max(settleMs, release !== null ? release : settleMs),
+    settleMs,
+  };
 }
 
 // Where the view sits for a wanted centre. Along the travel the centre can have at zoom z ([h, 1 − h]), the outer
@@ -616,13 +662,17 @@ export function buildCameraPlan(input) {
   // Piecewise-constant targets in source time: [{ t, z, x, y }], then glides of `ramp` ms between them.
   const steps = [{ t: -Infinity, z: 1, x: 0.5, y: 0.5 }];
   const targets = [];
+  const zones = [];
   for (const r of ranges) {
     const z = Math.max(1, Number(r.zoom) > 0 ? +r.zoom : o.zoom);
     const list = rangeTargets(r, take, path, o, z);
-    const pre = Math.max(0, o.preRollMs);
+    // The range's ease zones: it sets off `leadMs` before its start and is back at rest `releaseMs` after its end.
+    const zone = zoomZoneMs(r, o);
+    zones.push({ id: r.id, leadMs: zone.leadMs, releaseMs: zone.releaseMs });
+    const pre = zone.leadMs;
     const aim = Number.isFinite(+o.aim) ? clamp(+o.aim, 0, 1) : 1;
     if (o.holdMinMs > 0) {
-      let prevT = r.startMs - Math.max(0, o.preRollMs);
+      let prevT = r.startMs - pre;
       for (let i = 1; i < list.length; i += 1) {
         const gap = list[i].t - prevT;
         if (gap < o.holdMinMs && gap > o.flowMs) list[i].t = prevT + o.flowMs;
@@ -638,7 +688,9 @@ export function buildCameraPlan(input) {
       steps.push({ t, z, x: v.x, y: v.y });
       targets.push({ t, z, x: v.x, y: v.y, rangeId: r.id });
     });
-    steps.push({ t: r.endMs, z: 1, x: 0.5, y: 0.5 });
+    // A longer release than the spring's own settle glides the target back to rest over the difference, so the
+    // camera is back at rest when the release zone ends.
+    steps.push({ t: r.endMs, z: 1, x: 0.5, y: 0.5, glideMs: Math.max(0, zone.releaseMs - zone.settleMs) });
   }
   // Ranges are disjoint after merging, but user ranges may touch: keep step times increasing.
   for (let i = 1; i < steps.length; i += 1) if (steps[i].t < steps[i - 1].t) steps[i].t = steps[i - 1].t;
@@ -653,14 +705,15 @@ export function buildCameraPlan(input) {
     const prev = steps[i - 1];
     const s = steps[i];
     const next = steps[i + 1];
-    const glide = Math.min(ramp, next ? Math.max(0, next.t - s.t) : ramp);
+    const own = Math.max(ramp, Number(s.glideMs) || 0);
+    const glide = Math.min(own, next ? Math.max(0, next.t - s.t) : own);
     srcKnots.push({ t: s.t, v: enc(prev) });
     srcKnots.push({ t: s.t + glide, v: enc(s) });
   }
   const edit = normalizeSlices(input.slices, durationMs);
   const outKnots = knotsToOutput(srcKnots, edit, enc(steps[0]));
   const tracks = [0, 1, 2].map((d) => buildSpringTrack(outKnots.map((k) => ({ t: k.t / 1000, y: k.v[d] })), spring));
-  return { settings: o, spring, ranges, targets, edit, tracks, outKnots, durationMs, outDurationMs: edit.length ? Math.max(...edit.map((e) => e.o1)) : durationMs };
+  return { settings: o, spring, ranges, zones, targets, edit, tracks, outKnots, durationMs, outDurationMs: edit.length ? Math.max(...edit.map((e) => e.o1)) : durationMs };
 }
 
 const _e0 = [0, 0, 0];

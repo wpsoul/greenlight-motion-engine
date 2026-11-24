@@ -239,6 +239,105 @@ export function isLayerMaskEnabled(item) {
   return masks.some((m) => m?.enabled !== false && (m?.path?.points?.length || 0) >= 3);
 }
 
+// ── A box: a mask the layer's own pass draws (no isolate, no coverage plate) ──
+//
+// Most masks on pictures are just a BOX: a script's `box` fit (scriptAssembler fitBox), Card Rail's and Flicker's card
+// masks, a rectangle drawn on a photo. One plain or rounded rectangle, hard-edged, at full strength, not turned, cuts
+// nothing the clip shader cannot cut in the layer's own pass (clipShader.js uBoxCrop, set by engine/layerMesh.js), so
+// the engine draws it there: no isolate, no coverage raster, no mask pass (engine/layerHelpers.js needsLayerMaskPass).
+// The data is the mask as it was — an app or a standalone engine without this draws the same picture with the pass.
+//
+// boxMaskShape(item) → { mid, rx, ry } (corner radii as shares of the mask box, as roundedRectPoints takes them) or
+// null. Static: the stored stack and WHICH tracks exist, never their values — X / Y / W / H may be keyed (the shader
+// is handed this frame's values, resolveLayerMaskParams as the pass reads them); everything else must be neutral and
+// unkeyed. Cached per item object (items are replaced, never mutated, on an edit).
+const BOX_TOL = 2e-4;
+const BOX_KAPPA = 0.5522847498307936;
+const boxShapeCache = new WeakMap();
+const NEUTRAL_CHANNELS = ['rot', 'feather', 'expand', 'opacity', 'grow'];
+
+export function boxMaskShape(item) {
+  if (!item || typeof item !== 'object') return null;
+  let hit = boxShapeCache.get(item);
+  if (hit === undefined) {
+    hit = readBoxMaskShape(item);
+    boxShapeCache.set(item, hit);
+  }
+  return hit;
+}
+
+function readBoxMaskShape(item) {
+  const effect = getLayerMaskEffect(item);
+  if (!effect || effect.enabled === false) return null;
+  const tracks = item.propertyKeyframes && typeof item.propertyKeyframes === 'object' ? item.propertyKeyframes : {};
+  const fx = item.propertyKeyframeFx && typeof item.propertyKeyframeFx === 'object' ? item.propertyKeyframeFx : {};
+  const driven = (key) => (Array.isArray(tracks[key]) && tracks[key].length > 0) || fx[key] != null;
+  if (num(effect.params?.mskAmount, MASK_DEFAULTS.mskAmount) !== 100 || driven('mskAmount')) return null;
+  const on = (Array.isArray(effect.masks) ? effect.masks : []).filter((m) => m && m.enabled !== false);
+  if (on.length !== 1) return null;
+  const mask = on[0];
+  if (!mask.mid || mask.kind != null || (mask.mode || 'add') !== 'add' || mask.inverted === true) return null;
+  for (const ch of NEUTRAL_CHANNELS) {
+    if (num(mask[ch], MASK_KF_CHAN_META[ch].neutral) !== MASK_KF_CHAN_META[ch].neutral || driven(maskKfKey(mask.mid, ch))) return null;
+  }
+  if (driven(maskKfKey(mask.mid, MASK_PATH_CHAN))) return null;
+  const corners = boxCorners(mask.path?.points);
+  return corners ? { mid: mask.mid, ...corners } : null;
+}
+
+const near = (a, b) => Math.abs(num(a, NaN) - b) <= BOX_TOL;
+const flat = (h) => near(h?.x ?? 0, 0) && near(h?.y ?? 0, 0);
+
+// The unit-box outline: the four corners (no handles), or roundedRectPoints' eight points (from any start point).
+function boxCorners(points) {
+  if (!Array.isArray(points)) return null;
+  if (points.length === 4) {
+    if (!points.every((p) => flat(p?.hIn) && flat(p?.hOut) && near(Math.abs(num(p?.x, 0)), 0.5) && near(Math.abs(num(p?.y, 0)), 0.5))) return null;
+    if (new Set(points.map((p) => `${Math.sign(p.x)},${Math.sign(p.y)}`)).size !== 4) return null;
+    // a closed walk round the four corners: each step changes exactly one coordinate
+    for (let i = 0; i < 4; i += 1) {
+      const a = points[i], b = points[(i + 1) % 4];
+      if (near(a.x, b.x) === near(a.y, b.y)) return null;
+    }
+    return { rx: 0, ry: 0 };
+  }
+  if (points.length !== 8) return null;
+  for (let s = 0; s < 8; s += 1) {
+    const p0 = points[s], p2 = points[(s + 2) % 8];
+    const rx = num(p0?.x, NaN) + 0.5, ry = num(p2?.y, NaN) + 0.5;
+    if (!(rx > 1e-4 && rx <= 0.5 + BOX_TOL && ry > 1e-4 && ry <= 0.5 + BOX_TOL)) continue;
+    const kx = BOX_KAPPA * rx, ky = BOX_KAPPA * ry;
+    const want = [
+      [-0.5 + rx, -0.5, -kx, 0, 0, 0], [0.5 - rx, -0.5, 0, 0, kx, 0],
+      [0.5, -0.5 + ry, 0, -ky, 0, 0], [0.5, 0.5 - ry, 0, 0, 0, ky],
+      [0.5 - rx, 0.5, kx, 0, 0, 0], [-0.5 + rx, 0.5, 0, 0, -kx, 0],
+      [-0.5, 0.5 - ry, 0, ky, 0, 0], [-0.5, -0.5 + ry, 0, 0, 0, -ky],
+    ];
+    const ok = want.every(([x, y, ix, iy, ox, oy], i) => {
+      const p = points[(s + i) % 8];
+      return near(p?.x, x) && near(p?.y, y) && near(p?.hIn?.x ?? 0, ix) && near(p?.hIn?.y ?? 0, iy)
+        && near(p?.hOut?.x ?? 0, ox) && near(p?.hOut?.y ?? 0, oy);
+    });
+    if (ok) return { rx: Math.min(0.5, rx), ry: Math.min(0.5, ry) };
+  }
+  return null;
+}
+
+/**
+ * The clip shader's box for this frame: `mask` = the resolved mask (resolveLayerMaskParams: x, y, w, h in % of the
+ * layer box), `shape` = boxMaskShape, boxW / boxH = the layer box in the plate's px (the plate; a video's frame-shaped
+ * box). → { crop: [cx, cy, hx, hy], radius: [rx, ry] } in plate px from the plate's centre, y UP (the canvas the pass
+ * rasterizes on runs y down, and lands upright on the box: engine/layerMasks.js).
+ */
+export function boxCropRect(mask, shape, boxW, boxH) {
+  const bw = boxW * (num(mask?.w, 100) / 100);
+  const bh = boxH * (num(mask?.h, 100) / 100);
+  return {
+    crop: [boxW * (num(mask?.x, 0) / 100), -boxH * (num(mask?.y, 0) / 100), bw / 2, bh / 2],
+    radius: [num(shape?.rx, 0) * bw, num(shape?.ry, 0) * bh],
+  };
+}
+
 // ── Sanitizers ──────────────────────────────────────────────────────────────
 // Autosave strips whatever isn't re-emitted here (the standing item-field
 // whitelist hazard), so every mask field must be spelled out.

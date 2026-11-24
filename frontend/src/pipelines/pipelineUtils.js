@@ -295,7 +295,7 @@ export function isSocialPart(el) {
   return el?.data?.managedBy === "social" && !!el.data.social?.part;
 }
 
-// An Ads frame (data.social.kind "ads", Ads research: PLANS/ADS_RESEARCH_API.md) is laid out by the backend the same way, and the
+// An Ads frame (data.social.kind "ads", Ads research: PLANS/FINISHED/ADS_RESEARCH_API.md) is laid out by the backend the same way, and the
 // Trends frame's layout, hide, take-out and roll-off routes take it too: the canvas treats both kinds, and their cards, alike.
 export function isSocialTrendsFrame(el) {
   const kind = el?.data?.social?.kind;

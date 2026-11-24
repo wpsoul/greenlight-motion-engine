@@ -142,6 +142,13 @@ measured with the solver below:
 - **Write the slope you need.** For end slope k keep x2 and set `y2 = 1 − k · (1 − x2)`; for start slope k set
   `y1 = k · x1`. `cubic-bezier(0.5, 0, 0.75, 0.25)` ends at 3 (an exit), `cubic-bezier(0.25, 0.75, 0.5, 1)` starts at 3
   (a landing).
+- **The Video Editor's curves by name:** [`gl-ease.js`](gl-ease.js), a file beside this page, is built from the editor's
+  easing code. Load it with a `<script>` before the page's own, then inside `draw(t)`:
+  `GLEase.tween(t, t0, t1, from, to, 'AE Smooth')` for a value, `GLEase.ease('Natural')` for a function of progress,
+  `GLEase.glide(valueAt, t)` for Glide, and `GLEase.track(keys, { spring: 'snappy' })(t)` for a keyed move through one of
+  the editor's expressions (Spring, Elastic, Bounce, Wiggle, Glide). The names are a keyframe's (`GLEase.names`); the whole list of calls is in
+  html-clips.md (GreenLight Dash only). Its CSS variables are for a page whose clock steps CSS (an
+  html clip), not for `draw(t)`.
 - **GSAP in a page** plays the same eases and slopes as in HyperFrames (hyperframes.md (GreenLight Dash only);
   [GSAP eases](https://gsap.com/docs/v3/Eases/)).
 - **Chained segments stop at the join.** A drift followed by an exit whose curve starts at slope 0 dips to zero speed

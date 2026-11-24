@@ -13,6 +13,7 @@ import { notePerfRenderer } from '../perfRegistry.js';
 import { disposeRigCropTargets } from '../rigDeform';
 import { disposeChannelStates, resizeChannelStates } from './channelStates';
 import { disposeCompositePipeline, flipAdjustmentGeoV, buildCompositePipeline } from './compositePipeline';
+import { clearVideoDepthTextures } from './depthSource';
 import { disposeEngine3d } from './modules3d';
 import { compositeNearPlane, getPerspectiveDistance } from './compositeHelpers';
 import { createEngineRenderer, stopEngineRenderer, disposeEngineRenderer } from './engineRenderer';
@@ -158,7 +159,8 @@ export function releaseEngineResources(engine) {
      */
     try { disposeRigCropTargets(); } catch { /* no-op */ }
     try { disposeAutoFillCropTargets(); } catch { /* no-op */ }
-    for (const ref of [engine.refObjects.repetilePass, engine.refObjects.rigPass, engine.refObjects.autoFillRig, engine.refObjects.depthScanRig,
+    try { clearVideoDepthTextures(); } catch { /* no-op */ }
+    for (const ref of [engine.refObjects.repetilePass, engine.refObjects.rigPass, engine.refObjects.autoFillRig, engine.refObjects.depthScanRig, engine.refObjects.depthKeyRig,
       engine.refObjects.bendPass, engine.refObjects.cornerPinPass, engine.refObjects.drostePass, engine.refObjects.pryzmPass, engine.refObjects.bezierWarpPass, engine.refObjects.meshWarpPass,
       engine.refObjects.regionDistortPass]) {
       try { ref.current?.material?.dispose(); } catch { /* no-op */ }
@@ -192,6 +194,8 @@ export function releaseEngineResources(engine) {
   engine.seqPlateCopyScene = null;
   engine.depthStampMaterial = null;
   engine.depthStampScene = null;
+  engine.footageDepthStampMaterial = null;
+  engine.footageDepthStampScene = null;
   engine.depthCompositeMaterial = null;
   engine.depthCompositeScene = null;
   engine.cameraDofMaterial = null;

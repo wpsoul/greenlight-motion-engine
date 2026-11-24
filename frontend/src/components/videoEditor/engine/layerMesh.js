@@ -23,6 +23,7 @@ import { imagePlateSize } from '../imagePlate';
 import { htmlClipPlateSize } from '../htmlClips';
 import { getInlineTextEditId } from '../inlineTextEdit';
 import { localPrs, setLayerPivotBox } from '../keyframeParenting';
+import { boxCropRect, resolveLayerMaskParams } from '../layerMask';
 import { applyMotionParamKeyframes } from '../motionKf';
 import { drawMotionFrame } from '../motionTemplates';
 import { evaluateObjectMotionPath, liveObjectMotionPath, motionPathTrackReach, motionPathSignature, MOTION_PATH_KF_KEY } from '../objectMotionPath';
@@ -37,7 +38,7 @@ import { PHONE_PLATE_BUCKETS, phonePreview } from './phoneMode';
 import { measureScreenScale } from '../rasterDensityProject';
 import { isCameraBaked3dPlate, RIG_MEDIA_TYPE } from '../rig3d';
 import { isStrokeShape, resolveLineSettings, SHAPE_PATH_KF_KEY, withShapeSizeKeyframes } from '../shapePath';
-import { animatorsMove as txaAnimatorsMove, boxRects as txaBoxRects, caretRect as txaCaretRect, evaluate as txaEvaluate, glyphFor as txaGlyphFor, grainOf as txaGrainOf, groupBoxes as txaGroupBoxes, hToCanvas as txaHToCanvas, KF_PREFIX as TXA_KF_PREFIX, layerSettings as txaLayerSettings, liveAnimators as txaLiveAnimators, maskedXf as txaMaskedXf, motionKey as txaMotionKey, needsLayout as txaNeedsLayout, paintCss as txaPaintCss, rgbCss as txaRgbCss, unitTransform as txaUnitTransform, unitTransform3d as txaUnitTransform3d, unitTransformCam as txaUnitTransformCam, m4Mul as txaM4Mul, warpBegin as txaWarpBegin, warpEnd as txaWarpEnd } from '../textAnimators';
+import { animatorsMove as txaAnimatorsMove, boxRects as txaBoxRects, boxBorder as txaBoxBorder, caretRect as txaCaretRect, evaluate as txaEvaluate, glyphFor as txaGlyphFor, grainOf as txaGrainOf, groupBoxes as txaGroupBoxes, hasFontEffects as txaHasFontEffects, hToCanvas as txaHToCanvas, KF_PREFIX as TXA_KF_PREFIX, layerSettings as txaLayerSettings, liveAnimators as txaLiveAnimators, maskedXf as txaMaskedXf, motionKey as txaMotionKey, needsLayout as txaNeedsLayout, paintCss as txaPaintCss, rgbCss as txaRgbCss, unitTransform as txaUnitTransform, unitTransform3d as txaUnitTransform3d, unitTransformCam as txaUnitTransformCam, unitFont as txaUnitFont, m4Mul as txaM4Mul, warpBegin as txaWarpBegin, warpEnd as txaWarpEnd } from '../textAnimators';
 import { clearTextFootprint, getTextFootprint, setTextFootprint } from '../textFootprint';
 import { buildPlaceholderRun, expandStaticPlaceholders, parseLineStates, parsePlaceholderText } from '../textPlaceholders';
 import { DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT, resolveTextFontSize, TEXT_BG_GROW_APPEAR, TEXT_BG_REVEAL_STYLES, TEXT_BG_REVEAL_TYPES, TEXT_BORDER_STYLES, TransitionEasing } from '../types';
@@ -46,13 +47,38 @@ import { setVideoPlate, videoPlateScale } from '../videoPlate';
 import { selectedBackend } from '../videoRenderer';
 import { inverseVideoStabilizationSample, sampleVideoStabilization } from '../videoStabilization';
 import { ensureTextTexture } from './canvasHelpers';
-import { calculateVideoTime, maskSilhouetteFraming } from './layerHelpers';
+import { calculateVideoTime, maskSilhouetteFraming, shaderBoxMask } from './layerHelpers';
 import { animatedFrameTexture as animatedFrameTextureInEngine, getClipPlaybackUrl, getImageTexture as getImageTextureInEngine, getVideoTexture as getVideoTextureInEngine, normalizeUrl } from './mediaTextures';
 import { applyMeshTransform, layerPoseScale } from './meshTransform';
 import { RECORDING_CURSOR_FLIP_ON_WEBGPU, bakeRecordingCursor } from './recordingCursorPass';
 import { getShapeSvgImage, getShapeTextureLayout, MAX_SHAPE_TEXTURE_DIM } from './pathFx';
 import { SHAPE_PAINT_KEY_RE, TEXT_PAINT_KEY_RE, activeTextRun, applyTextLetterCase, buildTextRandomPlan, buildWrappedTokens, clamp, densityMotionCtx, drawShapeToCanvas, drawTextBgRevealBar, drawTextDecorationLine, getPlaceholderTexture, getTextPathArcTable, itemPaintFieldSignature, kernBetween, measureTextWithLetterSpacing, motionCtmSafe, paintTextWithLetterSpacing, placeholderGlyphs, probeMotionCtx, setActiveTextRun, strokeTextWithLetterSpacing, txaBaseRgb, txaHasTrack, txaScratch } from './textPaint';
 import { TEXT_GLOW_FLIP_ON_WEBGPU, TEXT_GLOW_MAX_PLATES, TEXT_GLOW_PLATE_MAX, renderTextDeepGlow, textGlowPlate } from './textDeepGlow';
+
+// A Layer Mask that is a box (layerHelpers.js shaderBoxMask) is cut by the clip shader in this pass (clipShader.js
+// uBoxCrop) instead of by the mask pass: this frame's box, its X / Y / W / H read as the pass reads them
+// (resolveLayerMaskParams over this frame's keyframe values), against the box the pass cuts in — the layer box
+// (layerWarps.js computeLayerBox): the plate, or a video's frame-shaped box around its picture. The shader cuts it in
+// the plate's own geometry, before the V flip a compositor plate takes on WebGPU (so under any camera, 3D turn or
+// transition window it is where the pass's projected box is), anti-aliases its edge over one pixel's footprint
+// (fwidth: 1 px on an upright edge, |cos| + |sin| on a turned one), as the pass's raster (≥ 1 texel a screen px) does,
+// and leaves an edge that lies on the plate's own edge to the quad, as the pass's fully covered border texel does.
+// Text Animator Font effects: the last laid-out units of a resting stack, per item (see the layout below); and the
+// widths of the units' own fonts, so a moving stack (an In over a static look) measures only a font it has not met.
+const txaFontLayouts = new WeakMap();
+const txaFontWidths = { key: '', map: new Map() };
+
+function applyShaderBoxMask(material, item, clip, keyframeProps, boxW, boxH) {
+  const u = material.uniforms;
+  if (!u.uBoxCrop || !(boxW > 0) || !(boxH > 0)) return;
+  const shape = shaderBoxMask(item, clip);
+  if (!shape) return;
+  const mask = resolveLayerMaskParams(item, keyframeProps)?.masks?.find((m) => m.mid === shape.mid);
+  if (!mask) return;
+  const { crop, radius } = boxCropRect(mask, shape, boxW, boxH);
+  u.uBoxCrop.value.set(crop[0], crop[1], crop[2], crop[3]);
+  u.uBoxRadius.value.set(radius[0], radius[1]);
+}
 
 export function setupMesh(engine, env, mesh, material, item, clip, video, progress, durationSec = 0, cs = null, overrideTexture = null, parentXform = null, itemFollow = null) {
   if (mesh?.userData) { mesh.userData.cameraBaked3d = false; mesh.userData.particlePlate = false; mesh.userData.quadRect = null; mesh.userData.fxFrame = null; mesh.userData.mediaFrac = null; }
@@ -220,6 +246,10 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         transform: (str) => applyTextLetterCase(str, textLetterCase),
         // A Text Morph's letters travel around the line's alignment anchor.
         align: textAlign,
+        // Retype shrinks to the text box (the wrap width; none under No Wrap) and draws its caret
+        // once per paint — on the outline pass of outline-only type. Read at draw time (declared below).
+        boxWidth: () => (textNoWrap ? 0 : maxWidth),
+        fillMode: () => textFillMode,
       }));
     }
     const text = applyTextLetterCase(placeholderParsed ? placeholderParsed.text : staticText, textLetterCase);
@@ -515,6 +545,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
               rndFont,
               rndColor: rndStyle && rndColorOn ? rndStyle.color : null,
               rndSize: tokSize,
+              // its weight and italic, the own font a Text Animator Font effect starts from
+              rndStyle,
             });
             const nextPart = rowParts[rowPartIdx + 1];
             x += w;
@@ -615,10 +647,106 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         },
       });
     };
+    // The stack's motion key this frame (textAnimators.js motionKey): the time while it moves, a token while a
+    // cascade rests, null when nothing ever moves. Computed once: the font layout and the paint signature read it.
+    let txaMk;
+    const txaMotion = () => {
+      if (txaMk === undefined) {
+        txaMk = txaMoves && drawUnits.length
+          ? txaMotionKey(txaList, (aid) => txaHasTrack(item.propertyKeyframes, aid), {
+            time: animSec,
+            clipSec: animSpan,
+            units: txaUnits(),
+            counts: txaCounts,
+            voice: txaVoice,
+          })
+          : null;
+      }
+      return txaMk;
+    };
     if (txaActive && drawUnits.length && txaNeedsLayout(txaList)) {
-      txaEval = txaRun();
+      const fontsOn = txaHasFontEffects(txaList);
+      // A resting stack (nothing moves, or a cascade between turns) lays its units out the same way every frame:
+      // its last font layout is replayed instead of evaluated and measured again (≈ 2 ms a frame for 600 letters).
+      let restKey = null;
+      if (fontsOn) {
+        const mk = txaMotion();
+        if (!txaMoves || typeof mk === 'string') {
+          restKey = [mk || 'static', canvasW, canvasH, engine.fontLoadVersion, baseFont, letterSpacing, lineHeightPx,
+            text3dOn ? 1 : 0, drawUnits.length, text].join('|');
+        }
+      }
+      const kept = restKey !== null ? txaFontLayouts.get(item) : null;
+      let fontDw = null;
+      let tracks = null;
+      if (kept && kept.key === restKey) {
+        for (const [i, u] of kept.units) Object.assign(drawUnits[i], u);
+        fontDw = kept.dw;
+        tracks = kept.tracks;
+      } else txaEval = txaRun();
+      // Font size / Font weight / Italic (textAnimators.js unitFont): a unit takes its own
+      // font — du.rndFont / rndSize, which every paint path reads (glyph, light, stroke,
+      // glow plates, mask ink, boxes, caret, 3D letters, world cards) — and is measured
+      // with it, so its row makes room as for the Randomizer's units. It moves down by
+      // the change in size times the family's baseline depth ('top' line → alphabetic
+      // baseline, measured once), so it stays on the row's baseline. Only with such an
+      // effect: other layers measure nothing more.
+      if (fontsOn && txaEval) {
+        const changed = [];
+        ctx.font = baseFont;
+        ctx.textBaseline = 'alphabetic';
+        const capA = ctx.measureText('H').actualBoundingBoxAscent;
+        ctx.textBaseline = 'top';
+        const depth = capA - ctx.measureText('H').actualBoundingBoxAscent;
+        const drop = depth > 0 && fontSize > 0 ? depth / fontSize : 0.8;
+        // the row's line box around its baseline, per px of font size: a unit's own box scales with its size
+        const above = glyphDrop + drop * fontSize;
+        const below = lineHeightPx - above;
+        // widths hold for one letter spacing and one state of the loaded fonts
+        const widthsKey = `${letterSpacing}|${engine.fontLoadVersion}`;
+        if (txaFontWidths.key !== widthsKey) { txaFontWidths.key = widthsKey; txaFontWidths.map.clear(); }
+        for (let i = 0; i < drawUnits.length; i += 1) {
+          const st = txaEval.states[i];
+          if (!st.font) continue;
+          const du = drawUnits[i];
+          const rs = du.rndStyle;
+          const base = {
+            size: du.rndSize || fontSize,
+            weight: rs && rndWeightOn && rs.weight ? rs.weight : fontWeight,
+            italic: fontItalic || !!(rs && rndItalicOn && rs.italic),
+          };
+          const f = txaUnitFont(st, base);
+          if (!f) continue;
+          // 3D Text builds a glyph per font: its weights go in hundreds, so a moving weight builds nine at most
+          const weight = text3dOn ? Math.round(f.weight / 100) * 100 : f.weight;
+          const font = `${f.italic ? 'italic ' : ''}${weight} ${f.size}px ${fontFamily}`;
+          const wKey = `${font}\u0001${du.token}`;
+          let w = txaFontWidths.map.get(wKey);
+          if (w === undefined) {
+            ctx.font = font;
+            w = measureTextWithLetterSpacing(ctx, du.token, letterSpacing);
+            if (txaFontWidths.map.size > 8192) txaFontWidths.map.clear();
+            txaFontWidths.map.set(wKey, w);
+          }
+          (fontDw || (fontDw = new Float64Array(drawUnits.length)))[i] = w - du.w;
+          du.y += drop * (base.size - f.size);
+          const k = f.size / fontSize;
+          const baseline = du.y + glyphDrop + drop * f.size;
+          du._txaBand = [baseline - above * k, baseline + below * k];
+          du._txaFs = f.size;
+          du.rndFont = font;
+          du.rndSize = f.size;
+          du.w = w;
+          changed.push([i, { y: du.y, _txaBand: du._txaBand, _txaFs: f.size, rndFont: font, rndSize: f.size, w }]);
+        }
+        ctx.font = baseFont;
+        if (restKey !== null) {
+          txaFontLayouts.set(item, { key: restKey, units: changed, dw: fontDw, tracks: Float64Array.from(txaEval.states, (st) => st.track) });
+        }
+      }
       // Each unit pushes everything after it in its row (half of its own tracking
-      // before it, half after), then the row re-anchors for its alignment.
+      // before it, half after; all of its change in width after it), then the row
+      // re-anchors for its alignment.
       let row = -1;
       let cum = 0;
       let first = 0;
@@ -632,9 +760,10 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       for (let i = 0; i < drawUnits.length; i += 1) {
         const du = drawUnits[i];
         if (du.rowIdx !== row) { closeRow(i); row = du.rowIdx; cum = 0; first = i; }
-        const tr = txaEval.states[i].track;
+        const tr = tracks ? tracks[i] : txaEval.states[i].track;
         du.x += cum + tr / 2;
         cum += tr;
+        if (fontDw) cum += fontDw[i];
       }
       closeRow(drawUnits.length);
       const nem = rowMetrics.filter((m) => m.rowText.trim());
@@ -759,15 +888,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       // blinking caret, a Time / Voice cascade in flight): the engine's motion key is the
       // time then, and a fixed token while a cascade rests, so a settled caption is a
       // cached plate again.
-      const txaClock = txaMoves && drawUnits.length
-        ? txaMotionKey(txaList, (aid) => txaHasTrack(item.propertyKeyframes, aid), {
-          time: animSec,
-          clipSec: animSpan,
-          units: txaUnits(),
-          counts: txaCounts,
-          voice: txaVoice,
-        })
-        : null;
+      const txaClock = txaMotion();
       // Shared camera (textAnimators.js unitTransformCam). 'layer': an eye in front of
       // the plate centre at the layer's Perspective — 0 = the composition camera's
       // distance, so a letter's Z reads exactly like a layer's translateZ. 'project': the
@@ -1400,7 +1521,9 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
               if (du.rndFont) ctx.font = baseFont;
             }
           }
-          return { x0: du.x, y0: du.y, x1: du.x + ink, y1: du.y + lineHeightPx, wi: du.wIdx, li: du.rowIdx };
+          // A unit with its own font size (Text Animator Font size): its line box scaled about the row's baseline.
+          const band = du._txaBand;
+          return { x0: du.x, y0: band ? band[0] : du.y, x1: du.x + ink, y1: band ? band[1] : du.y + lineHeightPx, wi: du.wIdx, li: du.rowIdx };
         }))
         : null;
       // Mask boxes hug the INK, not the line box: text hangs from the em top with all
@@ -1586,7 +1709,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
           if (du.rndFont) ctx.font = baseFont;
         }
       }
-      return { row: du.rowIdx, x: du.x, w: du.w, ink, top: du.y + glyphDrop, bottom: du.y + glyphDrop + fontSize };
+      // its em band: a unit with its own font (Text Animator Font effects) at its own size
+      return { row: du.rowIdx, x: du.x, w: du.w, ink, top: du.y + glyphDrop, bottom: du.y + glyphDrop + (du._txaFs || fontSize) };
     });
     if (txaEval && txaEval.boxes.length && !isMask && !textPathOn) {
       const cells = txaCells();
@@ -1600,6 +1724,13 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
           if (ctx.roundRect) ctx.roundRect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0, q.r);
           else ctx.rect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0);
           ctx.fill();
+          // the box's own border: a line inside its edge, on the same radius (none = no cost)
+          const bd = txaBoxBorder(v, q);
+          if (bd) {
+            ctx.strokeStyle = bd.color; ctx.lineWidth = bd.width; ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(bd.x, bd.y, bd.w, bd.h, bd.r); else ctx.rect(bd.x, bd.y, bd.w, bd.h);
+            ctx.stroke();
+          }
         }
       }
       ctx.restore();
@@ -2254,6 +2385,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
           mesh.visible = true;
           resetMaterialUniforms(material);
           material.uniforms.uCanvasSize.value.set(W, H);
+          applyShaderBoxMask(material, item, clip, keyframeProps, W, H);
           return false;
         }
       }
@@ -2280,6 +2412,7 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
         mesh.visible = true;
         resetMaterialUniforms(material);
         material.uniforms.uCanvasSize.value.set(W, H);
+        applyShaderBoxMask(material, item, clip, keyframeProps, W, H);
         return false;
       }
       mesh.visible = false;
@@ -2578,6 +2711,8 @@ export function setupMesh(engine, env, mesh, material, item, clip, video, progre
       if (Number.isFinite(cellFx.sepia)) u.uSepia.value = clamp(u.uSepia.value + cellFx.sepia / 100, 0, 1);
     }
   }
+  // A box mask, cut in this pass (a Grid member's too: its Grid's composite would have run the mask pass on it).
+  applyShaderBoxMask(material, item, clip, keyframeProps, isVideoPlate ? videoFrameW : layerWidth, isVideoPlate ? videoFrameH : layerHeight);
   // (hdr3) The 3D Scene's own grade (brightness, contrast, saturation, hue, grayscale, sepia, invert, tint) in an HDR render's float
   // composite (../hdrComposite.js): the frame drawn with its SDR plate hands it to the HDR plate's pass, which grades the light above white
   // at the grade's own slope (compositeNodes.js gradeHybrid); the frame drawn with the HDR plate then shows that plate as it is.

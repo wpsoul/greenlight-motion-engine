@@ -4,9 +4,12 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Text and animated captions
+# GLEA — Text and animated captions
 
-> Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts. Load only the sections needed for the task.
+Read this page to add or change a text layer: its fields and defaults, captions and their bar, 3D and in-Scene
+letters, dynamic placeholders, and the Text Animators schema (`textAnimators`) every text animation is built from. The
+ready animations to paste are in [video-text-presets.md](video-text-presets.md); the shared project, clip, channel, timing and
+versioned-write contracts are in [video-projects.md](video-projects.md). Load only the sections the task needs.
 
 ## Contents
 
@@ -14,8 +17,10 @@
 - [How a text layer is structured](#how-a-text-layer-is-structured)
 - [Text item fields (defaults the app fills in)](#text-item-fields-defaults-the-app-fills-in): [caption bar look](#caption-bar-look), [caption-bar reveal](#caption-bar-reveal), [Grow Shape](#grow-shape), [shadow](#shadow), [case, decoration and clip mask](#case-decoration-and-clip-mask), [fill style and outline](#fill-style-and-outline), [voice-synced captions](#voice-synced-captions), [Text Randomizer fields](#text-randomizer-fields)
 - [3D Text — real extruded letters (`text3d`)](#3d-text--real-extruded-letters-text3d)
+- [Flat text in the 3D Scene (`textInWorld`)](#flat-text-in-the-3d-scene-textinworld)
 - [Dynamic text placeholders (counter, timer, word cycle, scramble, variables, markers, timecode)](#dynamic-text-placeholders)
 - [Advanced Animations — effects over a moving range of characters, words or lines](#advanced-animations--effects-over-a-moving-range-of-characters-words-or-lines)
+- [A backing that animates with its text](#a-backing-that-animates-with-its-text)
 - [Worked example — add a bottom caption to an existing project](#worked-example--add-a-bottom-caption-to-an-existing-project)
 
 ## Text caption layers
@@ -67,13 +72,19 @@ Any field you omit is filled with the default below, so a caption item only need
 
 A caption-style bar behind each text line. All lengths are composition px.
 
+**When the design calls for a backing behind animated captions** (any text with an animate-in), make that backing a
+**Highlight box** in the text's In animator, so it grows with the words: see
+[A backing that animates with its text](#a-backing-that-animates-with-its-text). Never put a static bar (these
+`textBg*` fields, a shape layer or a card) under text that animates in. The fields below are for text that appears
+without an animation.
+
 | Field | Default | Notes |
 | --- | --- | --- |
 | `textBgEnabled` | `false` | Draws the bar's fill. |
 | `textBgColor` | `"rgba(0,0,0,0.6)"` | Any CSS colour. |
 | `textBgPadding` | `16` | px (0–200): the spacing around the text on both axes. |
 | `textBgPaddingX` / `textBgPaddingY` | `null` | px (0–200): the horizontal and vertical spacing on their own. `null` or omitted falls back to `textBgPadding`. |
-| `textBgRadius` | `null` | px (0–200): the corner radius of fill and border. `null` or omitted = automatic: the padding, capped at 40 % of the font size and 40 px. |
+| `textBgRadius` | `null` | px (0–200): the corner radius of fill and border. `null` or omitted = automatic: the smaller of the two paddings, capped at 40 % of the font size and 40 px. |
 | `textBorderEnabled` | `false` | Strokes a border on the bar. It is set apart from the fill, so a bar can be outline-only (`textBorderEnabled` without `textBgEnabled`). The stroke sits inside the bar's bounds, so its width never grows the bar. |
 | `textBorderColor` | `"#ffffff"` | Any CSS colour, rgba allowed. |
 | `textBorderWidth` | `2` | px (0.5–40). |
@@ -139,7 +150,9 @@ Caption items produced by the AI Captions, per-take Captions and AI Shorts flows
 
 #### Text Randomizer fields
 
-The `textRandom*` fields give each word/letter/line its own size, colour, font weight and italic — a deterministic, seeded "ransom note / editorial mix" look. It works on static text and composes with Advanced Animations: units are styled first, the animators then run on the styled result. The distribution value drives size, weight **and** colour eligibility together (the top `textRandomCoverage` % of units get a colour), so with `dist: "nth"` the accented units are the same across all properties.
+For new work, give units their own size, weight, italic and colour with Text Animator effects — `size`, `weight`, `italic` and `fill` on a Wiggle `pick` ([Advanced Animations](#advanced-animations--effects-over-a-moving-range-of-characters-words-or-lines)): they take keyframes and ranges like every other effect, and the app's Classic Randomizer presets are built that way ([Classic Ransom Note](video-text-presets.md#classic-ransom-note)). The `textRandom*` fields stay for layers that have them.
+
+The `textRandom*` fields give each word/letter/line its own size, colour, font weight and italic — a deterministic, seeded "ransom note / editorial mix" look. It works on static text and composes with Advanced Animations: units are styled first, the animators then run on the styled result (a `size` or `weight` effect starts from the unit's Randomizer size and weight). The distribution value drives size, weight **and** colour eligibility together (the top `textRandomCoverage` % of units get a colour), so with `dist: "nth"` the accented units are the same across all properties.
 
 | Field | Default | Notes |
 | --- | --- | --- |
@@ -159,7 +172,7 @@ The `textRandom*` fields give each word/letter/line its own size, colour, font w
 | `textRandomItalicMode` | `"mix"` | `mix` (a share of the units) \| `all`. |
 | `textRandomItalicShare` | `30` | 0–100 %, `mix` only. |
 
-Ready-to-paste example (three-colour ransom-note letters, the look of [Classic Ransom Note](video-text-presets.md#classic-ransom-note)):
+Ready-to-paste example (three-colour ransom-note letters):
 
 ```json
 {
@@ -186,7 +199,7 @@ layer transform. **Rotate 3D in a Text Animator turns the letters for real**, sh
   "bevelSegments": 5,   // smoothness of the rounded edge (1–10)
   "faceColor": null,    // "#rrggbb" for every letter's face; null = the letter's own colour
   "sideColor": null,    // "#rrggbb" for the sides; null = the face colour darkened by sideShade
-  "sideShade": 35,      // % darker for the derived side colour
+  "sideShade": 35,      // % darker for the derived side colour (0–90)
   "palette": ["#e8392f", "#2f6fe8", "#f5c518", "#2fb04a"], // optional: colours cycled per letter (toy look)
   "material": "plastic",// plastic | matte | metal | glass
   "light": "studio",    // studio | soft | dramatic — only without a 3D Rig in the project
@@ -207,7 +220,9 @@ layer transform. **Rotate 3D in a Text Animator turns the letters for real**, sh
   scene object's `rot[0]` / `rot[1]` (Rotate Z keeps its on-screen clockwise sense, `rot[2]` negated): see
   [placing 3D Text in the world](video-world3d.md#placing-3d-text-in-the-world).
 - **Fonts.** Each letter is traced from the font the layer really draws with, so Google, uploaded and system fonts
-  and any weight work. The face is the 2D glyph's exact outline; the bevel swells the sides outward.
+  and any weight work. The face is the 2D glyph's exact outline; the bevel swells the sides outward. A Text Animator's
+  `size`, `weight` and `italic` apply to the letters as in 2D; on 3D letters its weight goes in steps of 100 (each
+  weight a letter takes is traced once).
 - **Not in 3D:** the caption bar, outline stroke, text shadow and glow, blur and decorations are 2D paint and are not
   drawn on 3D letters. A Text Animator's opacity and colour apply; its blur, glow, shadow and stroke do not.
 - **Cost:** a glyph's geometry is built once per font, character, depth and bevel and shared; each frame poses the
@@ -270,7 +285,7 @@ Orders {{{COUNTER:0-2,480; style=roll; duration=2.5; easing=expo_out}}} in {{{TI
 |---|---|
 | COUNTER | `style` odometer\|roll\|count (odometer) · `start` s (0) · `duration` s (1.8) · `easing` a TransitionEasing key in lowercase, e.g. `cubic_out` (cubic_out) · `width` fixed\|fit (fixed) · `digits` tabular\|natural, Count only (tabular) · `turns` 0–10 (3) · `lands` left\|right\|together (left) · `cascade` 0–90 % (45) · `direction` auto\|up\|down (auto) · `blur` 0–100 % (35) · `kf` a track id |
 | TIMER | the same keys; defaults are a real clock: `style` count, `duration` = the timer's own span (05:00 → 300 s), `easing` linear |
-| CYCLE | `style` roll\|fade\|blur\|morph (roll) · `start` (0) · `hold` s per state (1.2) · `duration` transition s (0.45; morph = each letter's travel, 0.8) · `easing` (cubic_out; morph expo_in_out) · `width` fit\|fixed (fit) · `direction` up\|down: roll, and a morph's rise/arc (up) · `loop` on\|off (on) · morph only: `match` order\|any (order) · `case` ignore\|keep (ignore) · `stagger` s between letters 0–2 (0.03) · `arc` 0–1 (0) · `leave` mask\|fade\|blur\|scale (fade) · `order` left\|center\|all (left) |
+| CYCLE | `style` roll\|fade\|blur\|morph\|retype (roll) · `start` (0) · `hold` s per state (1.2) · `duration` transition s (0.45; morph = each letter's travel, 0.8) · `easing` (cubic_out; morph expo_in_out) · `width` fit\|fixed (fit) · `direction` up\|down: roll, and a morph's rise/arc (up) · `loop` on\|off (on) · morph only: `match` order\|any (order) · `case` ignore\|keep (ignore) · `stagger` s between letters 0–2 (0.03) · `arc` 0–1 (0) · `leave` mask\|fade\|blur\|scale (fade) · `order` left\|center\|all (left) |
 | SCRAMBLE | `start` (0) · `duration` (1.2) · `chars` symbols\|letters\|digits\|binary\|blocks (symbols) · `order` ltr\|rtl\|random (ltr) · `flicker` glyph changes/s (18) |
 | TIMECODE / FRAME | no options — `clip` and the format are the token body (`{{{TIMECODE:clip mm:ss}}}`) |
 
@@ -285,6 +300,30 @@ Orders {{{COUNTER:0-2,480; style=roll; duration=2.5; easing=expo_out}}} in {{{TI
 {{{CYCLE:Give it a studio|GIVIT Studio; style=morph; loop=off}}}
 Any {{{CYCLE:model|bot|agent; style=morph; leave=mask}}}
 ```
+
+**Retype** (`style=retype`, MotionFast's Prompt Typewriter as a style):
+- The first line's words slide in, in their tints.
+- A caret grows at its left; a ray of light reaches ahead while the caret sweeps the line away on an eased curve.
+- The caret carries the next line back, typing; it blinks once the line is typed.
+- More lines repeat erase → retype, `hold` s after each.
+- The longest line shrinks to the text box; the style's width stays constant, so a `textBgEnabled` box is a stable "prompt box".
+
+Options (defaults):
+- words in: `stagger` 0.2 s, `wordtime` 0.55 s, `slide` 0.7 em
+- caret: `lead` 0.28 s, `grow` 0.34 s
+- light: `wipe` 0.38 s, `reach` 0.5, `light` 0.55
+- erase: `erase` 26 chars/s, `eraseease` smooth | power2 | power3 | power4 | back | bounce | expo | natural | slowdown | aein | aesmooth | aeout | elastic | overshoot | impulse | swing; `fade` 0.14 s
+- retype: `type` 14 chars/s, `humanize` 0.5, `anchor` center | left (where the typed line grows from)
+- other: `speed` 1, `caret` `#ffffff`; `tint1`–`tint3` colour the first line's words (`#hex` or `rgb()`/`rgba()`)
+
+```json
+{ "textContent": "with a prompt\nBuild a mobile app",
+  "textLineStates": { "style": "retype", "type": 14, "erase": 26, "caret": "#ffffff",
+                      "tint1": "#b9c4ef", "tint2": "#4da6ff", "tint3": "#3069d6" },
+  "textNoWrap": false, "textWidthPct": 84 }
+```
+
+In 3D Text the retype letters are not drawn; Text Animators treat the line as one unit.
 
 **Line states** (`textLineStates`): every line of `textContent` is one state of a cycle, no token needed. The first line shows, then turns into the next, and so on. The field takes the CYCLE options as JSON (`easing` = a TransitionEasing key in UPPERCASE, `loop` a boolean). Only `style` is required; omit defaults; `null` / absent = off. Blank lines are skipped. A placeholder inside a line shows its resting value.
 
@@ -301,13 +340,18 @@ The whole cycle is one unit of the text: Text Animators, the randomizer and text
 
 ### Advanced Animations — effects over a moving range of characters, words or lines
 
-**Start from a preset recipe** before building animators from scratch: the app's presets are ready JSON, tuned in the app.
-- Energetic text (a title, hook, promo or social line, anything punchy, bouncy or kinetic): [video-text-kinetic.md](video-text-kinetic.md) — 22 in-and-out animations (Swing Pop and its family).
-- Everything else: [video-text-presets.md](video-text-presets.md) — 54 recipes plus the app's 29 Classic ones. Sweep Reveal (typing under a colour band), Type on Shape (text typed onto a pill, card or bar that grows with it), Depth (words and letters moving in real depth under one camera: Rack Focus, Stand Up, Strata, Spotlight, Ripple), Emphasis (one highlight pass), Loop (neon, rainbow, float, flicker), Characters (decode, binary, glitch), Voice (caption karaoke on `textWordTimings`) and Classic (calm word or letter reveals, highlights, caption bars and randomizer looks, e.g. Fade Up, Rise (Mask), Typewriter, Lower Third).
+**Start from a preset recipe** before building animators from scratch: the app's presets are ready JSON, tuned in the
+app, all in [video-text-presets.md](video-text-presets.md) ([Pick a category](video-text-presets.md#pick-a-category)). Energetic text (a
+title, hook, promo or social line, anything punchy, bouncy or kinetic) takes a [Kinetic](video-text-presets.md#kinetic)
+recipe: 22 in-and-out animations (Swing Pop and its family). The other categories: Sweep Reveal (typing under a colour
+band), Depth (words and letters moving in real depth under one camera), Type on Shape (text typed onto a pill, card or
+bar that grows with it), Emphasis (one highlight pass), Loop (neon, rainbow, float, flicker), Characters (decode,
+binary, glitch), Voice (caption karaoke on `textWordTimings`) and Classic (calm word or letter reveals, highlights,
+caption bars and randomizer looks, e.g. Fade Up, Rise (Mask), Typewriter, Lower Third).
 
 **Pace:** entrances, exits and passes take ≥ 0.8 s by default; recipes keep their tuned timing. The rule, its formula and exceptions: [video-design.md](video-design.md#text-animation-pace).
 
-`GET /api/video-editor/capabilities` does not list Text Animator effects or presets: this page and the two preset pages are their schema.
+`GET /api/video-editor/capabilities` does not list Text Animator effects or presets: this page and [video-text-presets.md](video-text-presets.md) are their schema.
 
 The After Effects text-animator model on a text layer (stored as `textAnimators`). `item.textAnimators` is a list of animators; each one **selects** units of the text with a range (plus an optional wiggle) and applies its **effects** to them. Every effect value is what a unit gets at 100 % selection; the unit's selection amount (−1…1) scales it. What moves the selection is the range's `drive`: `range` (default) = Start / End / Offset, animated with `txa:` keyframe tracks or with `flow` for an endless keyframe-free travel; `time` = every unit takes its turn in seconds (a stagger, with In / Out and a highlight clock); `voice` = every unit takes its turn when it is spoken (captions). Renders identically in preview, `/render-onserver` and stills.
 
@@ -323,17 +367,17 @@ The After Effects text-animator model on a text layer (stored as `textAnimators`
               // drive "time" / "voice" only:
               "animate": "in", "order": "forward", "delay": 0, "stagger": 0.06, "duration": 0.6,
               "curve": "Ease Out", "hold": 0, "fadeOut": 0, "keepLast": false, "spread": true },
-  "wiggle": { "enabled": false, "mode": "intersect", "max": 100, "min": -100, "rate": 2,
+  "wiggle": { "enabled": false, "mode": "intersect", "max": 100, "min": -100, "pick": 0, "rate": 2,
               "corr": 0, "tPhase": 0, "sPhase": 0, "seed": 1 },
   "effects": [ { "pid": "p1", "type": "fill", "enabled": true, "color": "#ffd84d", "mix": 100 } ]
 }],
 "textAnimatorPivotX": 0,          // −100…100 % of the unit's box from its centre (100 = right edge)
-"textAnimatorPivotY": 0           // −100…100 % (100 = bottom)
+"textAnimatorPivotY": 0,          // −100…100 % (100 = bottom)
 "textAnimatorCamera": "layer",    // who films Position z and Rotate 3D: "unit" (default, omit) | "layer" | "project"
 "textAnimatorPerspective": 1300   // "layer" only: the camera's distance in px; omit / 0 = the composition camera's (2166 px at 1080p)
 ```
 
-Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid`/`pid` match `[A-Za-z0-9_-]{1,24}` and are unique; at most 8 animators and 12 effects per animator; unknown effect `type`s are dropped; every field takes its default when missing. Omit `textAnimators` (or leave it empty) for a layer without animators — the three layer fields are written only alongside a non-empty list. All px values are composition px.
+Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid`/`pid` match `[A-Za-z0-9_-]{1,24}` and are unique; at most 8 animators and 12 effects per animator; unknown effect `type`s are dropped; every field takes its default when missing. Omit `textAnimators` (or leave it empty) for a layer without animators — the four layer fields (`textAnimatorPivotX`, `textAnimatorPivotY`, `textAnimatorCamera`, `textAnimatorPerspective`) are written only alongside a non-empty list. All px values are composition px.
 
 **Range** (`range`):
 
@@ -372,18 +416,23 @@ Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid
 
 `voice` reads the item's `textWordTimings` (one `{ startMs, endMs }` per whitespace word, item-source ms — captions made from a transcript carry them). A line's turn spans its first word's start to its last word's end. With no timings, or not one per word (the text was edited), the animator runs as `time` — restoring the text restores the sync. An `out` side always runs on time. Under `time`, unit i starts at `delay + i × stagger`; an `out` cascade ends with the layer.
 
-**Wiggle** (`wiggle`, off unless `enabled`): a smooth random selection between `min` and `max` % that changes `rate` times a second, combined with the range by `mode` (`intersect` = only inside the range, `add`, `subtract`, `min`, `max`, `difference`). `corr` 0–100 % makes units wiggle together; `tPhase`/`sPhase` −360…360° offset it in time / across units; `seed` picks the pattern.
+**Wiggle** (`wiggle`, off unless `enabled`): a smooth random selection between `min` and `max` % that changes `rate` times a second, combined with the range by `mode` (`intersect` = only inside the range, `add`, `subtract`, `min`, `max`, `difference`). `corr` 0–100 % makes units wiggle together; `tPhase`/`sPhase` −360…360° offset it in time / across units; `seed` picks the pattern. `rate` 0 gives every unit one fixed random amount (a static random spread of size, weight or colour).
+
+**Pick** (`wiggle.pick`, 0–100 %, default 0 = off): crisp picks instead of in-between amounts. Exactly `round(N × pick / 100)` of the animator's N units — the ones with the highest wiggle value for `seed` — get 100 % and the rest 0; `min`, `max` and `corr` do nothing then, and `mode` combines the picks with the range as usual (`intersect`: picked units inside the range; `subtract`: the range except them). With `rate` 0 the picks stay put; above it they change crisply over time. Animators with the same `seed` and `rate` rank the units alike, so a `pick` lands on the units a continuous wiggle of that seed gives the most: with a `size` wiggle and a `fill` pick on one seed, the coloured words are the biggest ones. To split the picked units between colours, add a `fill` animator per colour with the same pick, intersected with a band of `randomize: true` (`start` 0, `end` 50 for half, `smooth` 0).
 
 **Effects** (`effects[]`, applied top to bottom; animators apply in list order). Transforms from every animator add up per unit and turn around the layer pivot above:
 
 | `type` | Fields (default) | How the selection applies |
 |---|---|---|
-| `position` | `x` 0, `y` −80, `z` 0 px | adds value × amount. `z` = depth, + toward the viewer. Under a shared camera (`textAnimatorCamera` `layer` / `project`) the unit really moves in depth: nearer units grow, all converge to one vanishing point, nearer covers farther, a unit at or past the camera is not drawn. With each unit's own camera (default) `z` scales the unit in place by D / (D − z), D = its Rotate 3D `perspective`, else `textAnimatorPerspective`, else the composition camera's distance |
+| `position` | `x` 0, `y` −80, `z` 0 px | adds value × amount. `z` = depth, + toward the viewer. Under a shared camera (`textAnimatorCamera` `layer` / `project`) the unit really moves in depth: nearer units grow, all converge to one vanishing point, nearer covers farther, a unit at or past the camera is not drawn. With each unit's own camera (default) `z` scales the unit in place by D / (D − z), D = its Rotate 3D `perspective`, else the composition camera's distance |
 | `scale` | `scale` 160, `x` 100, `y` 100 % | 100 % → value, multiplies |
 | `rotation` | `angle` 45° | adds |
 | `rotate3d` | `x` 90, `y` 0°, `perspective` 800 px | adds; real perspective. Each unit's own camera (default): a camera `perspective` px in front of the unit (0 = flat); every unit turns like its own card. Under a shared camera `perspective` is ignored and every turn shares that camera's vanishing point. +X tips the top away, +Y the right side |
 | `skew` | `skew` 25°, `axis` 0° | adds |
 | `tracking` | `amount` 40 px | adds space around the unit; the row reflows and re-aligns |
+| `size` | `size` 150 % (10–1000) | the unit's own font size × (1 + (value / 100 − 1) × amount), multiplying over animators. The unit is measured in that size, so its row reflows (the gaps stay, the row re-aligns, the text's plate grows with it) and it stays on the row's baseline. `scale` instead grows a unit in place, without reflow |
+| `weight` | `weight` 700 (100–900) | the unit's weight moves from its own (`textFontWeight`, or its Randomizer weight) toward `weight` by the amount; animators apply top to bottom, so a later one at 100 % wins; the row reflows. A variable font draws every step; a font with fixed weights (Google fonts as the app loads them: 100, 200 … 900) draws the nearest weight it has, and one with no heavier face a synthetic bold |
+| `italic` | `style` `italic` \| `normal` (`italic`) | where the amount is 50 % or more the unit is set in real italic (`normal`: upright, taking the italic off an italic layer; an amount of −50 % or less sets the other style); the row reflows. A font without an italic face slants synthetically |
 | `opacity` | `opacity` 0 % | 100 % → value, multiplies |
 | `fill` | `color` `#ffd84d`, `mix` 100 % | mixes the unit's colour toward `color` |
 | `gradient` | `colors` (2–6 hex), `angle` 0°, `span` `text`\|`unit`, `shift` 0 %, `repeat` false, `mix` 100 % | paints the unit with the gradient (across the whole text or each unit); `shift` slides the colours, `repeat` lets them loop |
@@ -392,7 +441,7 @@ Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid
 | `glow` | `color` `#5ef2ff`, `size` 30 px, `strength` 120 % | light around the glyphs (Deep Glow): a hot core and an inverse-square tail reaching about 5 × `size`; units with the same `size` share one glow, at most three sizes per layer |
 | `shadow` | `color` `#000000`, `x` 0, `y` 18, `blur` 20 px, `opacity` 70 % | offset shadow; only when the user asks for a text shadow |
 | `blur` | `amount` 18 px | defocus |
-| `box` | `color` `#33efab`, `behind` `selected`\|`revealed`, `shape` `line`\|`unit`\|`block`, `padX` 12, `padY` 4, `radius` 10 px, `opacity` 100 %, `grow` true, `withText` false | `line`: one bar behind each run of selected units in a row; `unit`: a bar behind each selected unit of `basedOn` (a whole word even when drawn by letters), as bright as its amount; `block`: one shape around all of it. `behind: revealed` = behind what this animator lets through (a typing animator grows its box). `grow` makes a moving span sweep it like a marker. `withText` (`unit` only): each bar is as visible as its unit — every animator's opacity included — so a word that has not appeared yet has no bar |
+| `box` | `color` `#33efab` (or `#rrggbbaa` for a see-through box), `behind` `selected`\|`revealed`, `shape` `line`\|`unit`\|`block`, `padX` 12, `padY` 4, `radius` 10 px, `opacity` 100 %, `grow` true, `withText` false, `border` 0 px (0–40), `borderColor` `#ffffff` (or `#rrggbbaa`) | `line`: one bar behind each run of selected units in a row; `unit`: a bar behind each selected unit of `basedOn` (a whole word even when drawn by letters), as bright as its amount; `block`: one shape around all of it. `behind: revealed` = behind what this animator lets through (a typing animator grows its box). `grow` makes a moving span sweep it like a marker. `withText` (`unit` only): each bar is as visible as its unit — every animator's opacity included — so a word that has not appeared yet has no bar. `border` > 0 draws a line along the inside of the box edge, on the same `radius`, in `borderColor`; for an outline only, give `color` no opacity (`#00000000`) |
 | `caret` | `style` `bar`\|`underscore`\|`block`, `ownColor` false, `color`, `width` 0 (auto) px, `blink` 1.1/s, `hide` false, `hideAfter` 0 s | a text cursor at this animator's reveal edge (what an Opacity 0 on the same range lets through): on an `in` animator it types with the text; solid while typing, blinking otherwise, gone when an `out` starts or `hideAfter` s after the typing ends |
 | `scramble` | `charset` `upper`\|`lower`\|`digits`\|`alnum`\|`symbols`\|`binary`\|`blocks`, `rate` 18/s, `seed` 1 | a unit shows random glyphs with probability = its selection |
 | `charOffset` | `offset` 6 | shifts letters/digits by `round(offset × amount)` through the alphabet |
@@ -412,14 +461,14 @@ Rules the sanitizer enforces (anything else is dropped or clamped on load): `aid
   "textAnimatorCamera": "project" }
 ```
 
-Colours must be 6-digit `#rrggbb`; `#fff`, `rgba()` or names silently become the effect's default colour. On a text layer used as a clip mask (`textClipMask`), `glow`, `shadow` and `box` are skipped (they would become coverage). `box` is not drawn on text on a path.
+Colours must be 6-digit `#rrggbb` (`box` also takes 8-digit `#rrggbbaa`); `#fff`, `rgba()` or names silently become the effect's default colour. On a text layer used as a clip mask (`textClipMask`), `glow`, `shadow` and `box` are skipped (they would become coverage). `box` is not drawn on text on a path.
 
 **Keyframes.** `propertyKeyframes["txa:<aid>:<chan>"]`, the usual `{ position, value, easing }` keys, value in the field's own units:
 - range: `start`, `end`, `offset`, `amount`, `smooth`, `easeHigh`, `easeLow` (under `time`/`voice` only `amount`)
 - wiggle: `wig.max`, `wig.min`, `wig.corr`
 - effect: `<pid>.<field>` for any numeric effect field except `scramble` `rate`/`seed` and `caret` `width`/`blink`/`hideAfter` (e.g. `txa:a1:p2.y`)
 
-Rates (`flow`, wiggle `rate`) and seeds are not keyframable. A track whose animator or effect no longer exists is dropped on load.
+Rates (`flow`, wiggle `rate`), seeds, wiggle `pick` and the wiggle phases (`tPhase`, `sPhase`) are not keyframable. A track whose animator or effect no longer exists is dropped on load.
 
 **Speed curves.** A text layer's own animation plays on its **speed-mapped clock**, like a video's frames: with `speedPoints` (or a `speed` track) on the layer, the animators, the times they run on (`time`/`voice` delays and durations, Flow, Wiggle, the caret) and the caption-bar reveal follow the curve. So a `txa:` key's `position` is a % of the clip's **source** length (`trimEnd − trimStart`, its 1× length), not of its timeline length; on a flat curve the two are the same. Its other keyframe tracks (position, scale, opacity, colours) stay on the timeline. The editor draws and edits `txa:` keys where they play.
 
@@ -428,7 +477,7 @@ app's recipe instead: a band sweeping the letters once is [Colour Sweep](video-t
 colour band is [Ember Type](video-text-presets.md#ember-type) and the other Sweep Reveal recipes, an endless neon pass is
 [Neon Flow](video-text-presets.md#neon-flow), a box under each spoken word is [Spoken Box](video-text-presets.md#spoken-box),
 letters typed at speaking pace are [Typed as Spoken](video-text-presets.md#typed-as-spoken), and energetic in-and-out
-titles are in [video-text-kinetic.md](video-text-kinetic.md).
+titles are the [Kinetic](video-text-presets.md#kinetic) recipes.
 
 ```jsonc
 // Cascade in: letters drop and spin into place left to right (rampUp = everything after the span is still hidden).
@@ -461,6 +510,43 @@ titles are in [video-text-kinetic.md](video-text-kinetic.md).
   "effects": [ { "pid": "p1", "type": "box", "color": "#33efab", "padX": 10, "padY": 8, "radius": 12 }, { "pid": "p2", "type": "fill", "color": "#07130e" } ] }],
 "propertyKeyframes": { "txa:a1:end": [ { "position": 8, "value": "9", "easing": "Smooth" }, { "position": 40, "value": "18", "easing": "Smooth" } ] }
 ```
+
+### A backing that animates with its text
+
+Rule ([video-design.md](video-design.md#hierarchy)): text with a plate behind it that animates in carries the plate as a `box`
+effect in its **In** animator, not as a static `textBgEnabled` bar or a shape layer under it. The editor shows it as
+In ▸ Effects ▸ **Highlight box**: Behind **Revealed**, Shape **Block** (one plate around the whole text) or **Per line**
+(a bar per row), Grow with range **On**. The plate then grows with the revealed words, and an Out animator with the
+same box takes it away with them.
+
+```jsonc
+// Words rise 90 px into place, the white plate grows behind what has arrived (Smooth, slow pace).
+"textAnimators": [
+  { "aid": "a1", "name": "In",
+    "range": { "drive": "time", "animate": "in", "basedOn": "words", "stagger": 0.12, "duration": 0.8, "curve": "Smooth" },
+    "effects": [
+      { "pid": "p1", "type": "position", "x": 0, "y": 90 },
+      { "pid": "p2", "type": "box", "color": "#ffffff", "behind": "revealed", "shape": "block",
+        "padX": 26, "padY": 11, "radius": 10, "opacity": 100, "grow": true } ] },
+  { "aid": "a2", "name": "Out",
+    "range": { "drive": "time", "animate": "out", "basedOn": "words", "stagger": 0.06, "duration": 0.6, "curve": "Smooth" },
+    "effects": [ { "pid": "p3", "type": "opacity", "opacity": 0 } ] }]
+```
+
+- An outline instead of a filled plate is the same box with a border: `"color": "#00000000", "border": 3,
+  "borderColor": "#33efab"`. It follows the box's `radius` and grows with the words like the plate.
+- Keep `textBgEnabled` off on that item (two plates otherwise). Padding, radius and colour come from the film's design
+  system; `padX` / `padY` / `radius` are keyable (`txa:a1:p2.padX`).
+- `shape: "line"` for a multi-line caption whose rows should each have their own bar; `"unit"` with `withText: true`
+  for a bar under each word as it lands.
+- A caption with this plate (or any other box behind its words) takes no second `box` in its voice or highlight
+  animator, unless the user asks for one. Its running highlight is the word's colour alone:
+  `"range": { "basedOn": "words", "drive": "voice", "animate": "active" }, "effects": [ { "type": "fill", "color": "<accent>" } ]`.
+  [Spoken Box](video-text-presets.md#spoken-box) and [Classic Karaoke Sweep](video-text-presets.md#classic-karaoke-sweep) draw a
+  box under the spoken word, so they go on captions with no backing
+  ([video-design.md](video-design.md#never)).
+- Ready recipes that already work this way: the box presets in [Type on Shape](video-text-presets.md#type-on-shape) with
+  `"behind": "revealed"`.
 
 ### Worked example — add a bottom caption to an existing project
 

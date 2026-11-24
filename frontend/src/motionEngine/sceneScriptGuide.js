@@ -45,7 +45,7 @@ matte, masks, particles, 3D) goes on from \`project.json\`: SKILL.md, "Beyond th
     { "name": "Offer", "duration": 2.4, "transition": "Camera Whip", "camera": "drift-left",
       "elements": [
         { "type": "pill", "w": 560, "h": 116, "color": "accent", "start": 0.15 },
-        { "type": "text", "text": "Opening day: 2 for 1", "role": "body", "color": "#1b120d", "start": 0.3, "enter": "pop-overshoot", "sound": "data-1" } ] },
+        { "type": "text", "text": "Opening day: 2 for 1", "role": "body", "color": "#1b120d", "start": 0.3, "enter": "pop-overshoot" } ] },
     { "name": "Close", "duration": 2.4, "transition": "Gradient Glow Stack", "background": { "shader": "silk", "look": "sunset" },
       "camera": { "move": "cm-quiet-push", "dof": { "focus": "street", "aperture": 50 } },
       "elements": [
@@ -74,24 +74,36 @@ matte, masks, particles, 3D) goes on from \`project.json\`: SKILL.md, "Beyond th
   (px; the other follows the file's shape) or \`fit\` cover | contain
   (default: a video covers the frame, a picture sits at 70 % of contain), \`rotate\` (deg). A video also takes
   \`startAt\` (s into the file) and \`volume\` (0–100, default muted). No entrance unless you set \`enter\`.
+- **html**: an HTML page as a layer — an interface (a product screen, an app window, a dashboard, a chat, a code editor) or a shot
+  only code draws. The page: \`html\` (the whole document, written here: \`"<!doctype html><html>…</html>"\`, up to 512 KB) or \`src\`
+  (${host === 'cli' ? "a page file in the folder's assets/ as `asset:<page>.html`" : "the user's own page file, `asset:<name>.html`, added on the page"}); \`page\`: its own size [width, height] in px (the frame's without
+  it), which the layer fits into the frame; \`w\` or \`h\` (px) or \`fit\` cover | contain; \`startAt\` (s into the page), \`rotate\`.
+  The engine draws the page itself, frame by frame on the video's clock: nothing is recorded first. It needs Chrome 157 or
+  newer${host === 'cli' ? ' (`doctor` says)' : ': elsewhere the layer is empty, and look_at_video says so'}. ${host === 'cli'
+    ? "The page's CSS animations, `requestAnimationFrame`, timers, `performance.now()` and videos follow the video's time. Its own files go beside it (`<img src=\"img/logo.png\">`), or name any file of the folder as `asset:<name>`."
+    : "**No script runs in a page here** (in this chat and on a shared link alike): its motion is CSS `@keyframes` animations, SVG `<animate>` and `<video>`, all set to the video's time; JavaScript, `requestAnimationFrame` and timers do nothing. Pictures in it: inline SVG, CSS, or the user's files as `asset:<name>` (an https picture is blocked here: put it as an image element over or under the page)."}
+  A transparent background lets the layers behind show; keep the words a person will change (titles, captions, a price) as
+  text elements over the page, not in it. No entrance unless you set \`enter\`.
 - **Keyframes on any element** — your own motion: \`"keyframes": { "x": [[0, -400], [0.8, 0, "Smooth Glide"]], "scale": [[0, 0.9], [2, 1.05]] }\`
   — tracks x, y (px offsets from \`at\`), scale, rotate (deg), opacity (0–1); each key [seconds into the element, value, easing of the
   segment after it — Smooth Glide, AE Smooth, Expo Out, Power, Punch, Apple Out, Back Out, Elastic, Linear …]. They replace an entrance's keys on the same track;
   one key holds that value for the whole element.
 - **Every element**: \`start\` / \`end\` (s within its scene; default: staggered 0.12 s, to the scene's end), \`enter\` / \`exit\` (keyframe presets, \`direction\` up | down | left | right
-  for directional ones), \`effects\`: [{ "id", "params"? }], \`sound\` (played at its start), \`id\`, \`label\` (its name in the page's options), \`opacity\` (0–1),
+  for directional ones), \`effects\`: [{ "id", "params"? }], \`id\`, \`label\` (its name in the page's options), \`opacity\` (0–1),
   \`z\` (px of depth, + toward the viewer, default 0: a real camera's dolly, orbit and depth of field separate layers by it), \`locked\`: true
   (the scene's camera doesn't move it: a logo, a caption). Keyframes also take a \`z\` track.
 - **Scene**: \`duration\` (s), \`transition\` into it (default Cross Fade, 0.6 s; \`transitionDuration\`), \`transitionOptions\` (the
   transition's own settings, e.g. Circular Wipe's \`point\` { x, y } (% of the frame from its top-left: 50, 50 is the centre) and \`feather\`; ${host === 'chat' ? 'every option: get_motion_reference "video-transitions"' : 'every option: `npx greenlight-motion schema transitions`'}.
   A transition's vivid colours, such as Circular Wipe's beam, take the accent unless you set them; over a light backdrop Circular
   Wipe's glowing beam is off, since it flares there, unless you set \`beam\`), \`camera\` (below; default push-in),
-  \`background\` (overrides style), \`sounds\`: [{ "sfx", "at" }]. Script-level \`sound\`: auto (default: a whoosh on each transition and
-  on the first headline, from the GreenLight sound library${host === 'chat' ? '' : ', which the CLI downloads into assets/sounds/ when it builds'}) | none (nothing from the library: when
-  nothing may be downloaded, use \`music\` with a file you made).
+  \`background\` (overrides style).
   **A transition overlaps the scenes on both sides**, so the video lasts the scenes' durations added up MINUS every
   transition: five 3 s scenes with the default 0.6 s transitions run 15 − 4 × 0.6 = 12.6 s. To hit a length, add the
   transitions back to the scenes (${host === 'chat' ? 'build_video' : '`script`'} prints the total).
+- **Sound**: the script adds none and the engine has no sounds of its own. A film's sounds and music are files, chosen in the
+  order the design rules give (${refOf(host, 'video-design')}, Sound): what the user gave or named, then their own library or
+  files, then generated with a tool they have or found in an open source. Music goes in \`music\` (below); a sound effect is an
+  audio clip at the second of its event, added after the script ${host === 'chat' ? 'with edit_video' : 'with \`apply\` (\`events\` gives the seconds)'}.
 - **camera** — a quick move of the whole scene: ${CAMERAS.join(' | ')}. Or a REAL camera that films the scene's elements in 3D (the
   Video Editor's own camera layer; the scene's backdrop stays put, so its edge never shows). One of:
   - \`{ "move": id }\` — a camera move from the catalogue (or just \`"camera": "cm-quiet-push"\`), spread over the scene;
@@ -121,13 +133,11 @@ export function designGuide() {
   return `${DESIGN.replace(/^(#+) /gm, '#$1 ').trim()}\n\n`;
 }
 
-/** "## Catalogues": text animations, entrances, exits, transitions, effects, sounds (caps = schema/capabilities.json). */
+/** "## Catalogues": text animations, entrances, exits, transitions, effects (caps = schema/capabilities.json). */
 export function catalogueGuide(caps, host = 'chat') {
   const cat = presetCatalog();
   const cam = cameraCatalog();
   const star = (line, ids) => (ids.some((id) => line.startsWith(`\`${id}\``)) ? `★ ${line}` : line);
-  const sounds = {};
-  for (const [id, sd] of Object.entries(caps?.sounds?.library || {})) if (sd.category !== 'Voice Clips & Memes') (sounds[sd.category] ||= []).push(`${id} (${sd.duration}s)`);
   const fx = (list) => (list || []).filter((e) => !['grain', 'lensPrism', 'linesDraw', 'sdfLensBlur'].includes(e.id)).map((e) => (PREFERRED.overlay.includes(e.id) || PREFERRED.layer.includes(e.id) ? `★ \`${e.id}\`` : `\`${e.id}\``)).join(', ');
   return `## Catalogues
 
@@ -150,9 +160,6 @@ export function catalogueGuide(caps, host = 'chat') {
 **Layer effects** (\`effects\`): ${fx(caps?.effects?.layer)}
 
 Effect params: ${refOf(host, 'video-effects')}.
-
-**Sounds** (\`sound\`, \`sounds[].sfx\`):
-${Object.entries(sounds).map(([k, v]) => `- ${k}: ${v.join(', ')}`).join('\n')}
 
 `;
 }
@@ -259,11 +266,13 @@ ${host === 'chat' ? `- **How long a Final may be here.** A Final MP4 costs its s
   minutes it shows that time ("this computer stays busy") and, where the user connects it on the page, their own GPU farm (e.g.
   RunPod): its time and price for this video, 1–10 pods, a spend cap — no length cap there. You may tell the user it exists; never ask
   for, repeat or handle their farm key (it is typed on the page and goes only to the farm), and never start a farm render yourself.
-- **The page's Draft | Final switch.** A video with a \`world\` has Draft 3D | Final 3D at the end of the page's Edit toolbar,
-  set to your \`render.mode\`. Under Final the paused frame is path traced and Render MP4 renders Final (playing stays Draft). When
-  the user switches it, their review and look_at_video say so ("3D: Final"): keep their choice in \`world.render.mode\` when you
-  build again. Final frames are drawn only when asked: look_at_video has the page trace them (about a minute) and may answer
-  that it is drawing them — call it again then; never describe frames you haven't seen.
+- **The page's 3D: preview and render.** A video with a \`world\` opens on its page with Draft 3D | Final 3D in the player bar,
+  always on Draft: it is the preview's own (under Final the paused frame is path traced; playing stays Draft), never kept and never
+  reported to you. Render MP4, render_video, the contact sheet and look_at_video follow your \`world.render.mode\`. The page's Render
+  pane has Draft 3D | Final 3D too: when the user renders the other mode there, their review and look_at_video say so ("3D: Final —
+  the user switched …"): keep their choice in \`world.render.mode\` when you build again. Final frames are drawn only when asked:
+  look_at_video has the page trace them (about a minute) and may answer that it is drawing them — call it again then; never
+  describe frames you haven't seen.
 - **The 3D plugin.** The 3D engine is a plugin of GreenLight Motion (\`greenlight-motion-3d\`): the page downloads it in the
   user's browser the first time a video with a \`world\` opens (about 5 MB to start; physics, simulations and the denoiser
   only when a scene uses them), so the first 3D build takes a few seconds longer. The user can get it ahead with **Download 3D

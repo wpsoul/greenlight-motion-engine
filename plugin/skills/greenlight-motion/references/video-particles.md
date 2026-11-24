@@ -4,59 +4,127 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Particle layers, fluid physics and emission
+# GLEA — Particle layers: dust, snow, sparks, smoke, dissolves and lines
 
 > Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts. Load only the sections needed for the task.
 
+Read this to add or change a particle layer (`mediaType: "particles"`): a seeded simulation in a box, drawn as one layer of the
+composition. Ambience (dust, snow, sparks, bokeh, stars), a picture or word that dissolves into its own pixels or builds out of them,
+smoke and fluid made of particles, particles inside letters or flowing round a logo, layers stamped as particles, trails and lines.
+
 ## Contents
 
-- [Particle layers (`mediaType: "particles"`) — a simulated Solver Box filmed by the project camera](#particle-layers-mediatype-particles--a-simulated-solver-box-filmed-by-the-project-camera): engines, rules, the example, `solver`, `emitters[0]`, `forces`
+- [Particle layer or 3D Scene sim?](#particle-layer-or-3d-scene-sim)
+- [The layer](#the-layer)
+- [Which engine runs it](#which-engine-runs-it)
+- [Presets, and the Snow example](#presets-and-the-snow-example)
+- [`solver`: the box](#solver-the-box)
+- [`emitters[0]`: where particles are born](#emitters0-where-particles-are-born)
   - [Emission distribution](#emission-distribution-emitters0distribution)
-  - [The fluid field — fluid and smoke physics](#the-fluid-field-v3--fluid-and-smoke-physics-particular-style), with the Rising Smoke and Shockwave starters and `render`
-  - [Emitting from a layer — dissolve a picture into its own pixels](#emitting-from-a-layer-shape-layer--dissolve-a-picture-into-its-own-pixels)
-  - [Particle Activation — a sweep instead of a pop](#particle-activation-activation--a-sweep-instead-of-a-pop)
-  - [Particle objects — stamp layers instead of sprites](#particle-objects-objects--stamp-layers-instead-of-sprites)
-  - [Lines — trails and ready-made lines](#lines-rendermode-lines--trails-and-ready-made-lines)
-  - [Particles in a world Scene](#particles-in-a-world-scene)
-  - [What re-bakes and what is free](#what-re-bakes-and-what-is-free)
+- [`forces`](#forces)
+- [`render`: the look](#render-the-look)
+- [Smoke and fluid (`forces.fluid`)](#smoke-and-fluid-forcesfluid)
+  - [Force emitters (`forceEmitters`)](#force-emitters-forceemitters)
+- [Emit from a layer: dissolve a picture into its pixels](#emit-from-a-layer-dissolve-a-picture-into-its-pixels)
+- [Grow: a front that releases the picture (`activation`)](#grow-a-front-that-releases-the-picture-activation)
+- [Layers as particles (`objects`)](#layers-as-particles-objects)
+- [Lines: trails and ready-made rows](#lines-trails-and-ready-made-rows)
+- [Collision and containers (`collision`, `colliders`)](#collision-and-containers-collision-colliders)
+- [Particles that pile up (`packing`)](#particles-that-pile-up-packing)
+- [Follow a path (`pathFollow`)](#follow-a-path-pathfollow)
+- [Proximity: another layer's shape drives the cloud](#proximity-another-layers-shape-drives-the-cloud)
+- [A logo made of particles, and a morph between shapes](#a-logo-made-of-particles-and-a-morph-between-shapes)
+- [What re-bakes and what is free](#what-re-bakes-and-what-is-free)
 
-### Particle layers (`mediaType: "particles"`) — a simulated Solver Box filmed by the project camera
+## Particle layer or 3D Scene sim?
 
-A particle clip carries no media. Its **item** owns a whole `particleSystem` — a seeded simulation of up to 8,000,000 particles inside a **Solver Box**, drawn as instanced billboards and filmed by the same camera as 3D models and the rig.
+Use a **particle layer** for particles that belong to the flat composition: ambience over footage or a title, a layer that
+dissolves into its pixels or builds out of them, particles held inside letters or flowing round a logo, a word or shape that
+pulls the cloud (Proximity), layers stamped as particles, trails, lines bent by smoke, smoke made of particles. It works in any
+project, is sized in composition pixels next to the other layers, and its bake needs no WebGPU. It is drawn as one flat picture:
+not lit, no shadows, not traced in Final 3D, never hidden by a 3D Scene's objects (over a Scene it is drawn over the Scene's
+picture). Use a **3D Scene sim** (`rig.scene.sims`, sim.md (GreenLight Dash only)) when the particles live among the Scene's objects: in front of
+and behind them, lit by its lights, casting shadows, colliding with its objects, sparks that light the floor in Final, smoke as a
+lit volume. The Scene has recipes for the same looks (`snow`, `dust_in_beam`, `smoke`, `sparks_in_wind`, `embers`, `bokeh`, `stars`,
+`smoke_lines_grid`; [video-world3d.md](video-world3d.md#particles-snow-dust-smoke-sparks-bokeh-stars)). Volumetric smoke, fire and explosions
+exist only as Scene sims ([video-world3d.md](video-world3d.md#smoke-and-fire)): a particle layer's fluid moves particles and is never drawn as
+a volume.
 
-Two engines run these, chosen automatically per layer and never by the author:
+## The layer
 
-- **Baked (Tier 1)** at or below 50,000, and at any count for a system using a
-  feature the GPU engine does not implement — Grow Points, particle objects,
-  lines, a `rows` emitter, Return (`forces.return.strength` above 0), packing,
-  colour taken at birth from a video source, collision or a container, Layer
-  Velocity, force emitters, Path Follow, or `solver.engine: "baked"`. Off-thread,
-  cached, scrubs backwards for free.
-- **GPU (Tier 2)** above 50,000 on a machine with WebGPU. The system emits,
-  simulates and draws entirely on the graphics card and is **never baked** — so
-  `maxParticles` above the bake's ceiling is a real number of particles, not a
-  clamped one. It re-simulates on a backward scrub rather than reading a cache.
-  Without WebGPU such a system runs baked, clamped to 100,000 particles.
+A particle clip carries no media. Its **item** owns the whole system as `particleSystem`.
 
-The count is a **ceiling, not a request**: a system emitting 260/s with a 5 s
-lifetime holds about 1,300 at once whatever the ceiling says, and the baked
-solver sizes itself to what the emitter can actually reach. Raising the
-number "to be safe" costs nothing. Use it for dust / snow / sparks / bokeh ambience, and for **dissolving an image, text or shape layer into its own pixels**.
+- The clip is synthetic (`"url": ""`), default duration 6 s.
+- Put it on its **own free channel** (`"unsnapped": true`) and place it with `freeStart`. A project may hold several; the channel has
+  no `kind`, ordinary stacking applies. The editor's Add Layer ▸ Particle Solver does this with the Dust preset at the playhead.
+- **Only `emitters[0]` is simulated.** The array keeps up to 8 entries; the rest are ignored.
+- **`preset` is a label.** Writing `"preset": "snow"` does not make snow: the editor writes a complete system only when a preset is
+  applied in the panel. Write the values ([Presets](#presets-and-the-snow-example)).
+- Every load passes the system through a bounded sanitizer: a missing field takes the **Dust** default, a number out of range is
+  clamped, an unknown enum reverts. A partial system is Dust plus what you wrote, so set what Dust has on that you do not want:
+  `forces.wind.x` 8, `forces.turbulence.strength` 26, `forces.drag` 0.12, `render.twinkle` 0.2, `solver.preRoll` 5.5.
+- **Write `"schemaVersion": 4`.** A system without it is read as version 1 and keeps `forces.turbulence.pattern: "smooth"` instead of
+  the default `"billow"`. Optional blocks left out (`forces.fluid`, `forces.draft`, `forceEmitters`, `pathFollow`, `collision`,
+  `colliders`, `packing`, `proximity`) are off.
+- **Keyframes.** The item's Position / Rotation / Scale keyframes, parenting and Motion Follow move the whole box. Inside the system
+  only the Proximity numbers take tracks (`px:`, [below](#proximity-another-layers-shape-drives-the-cloud)); wind, rate,
+  turbulence and every other solver value hold one value for the clip. Asked to "animate the wind", say so instead of writing a
+  track that is dropped.
+- **Its clock** is the seconds since the layer starts on the timeline. `speedPoints` change only the layer's length, not the
+  simulation's pace; trimming the head does not skip into it; Posterize Time ([effects-layer.md](video-effects.md#posterize-time-entry))
+  steps it. Changing the layer's length re-bakes it.
+- Rendered by `/render-onserver` and the desktop export. The fast ffmpeg `/render` does not draw particle layers.
+- `quality.previewFraction` (0.05–1) draws a stable subset, and the export reads it too: leave it at `1`.
 
-**Route "add falling snow", "dust motes", "sparks", "make the logo dissolve/disintegrate into particles" here.**
+The inspector's groups and what they write: EMITTER `emitters[0]`; GROW / GROWTH FIELD `activation`; PARTICLE `render.mode`,
+`objects`; LOOK and COLOUR `render`; GRAVITY & WIND `forces.gravity`, `wind`, `drag`, `return` ("Pull home"); TURBULENCE
+`forces.turbulence`; FOLLOW A PATH `pathFollow`; FORCES `forces.vortex` ("Everywhere") and `forceEmitters` ("At a point"); COLLISION
+`collision`, `colliders`; PILE UP `packing`; FLUID & SMOKE `forces.fluid`, `forces.draft`; PROXIMITY `proximity`; SOLVER `solver`,
+`seed`, `quality`.
 
-Rules:
+## Which engine runs it
 
-- Clip is synthetic (`"url": ""`), default duration 6 s. The system lives on the **item** as `particleSystem`; the clip carries nothing but identity.
-- Put it on its **own free channel** (`"unsnapped": true`) and place it with `freeStart`. It is **not** a singleton (a project may hold several) and its channel has no `kind` — ordinary z-order applies.
-- **Only `emitters[0]` is simulated.** The array is capped at 8 for future use; anything after the first is ignored by the solver.
-- **`preset` is metadata, not a reference.** Writing `"preset": "snow"` does **not** produce snow — the app materialises a complete system only when a preset is applied in the editor. Author the actual values (start from the example and the starters below).
-- Everything is passed through a bounded sanitizer on load: missing fields fall back to the Dust defaults, out-of-range numbers clamp, unknown enum values revert. A partial system is therefore safe to write, but it will be Dust plus your overrides — not the preset you named.
-- **Write `"schemaVersion": 4`.** A system with no `schemaVersion` is read as version 1 and keeps `forces.turbulence.pattern: "smooth"`, not the current `"billow"` default. The optional blocks (`forces.fluid`, `forces.draft`, `forceEmitters`, `pathFollow`, `collision`, `proximity`) default to off, so leaving one out is the same as turning it off. `packing` is the same: while `packing.enabled` is false it contributes nothing to the simulation identity and `render.size` stays a look-only field.
-- **Solver values are NOT keyframable.** The item's own Position/Rotation/Scale keyframes move the whole box, but there is no `pt:`/`ptc:` property path for wind, rate, turbulence or anything else in the system — those hold one value for the clip. If asked to "animate the wind", say so rather than emitting a track that will be dropped.
-- **Deterministic bake (baked tier).** The whole clip is simulated once at a fixed 1/60 s step from `seed` and sampled by absolute clip-local time, so preview, Download, a **Time range** render and `/render-onserver` all agree, and export motion blur samples real motion.
-- Rendered by **`/render-onserver`** and the desktop render (for a baked-tier system the export waits for the bake before frame one). The fast `/render` ignores particle layers like every other non-trivial type.
-- `quality.previewFraction` draws a stable seeded subset while editing — but it is stored on the item and is read at render time too, so leave it at `1` unless the user explicitly wants a thinner system.
+The engine is chosen per layer from the system; the JSON is the same for all of them.
+
+- **The bake**, at or below 50,000 `maxParticles`, and at any count for a system that uses a feature the GPU engine does not have
+  (list below). Simulated once from `seed` at a fixed 1/60 s step, off the main thread, kept as 30 snapshots a second and read by
+  clip time, so preview, scrubbing (backwards too), Download, a Time range render and `/render-onserver` show the same frame, and
+  export motion blur samples real motion. An export waits for the bake. The bake simulates at most 100,000 particles whatever
+  `maxParticles` says.
+- **The GPU engine**, above 50,000 on a machine with WebGPU: emits, simulates and draws on the graphics card, up to 8,000,000, in
+  the preview and in exports; it is never baked and re-simulates from the start when scrubbed back. Up to 1,000,000 holds 60 fps;
+  8,000,000 is about 29 fps (an M-series Mac at 1080p). All particle layers share a 1.5 GB budget, and a layer refused falls back
+  to the bake. Without WebGPU the system runs on the bake, clamped to 100,000. It does not read `proximity`.
+- **Live preview** (the editor only, WebGPU): after an edit the editor shows a live simulation of the same inputs until the new bake
+  lands, then reads the bake (`solver.engine: "auto"`). Exports never use it. Grow, packing, more than one collider and trails
+  (`lines.connect: "time"`) always preview from the bake, and a step slower than a 60 fps frame hands the layer to the bake until
+  the next edit.
+
+A system stays on the bake at any count when it uses any of: `solver.engine: "baked"`, a collider or container, packing, any force
+emitter (Layer Velocity included), Path Follow, Grow, particle objects (`render.mode: "layers"`), lines, a `rows` emitter,
+`forces.return.strength` above 0, or colour taken at birth from a video source.
+
+`maxParticles` is a **ceiling, not a request**: a system emitting 260/s that lives 5 s holds about 1,300 at once whatever the
+ceiling says, and the bake sizes itself to what the emitter can reach. A ceiling below `rate × lifetime` makes the system thinner
+than authored (new births are skipped at the cap; no living particle is cut short).
+
+## Presets, and the Snow example
+
+Applying a preset in the panel writes these systems, sized to the composition (numbers below are for 1920×1080):
+
+| `preset` | Name | What it is |
+| --- | --- | --- |
+| `dust` | Dust | The defaults: a box 1.1× the frame emitting 260/s, life 5 ± 1.5 s, speed 22 ± 12, wind 8, turbulence 26, soft-disc 9 → 6 px, pre-roll 5.5 s, bounds `kill` |
+| `stars` | Stars | `star` sprites, additive, `twinkle` 0.85, 150/s, life 7 ± 2 s, bounds `wrap` |
+| `snow` | Snow | The example below |
+| `sparks` | Sparks | A `point` emitter 130 px below centre, 260/s, life 1.6 ± 0.6 s, speed 620 ± 260 up, `spread` 62, gravity −620, `spark` sprites additive 26 → 9 px, `onKill` fade 0.25 / scale 0.7 |
+| `bokeh` | Bokeh | Six discs: `static`, life 100 s, bounds `bounce`, additive soft discs 2590 → 1517 px, turbulence 102 at scale 0.002 |
+| `smoke` | Rising Smoke | A buoyant plume on the fluid ([starter](#smoke-and-fluid-forcesfluid)) |
+| `cigarette` | Cigarette | Rising Smoke as a thin column |
+| `ink` | Ink Drop | Ink falling into still water |
+| `ember` | Ember Swirl | Embers swirled by the fluid and a vortex |
+| `shockwave` | Shockwave | A ring blast every 1.5 s ([starter](#smoke-and-fluid-forcesfluid)) |
+| `smoke-lines` | Smoke Lines | 100 ready-made lines bent by a plume ([starter](#lines-trails-and-ready-made-rows)) |
 
 ```json
 {
@@ -78,7 +146,7 @@ Rules:
               { "id": "emitter-1", "emit": "continuous", "shape": "box",
                 "position": { "x": 0, "y": 0, "z": 0 },
                 "size": { "x": 2400, "y": 1512, "z": 1000 },
-                "rate": 240, "bursts": [{ "time": 0, "count": 0 }], "start": 0, "end": 9999,
+                "rate": 240, "bursts": [], "start": 0, "end": 9999,
                 "lifetime": { "value": 7, "random": 2 }, "speed": { "value": 10, "random": 8 },
                 "direction": { "x": 0, "y": 1, "z": 0 }, "spread": 180 }
             ],
@@ -105,107 +173,134 @@ Rules:
 }
 ```
 
-**`solver`** — the box the particles live in. Its transform *is* the layer's, so moving/rotating/scaling/parenting the item moves the whole volume; it simulates in local space (`space` is always `"local"`), so particles travel with it. The box is centred on the layer's position (`panX`/`panY`/`panZ` and the PRS keyframes) in the same world as every other layer and is filmed once by the project camera, so a solver given a Shape's exact transform fills that Shape's rect under any camera — pan, zoom, roll, tilt, dolly, keyed moves and a Blender picture-plane world thousands of px down a page alike. A camera-locked channel keeps it in frame space. To snow onto a rect, size `bounds.size`/the emitter to the rect and put the layer at its centre.
+## `solver`: the box
+
+The box the particles live in. Its transform is the layer's: moving, rotating, scaling or parenting the item moves the whole volume,
+and particles travel with it (they simulate in the box's own space). The box is centred on the layer's position (`panX` / `panY` /
+`panZ` and the PRS keyframes) in the same world as every other layer and is filmed by the project camera, so a box given a Shape's
+exact transform fills that Shape's rect under any camera move. On a camera-locked channel it stays in frame space. To snow onto a
+rect, size `bounds.size` and the emitter to the rect and put the layer at its centre.
 
 | Field | Range | Meaning |
 | --- | --- | --- |
-| `maxParticles` | 1–8000000 | Hard cap. At the cap emission **throttles** (new spawns skipped); a live particle is never cut short. Keep `≥ rate × lifetime` or the system silently runs thinner than authored. Above 50,000 the layer runs on the GPU engine (see above) unless it uses a baked-only feature. |
-| `preRoll` | 0–30 s | Simulated before the clip starts so the box is populated at frame 0. Ambient looks want ~one full lifetime; a dissolve wants `0`. |
-| `bounds.size` | px vec3 | Box width/height/depth, in composition pixels. |
-| `bounds.behavior` | `kill` \| `wrap` \| `bounce` | `wrap` is a teleport (never interpolated across); `bounce` reflects keeping ~60% of speed and stays continuous. |
-| `cacheHz` | fixed `30` | Snapshot rate. Always 30, whatever is written. |
-| `engine` | `auto` (default) · `live` · `baked` | How the EDITOR previews the system — not a simulation input. `auto` reads the bake whenever it is complete for the current settings (smooth scrubbing) and draws the solver live on WebGPU in the gap after an edit, while the bake re-runs in the background — falling back to the bake outright when the live step cannot hold 60 fps; `live` always simulates live; `baked` always shows the bake, and also keeps a system above 50,000 on the baked solver instead of the GPU engine. On the baked tier, exports and `/render-onserver` always use the bake. Omit it. |
+| `maxParticles` | 1–8,000,000 | The ceiling (see [Which engine runs it](#which-engine-runs-it)). A `rows` emitter sets it to count × points. |
+| `preRoll` | 0–30 s | Simulated before the clip starts so the box is full at frame 0. Ambience: about one lifetime. A dissolve: `0`. On the fluid each pre-rolled step is a grid solve, which is why the fluid presets use 1.2–1.6 s. |
+| `bounds.size` | px `{x, y, z}` | Width, height, depth of the box, in composition px. |
+| `bounds.behavior` | `kill` (default) \| `wrap` \| `bounce` | What a wall does. `wrap` teleports to the far side (visible on slow or big particles); `bounce` reflects keeping 60 % of the speed. |
+| `engine` | `auto` (default) \| `live` \| `baked` | How the editor previews it, not a simulation input. `live` always simulates live; `baked` always shows the bake and keeps a system above 50,000 on the bake. Leave it out. |
+| `cacheHz`, `space`, `bounds.shape` | `30`, `"local"`, `"box"` | Fixed. |
 
-**`emitters[0]`** — where particles are born.
-
-| Field | Range | Meaning |
-| --- | --- | --- |
-| `emit` | `continuous` \| `static` | `static` fills the system to the cap once and never emits again (rate and bursts ignored) — the right mode for a shatter/dissolve or anything Particle Activation releases. It fires at clip time `max(0, start)`, AFTER the pre-roll, so nothing it emits has a history at frame 0: for a trail that already exists at frame 0 (a comet), use `continuous` with `maxParticles` as the cap, which emits during the pre-roll. |
-| `shape` | `point` \| `box` \| `sphere` \| `cone` \| `ring` \| `path` \| `block` \| `layer` \| `rows` | `layer` fires from a picture's opaque pixels — see below. With `render.colorMode: "source"` and a VIDEO source, `render.colorSourceTime` decides when each colour is read: `"live"` (default) re-reads the frame playing now, so the cloud is the moving picture; `"birth"` keeps the colour each particle was emitted with and lets the video move on without it. Either way the emission SITES stay from the one snapshot they were picked in, so nothing re-simulates and neither value is in the sim hash. `ring` is an annulus in the comp plane (`ring: {radius, thickness}` px), `path` births evenly along a spline (`path.anchors` in the emitter's unit space, −0.5..0.5), `block` is a filled slab — the "layer of particles" source (pair it with `emit: "static"`). `rows` is a grid of **ready-made lines** — see [Lines](#lines-rendermode-lines--trails-and-ready-made-lines). |
-| `dirMode` | `cone` \| `outward` \| `tangent` | `ring`/`path` only: launch along `direction`+`spread`, away from the ring / normal to the path, or along it. |
-| `distribution` | `{mode, jitter, order, sites, rings, clusters, tightness, bias, thickness, sequence, relaxIters}` | **How spawn sites are SPREAD inside the emitter's shape** — orthogonal to the geometry, so `box`, `sphere`, `cone`, `ring`, `path` and `block` all get every mode (`layer` and `point` do not use it; see below). Omit the block (or `mode: "random"`) for the emitter's original three independent draws; that is the default and is byte-identical to a system authored without it. See the table below. |
-| `variance` | 0–1 | With the fluid on: wobble of emission direction/strength/heat on smooth time noise. `0` is a perfectly steady source, which reads as a uniform carpet of curls; ~0.35 gives billows at every scale. |
-| `stir` / `detach` | `{strength 0–200, radius px}` / bool | How hard emission stirs the fluid; `detach: true` makes emission deposit material only and hands the field's momentum to `forceEmitters`; `stir.strength: 0` then makes the emitter deposit nothing at all, which is how you get a layer whose only smoke comes from `kind: "smoke"` force emitters. |
-| `position` / `size` | px vec3 | Placement and extent inside the box (`size.x` is the diameter for `sphere`/`cone`). |
-| `rate` | 0–20000 /s | Continuous emission. |
-| `bursts` | ≤8 × `{time, count}` | One-shot pops on top of the rate. This is how a shockwave / explosion / puff is built: a burst emits its whole count in one frame, `speed` throws the front outward (with `shape: "ring"` + `dirMode: "outward"` for a ring blast) and `forces.drag` is what makes it slam to a halt. Several entries = several pulses; ignored when `emit: "static"`. |
-| `start` / `end` | s | Emission window inside the clip. |
-| `lifetime` | `{value 0.05–600, random}` | Seconds, ± per particle. |
-| `speed` | `{value, random}` | Launch speed in composition px/s. |
-| `direction` / `spread` | vec3 / 0–180° | Aim, and the cone around it (180 = every direction). |
-
-**`forces`** — a keyed block, not a list (`pt:forces.wind.x` is reserved as a future keyframe path). `gravity` and `wind` are accelerations in composition px/s²; `drag` bleeds speed away. `return: { strength }` (0–60 per second, default 0 = off) pulls every particle back toward the point it was born at: each step closes `1 − e^(−strength·dt)` of the gap after the particle moves, so in a flow of speed `v` it settles about `v / strength` px from home — lines bulge where smoke passes and relax behind it, and particles that formed a shape re-form after a gust. It is a simulation input.
+## `emitters[0]`: where particles are born
 
 | Field | Range | Meaning |
 | --- | --- | --- |
-| `turbulence.pattern` | `smooth` \| `billow` \| `ridged` \| `swirl` \| `wave` | Gain-matched, so switching keeps the amount of motion and changes only its character — do not re-tune `strength`. |
-| `turbulence.strength` / `.scale` / `.speed` | 0–20000 / 1e-5–1 / 0–20 | Amount, pattern size in comp px (smaller = finer), and how fast the field itself evolves (`0` freezes it). |
-| `turbulence.complexity` / `.direction` | 1–6 / 0–360° | Octaves; wavefront heading (`wave` only). |
-| `vortex.mode` | `vortex` \| `orbit` \| `twist` \| `attract` \| `repel` | Second field's shape. |
-| `vortex.strength` / `.axis` / `.scale` / `.lift` | 0–20000 / `x`\|`y`\|`z` / 1–100000 / 0–4 | `scale` is a falloff radius, not a boundary; `lift` sends part of the pull along the axis. |
+| `emit` | `continuous` \| `static` | `static` fills the system to the cap once, at clip time `max(0, start)` after the pre-roll, and never emits again (rate and bursts ignored): a shatter, a dissolve, anything Grow releases. Nothing it emits has a past at frame 0, so a trail that must already exist at frame 0 (a comet) needs `continuous` with a pre-roll. |
+| `shape` | `point` \| `box` \| `sphere` \| `cone` \| `ring` \| `path` \| `block` \| `layer` \| `rows` | `ring`: an annulus in the frame plane, `ring: {radius, thickness}` px. `path`: births evenly along a spline, `path.anchors` (≤ 64) in the emitter's unit space (−0.5…0.5, +y up). `block`: a filled slab. `layer`: a picture's opaque pixels ([below](#emit-from-a-layer-dissolve-a-picture-into-its-pixels)). `rows`: ready-made lines ([Lines](#lines-trails-and-ready-made-rows)). |
+| `dirMode` | `cone` \| `outward` \| `tangent` | `ring` and `path`: launch along `direction` + `spread`, away from the ring (normal to the path), or along it. |
+| `position` / `size` | px `{x, y, z}` | Place and extent inside the box; `size.x` is the diameter of a `sphere` or `cone`. A `layer` emitter scatters its births over `size.z` in depth. |
+| `rate` | 0–20,000 /s | Continuous emission. |
+| `bursts` | ≤ 8 × `{time 0–3600 s, count}` | Pops on top of the rate, each at its `time`. A shockwave or puff: a burst, a high `speed`, and `forces.drag` to stop it (`shape: "ring"` + `dirMode: "outward"` for a ring blast). Ignored when `static`. |
+| `start` / `end` | s | The rate's window. **The rate starts `preRoll` seconds before `start`**: to start a continuous emitter at 2 s, write `start: 2` with `preRoll: 0` (with `preRoll: 1.5` it starts at 0.5 s). |
+| `lifetime` | `{value 0.05–600, random}` s | Per particle, ± `random`. |
+| `speed` | `{value, random}` px/s | Launch speed. |
+| `direction` / `spread` | vector / 0–180° | Aim, and the cone round it (180 = every direction). |
+| `distribution` | block | How births are spread inside the shape ([below](#emission-distribution-emitters0distribution)). |
+| `variance` | 0–1 | With the fluid on: wobble of emission direction, strength and heat over time. `0` is a steady source (a carpet of same-sized curls); about `0.35` gives billows at every scale. |
+| `stir` | `{strength 0–200, radius px}` | With the fluid on: how hard emission stirs it, and over what radius. |
+| `detach` | bool | With the fluid on: emission deposits material only and leaves the push to `forceEmitters`; with `stir.strength: 0` as well it deposits nothing, so the only smoke is from `kind: "smoke"` force emitters. |
 
-#### Emission distribution (`emitters[0].distribution`)
+### Emission distribution (`emitters[0].distribution`)
 
-`mode` chooses the sampler. The difference that matters when picking one is whether it needs to know how many sites there are: a lattice cannot be built without that number, and an emitter never knows how many particles it will ultimately make — so a set-based mode fixes a set of `sites` and the next particle lands on the first site again.
+How spawn sites are spread inside `box`, `block`, `sphere`, `cone`, `ring` and `path` emitters (not `point`, `layer` or `rows`).
+Leave the block out (or `mode: "random"`) for independent random draws; `random` costs nothing and changes nothing in the bake.
+A set-based mode fixes `sites` places and starts again at the first when they run out.
 
-| `mode` | What it produces | Extra params |
+| `mode` | What it makes | Params |
 | --- | --- | --- |
-| `random` | Three independent draws per particle. Clumps and holes are not a defect — they are what independence looks like. The default. | — |
-| `stratified` | One particle anywhere inside its own lattice cell. Keeps the organic look of `random` but cannot clump across a cell wall. The drop-in upgrade. | `sites`, `jitter` |
-| `grid` | Exact cell centres. Perfectly regular and perfectly artificial: a dot matrix, a formation, beads threaded evenly along a path. | `sites` |
-| `packed` | Rows offset by half a cell — hexagonal in plane, tetrahedral through depth. The densest arrangement that is still perfectly even, and the one that reads as a solid surface rather than a grid. | `sites` |
-| `relaxed` | Dropped at random, then pushed off each other until nothing is clumped — blue noise. Even like a lattice but with no direction and no repeating cell. | `sites`, `relaxIters` |
-| `lowdisc` | A quasi-random sequence: looks random, spaces like a lattice, and is even at ANY count without knowing the total. **The one to reach for on a continuously emitting system.** | `sequence`, `jitter` |
-| `sunflower` | The golden angle, one turn per particle — the only closed form that fills a disc or sphere perfectly evenly. Fills CENTRE-OUTWARD, which is lovely as a growth and wrong if the shape is meant to be populated at once. | `sites` |
-| `rings` | Concentric bands spaced by area, each offset from the last so the spokes never line up. Reads as designed rather than scattered: targets, radar, ripples. | `sites`, `rings` |
-| `clustered` | Cluster seeds scattered first, then every particle born near one — clumping as a look. Sparks off an impact, embers, flocks, debris. | `clusters`, `tightness` |
-| `falloff` | Random, with density biased along the shape's radial axis — packed into the core, or hollowed out toward the rim. | `bias` |
-| `shell` | The skin only: a sphere becomes a bubble, a disc a rim, a box six faces. Every particle at the SAME depth rather than merely crowding near it. | `thickness` |
+| `random` | Independent draws; clumps and holes are part of the look. The default. | — |
+| `stratified` | One particle anywhere inside its own lattice cell: organic but never clumped. | `sites`, `jitter` |
+| `grid` | Exact cell centres: a dot matrix, a formation, beads evenly on a path. | `sites` |
+| `packed` | Rows offset by half a cell (hexagonal in plane): the densest even arrangement; reads as a surface. | `sites` |
+| `relaxed` | Random, then pushed apart until nothing clumps (blue noise). At most 8,192 sites. | `sites`, `relaxIters` |
+| `lowdisc` | A quasi-random sequence: even at any count without knowing the total. **The one for a continuously emitting system.** | `sequence`, `jitter` |
+| `sunflower` | The golden angle: fills a disc or sphere evenly, centre outward (reads as growth while filling). | `sites` |
+| `rings` | Concentric bands spaced by area: targets, radar, ripples. | `sites`, `rings` |
+| `clustered` | Clumps of births round scattered seeds: sparks off an impact, embers, debris. | `clusters`, `tightness` |
+| `falloff` | Random, denser at the core or toward the rim. | `bias` |
+| `shell` | The skin only: a sphere becomes a bubble, a box its six faces. | `thickness` |
 
 | Param | Range | Meaning |
 | --- | --- | --- |
-| `sites` | 0 = auto, else 1–8000000 | How many distinct places the pattern has before it repeats. **Auto tracks `solver.maxParticles`, which is the only value at which nothing doubles up.** Ignored by the modes that do not need it. |
-| `jitter` | 0–1 | Softens a lattice back toward organic without giving up its coverage. On `lowdisc` it does something else useful: a per-seed rotation of the whole sequence, so two emitters with the same settings do not spawn in lockstep. |
-| `order` | `scan` \| `scramble` (default) \| `shuffle` | The order a set-based mode walks its sites in, which only shows itself while the emitter is still FILLING. `scan` is reading order, so it fills one corner at a time on anything that emits over time; the other two reach the whole shape immediately. |
-| `sequence` | `r2` (default) \| `halton` | `lowdisc` only. `r2` is three multiplies and no loop; `halton` is a shade more even but shows a faint lattice in the first few hundred particles. |
-| `relaxIters` | 0–40 | `relaxed` only. Past about fifteen the set has converged and more only costs bake time. |
-| `rings` | 1–512 | `rings` only: how many concentric bands. |
-| `clusters` / `tightness` | 1–4096 / 0.001–0.5 | `clustered` only: how many clumps, and each clump's radius as a fraction of the emitter. Particles landing outside are folded back at the wall rather than clipped — clipping piles them onto the faces and reads as a crust. |
-| `bias` | −1…1 | `falloff` only. Negative packs the core, positive hollows it toward the rim. A power on the area CDF, so it is an exact density ramp. |
-| `thickness` | 0.002–0.5 | `shell` only: skin depth as a fraction of the shape. Never author `0` — a mathematically thin surface aliases into a flickering wire as the camera moves. |
+| `sites` | `0` = auto, else 16–8,000,000 | Distinct places before the pattern repeats. Auto follows `maxParticles`, the only value at which nothing doubles up. |
+| `jitter` | 0–1 | Softens a lattice toward organic. On `lowdisc`: turns the whole sequence per seed, so two emitters do not spawn in lockstep. |
+| `order` | `scan` \| `scramble` (default) \| `shuffle` | The order sites are used while the emitter is still filling. `scan` fills one corner at a time; the others reach the whole shape at once. |
+| `sequence` | `r2` (default) \| `halton` | `lowdisc` only. `halton` shows a faint lattice in its first few hundred particles. |
+| `relaxIters` | 0–40 | `relaxed` only; past about 15 nothing changes but the bake time. |
+| `rings` | 1–512 | `rings` only. |
+| `clusters` / `tightness` | 1–4096 / 0.001–0.5 | `clustered` only: how many clumps, and each one's radius as a fraction of the emitter. |
+| `bias` | −1…1 | `falloff` only: negative packs the core, positive hollows it. |
+| `thickness` | 0.002–0.5 | `shell` only: skin depth as a fraction of the shape. Never `0` (a zero-thickness skin flickers as the camera moves). |
 
-Distribution is part of the simulation, so changing it re-bakes (a `mode` of `random` contributes nothing to the sim hash, so it is free). It shapes the **volumetric and geometric** emitters — `box`, `sphere`, `cone`, `ring`, `path`, `block` — which all map the sampler's unit-cube point through their own geometry. It does **not** apply to `shape: "layer"`, whose sites come from the artwork's opaque pixels rather than from the sampler, nor to `point`, which has no extent to spread anything across.
-
-#### The fluid field (v3) — fluid and smoke physics, Particular-style
-
-`forces.fluid` turns on a **simulated** force field: an incompressible velocity grid the size of the Solver Box that emission stirs and particles ride. Unlike turbulence (a formula in position and time) it has **memory** — a plume meets the eddies it left behind, smoke curls back on itself, ink mushrooms. It is stepped at 1/60 s with the particles and thrown away after the bake; only particle snapshots are cached. The fluid supplies **movement** — particles carried, swirled and lifted by a medium. It is not rendered itself: there is no volumetric or dye render mode, and particles are always drawn as particles (for volumetric smoke and fire inside a 3D world, see [video-world3d.md](video-world3d.md#smoke-and-fire)). **Cost:** the grid steps 360× for a 6 s clip — `low` ≈ 4 ms/step, `medium` ≈ 10, `high` ≈ 30, `ultra`/`flat-hd` ≈ 80, `volume-hd` ≈ 250 — so a `flat-hd` preset bakes for ~30 s (in a worker, while the live GPU preview already shows the edit — see **Live preview** below).
-
-**Live preview vs. the bake.** In the desktop editor the whole solver — field and particles — also runs **live on WebGPU**, so a change to any of these controls shows within a frame while the user edits; the bake above re-runs in the background after the edit and, once complete, is what the editor scrubs (any time is one read) and what **exports render**. Live is also the fallback-free path when the bake is not there yet; the bake is the fallback when live is not possible (Grow Points and the other baked-only features above) or when the live step cannot hold 60 fps on that machine. The bake itself is cancellable, debounced and streams in chunks, so even the fallback appears progressively. None of this changes the JSON: the bake is a pure function of the system and the live engine is only a preview of the same inputs. Route "smoke", "fluid", "ink in water", "cigarette smoke", "steam", "particles flowing like liquid" here when it is a layer of particles; volumetric smoke, fire or an explosion inside a 3D world is [video-world3d.md](video-world3d.md#smoke-and-fire). Ready-made presets: `smoke` (Rising Smoke), `cigarette`, `ink`, `ember`, `shockwave` (a ring blast every 1.5 s that punches the fluid). A `text-cage` preset id is only a label; the system it carries bakes as written.
+## `forces`
 
 | Field | Range | Meaning |
 | --- | --- | --- |
-| `fluid.model` | `off` \| `fluid` \| `smoke` | `fluid` = velocity only; `smoke` adds a density/heat pair riding the same field (buoyancy, weight, cooling, dissipation). |
-| `fluid.force` | 0–400 | How fast a particle trades its own velocity for the field's. High = a tracer; low = keeps its inertia. |
-| `fluid.timeFactor` | 0.1–4 | The field's clock; particles keep real time. |
-| `fluid.viscosity` / `.swirl` / `.swirlSize` | 0–100 / 0–200 / 1–6 cells | Thickness of the medium; vorticity confinement (feeds the small eddies back); the eddy size confinement reinforces. |
-| `fluid.fidelity` | `low`\|`medium`\|`high`\|`ultra`\|`flat-hd`\|`volume-hd` | Grid resolution (48×27×12 … 192×108×48 at 16:9; the in-plane cell count is kept and laid out at the box's aspect, so a portrait box gets a tall grid, not a stretched one). `flat-hd` spends the budget in-plane for thin columns. |
-| `fluid.pressureSteps` / `.fade` / `.sharp` | 4–60 / 0–1 / bool | Jacobi iterations; how fast the field calms; MacCormack advection (livelier, more detail). |
-| `fluid.reach` | `box` (default) \| `sources` | Who rides the flow. `box` = every particle in the Solver Box (the field is the whole medium). `sources` = only particles inside a force emitter's `radius`, fading out with distance — the source as a LOCAL force, the rest of the layer keeps its own motion. Needs `emitters[0].detach: true` (set it together with `fluid.reach: "sources"`) and at least one entry in `forceEmitters`; ignored otherwise. |
-| `fluid.bounds` | `closed` \| `open` | Walls (a plume pools under the top) or outflow (it leaves the box). |
-| `fluid.smoke` | `{buoyancy −200–600, weight 0–400, heat 0–100, cooling 0–4, dissipate 0–4}` | Smoke model only. Emission deposits hot dye; heat lifts, weight pulls. |
-| `forces.draft` | `{strength 0–300, direction 0–360°, gust 0–1}` | A gusting wind on the field. Its variation is in time only, so it reads as weather, never as a pattern. |
-| `forceEmitters[]` | ≤3 × `{id, kind jet\|vortex\|smoke\|burst\|layer, mode vortex\|orbit\|twist\|attract\|repel, lift, pulseStart, pulseEvery, position, radius, strength 0–2000, push px/s, direction °, spin ccw\|cw, density 0–8, heat 0–100, motion hold\|orbit\|sweep, motionSpeed, motionRadius}` | Forces placed in the box, with no particles of their own. `kind: "jet"` is a **blower** — a fan: everything inside `radius` is blended toward `push` px/s along `direction` (0° = right, 90° = up) at a rate set by `strength`; `kind: "vortex"` is a whirlpool (`spin`). With `forces.fluid` on they drive the field and the particles ride it (the emitter's own stir keeps working unless `emitters[0].detach`); with the field off blowers and vortices act on the particles directly. `kind: "smoke"` is a **source**, not a push: it injects material (`density` per second, at `heat`) into the field at its point, so a layer can have several plumes coming from places you choose rather than one from the emitter — it needs `forces.fluid.model: "smoke"`, and `strength: 0` makes it pure material lifted by buoyancy. `kind: "burst"` is a **pulse force**: a radial blast from its point at `pulseStart`, repeating every `pulseEvery` seconds (0 = once), throwing what is inside `radius` outward at `push` px/s — a shockwave with no particles of its own. A `vortex`-kind emitter takes any of the five `forces.vortex` `mode`s, centred on itself. `kind: "layer"` is **Layer Velocity** (set by the editor; it keeps the system on the baked solver). |
-| `pathFollow` | `{enabled, attract 0–600, flow 0–600, proximity px, swirl 0–400, anchors[]}` | Particular's "move along path": attract toward the spline, flow along its tangent, braid around it, falling off past `proximity`. `anchors` are in the box's unit space; empty = the emitter's own `path`. |
-| `collision` | `{source, faces outer\|inner, bounce 0–1, depth px, size px, position {x,y}}` | A layer's artwork (same `source` snapshot as a particle object) as a signed-distance collider extruded `depth` px. `outer` = obstacle (particles bounce, the flow routes around it); `inner` = container (emission is clipped to it, particles stay inside). A text source gives "particles inside letters". **`follow`** (default false, needs `fromItemId`) makes the collider track that layer's live ARTWORK and its position, scale and rotation every step — keyframes and parenting included — and turns `size`/`position`/`rotation` into the FALLBACK for a source that has been deleted. It also follows the layer's place on the TIMELINE: outside that clip's span, or while its channel is hidden, there is no collider at all (particles pass through and a container stops holding them). Without it the collider stands wherever `size`/`position` put it whatever the layer does, and those are filled in only at pick time. Two limits while following: a moving collider re-simulates every time its pose changes, and it steers the PARTICLES only — the fluid field's obstacle mask is a fixed grid over the Solver Box, so the flow passes straight through. **`releaseOutside`** (default false, container only) stops the container gathering particles that are already outside it — turn it on when the collider arrives part-way through a shot, or it inhales the cloud around it. **`open`** `{side none\|top\|bottom\|left\|right, spread 1–180°, at s, fade s}` (container only) lets particles OUT through one side at a chosen time — `at` is when it starts, `fade` how long it takes to open, `spread` how much of that wall becomes a doorway. It gates on the contact NORMAL, so `bottom` opens the floor of every stroke of a letter rather than cutting the shape in half, and what leaves stays out; sides are the FRAME's, so `bottom` is the bottom of the screen even under a rotating source. `side: 'none'` contributes nothing to the sim hash. Authoring note: the fixed collider's SDF is a 384x216 grid scaled from the box WIDTH, so keep `solver.bounds.size` near 16:9 or the field is distorted along the short axis. |
-| `colliders[]` | up to **3** more, each the SAME shape as `collision` | The colliders past the first. `collision` stays the canonical FIRST one, so a project with a single collider is unchanged; four total. A particle stays OUTSIDE every obstacle and INSIDE every container, and emission is clipped to the INTERSECTION of the containers. Resolution is sequential rather than a joint solve, so two containers that do not overlap are unsatisfiable — visible on screen rather than averaged away. Only the first FIXED collider shapes the fluid field (one flow grid), and a system with more than one always previews from the bake. Because a `follow: true` collider stops existing outside its layer's span, two colliders on two spans give you DIFFERENT COLLISIONS OVER TIME with no keyframes. |
-| `packing` | `{enabled false, shape circle\|object, substeps 1–8, iters 1–12, stiffness 0.05–1, gap px, friction 0–2, restitution 0–1, radiusScale 0.1–3, cohesion 0–2, cohesionRange, sleep true, sleepDrift, sleepFrames}` | Particle-to-**particle** collision — a pour, a pile, a jar of beads, a mould filling up. `collision` above is particle-to-object; this is the other half. **Off by default and it must stay off unless the look needs it**: with it on, `render.size` becomes a simulation input (the collision radius IS the drawn size × `radiusScale`), so resizing re-bakes. Runs on the baked solver only. Emission refuses births that have no room, so the particle count self-throttles to what physically fits and raising `rate` past that does nothing. Comfortable to about 6,000 particles; a flat solver box (`bounds.size.z` ≤ 1) packs in 2D at about a third of the cost. The fluid field pushes a pack but the pack does not push back on the fluid. **`shape: "object"`** (layer objects, `render.mode: "layers"`, flat box `bounds.size.z` ≤ 2) collides each object as its own artwork outline instead of a circle — letters stack, tip over and swirl without overlapping — and the simulation owns each object's angle: it starts at the object's usual random angle and `objects.spin`, contacts turn it, and `objects.facing: "velocity"` steers it into its travel (`"tumble"` reads as camera-facing). `radiusScale` is ignored in this mode (`gap` still pads the outline); `objects.pick`, `spin`, `keepRatio` and each member's `spinScale` become simulation inputs. Several times the cost of circles: use it for tens to a few hundred objects. With a 3D box it collides as circles. |
-| `proximity` | `{enabled, sources[], measure shape\|edge\|inside\|centre\|x\|y, range px, falloff px, shape smooth\|linear\|sharp, combine max\|add\|average\|min, depth px, invert, fx{}, colorMode solid\|ramp, color, colorRamp[]}` | **Another layer's SHAPE drives this system.** Where the Grid Builder's Proximity measures distance to a layer's CENTRE, this measures distance to its SILHOUETTE, so a word or a logo drives the cloud along its own outline. Each entry in `sources` (≤4) is `{id, source, sourceName, fromItemId, follow, size px, position {x,y}, rotation, pickScale}` — a `follow: true` source also stops acting outside its layer's SPAN on the timeline (visibility is not read: hiding a donor layer is part of the dissolve recipe). With `packing.enabled`, `fx.size` additionally becomes a SIMULATION input — it is the contact radius — and re-bakes; without packing it stays drawn-only and free — `source` is the same artwork snapshot a particle object carries, and with `follow: true` the position, in-plane rotation and scale come live off `fromItemId` every frame (keyframes, motion paths and parenting included). `measure: "shape"` is the one to start from; `"inside"` plus `invert: true` is the core-only look. `depth: 0` keeps the field flat (z ignored); above 0 it is a slab of that half-thickness. |
-| `proximity.fx` | `{size, opacity, color, spin, bright, stretch, twinkle, attract, flow, orbit, drag, speed, turb, freeze, life}` | What the field drives, as amounts (percentages except `attract`/`flow`/`orbit` in px/s² and `spin` in degrees). **The first seven are LOOK** — read at draw time, so they never re-bake. **The last eight are SIMULATION** — forces, so setting one re-bakes the clip. `attract` and `flow` push along the field's true surface normal (perpendicular to a letterform's edge, not radial from its centre); `freeze: 100` stops particles dead where the field is full, which paints the silhouette out of a passing cloud. Tune `falloff` against the artwork's THINNEST feature: a 300 px band around a word with 55 px strokes is a blob that happens to be word-shaped. Not read by the WebGPU runtime, so keep `solver.maxParticles` under 50,000 for it to have any effect. |
-| **Animating the effector** | `propertyKeyframes: { "px:<param>": [...] }` on the PARTICLE ITEM | `range`, `falloff`, `depth` and every key present in `proximity.fx` take an ordinary numeric track, so a Range that opens over a shot or an Attract that lets go on a beat is authored with the normal keyframe machinery (easings, HOLD, the graph editor, `propertyKeyframeFx`). The stored value is the track's base. **A track on a LOOK amount never re-bakes** — it is read at draw time — while one on a SIM amount, or on `range`/`falloff`/`depth` while a force is driven, is a simulation input and re-bakes like editing that number statically does. An amount stored at 0 and keyed away from 0 DOES reach the solver. The enums (`measure`, `shape`, `combine`), `invert`, `colorMode`, `color` and `colorRamp` are deliberately not animatable; a source's pose is not either — set `follow: true` and keyframe the SOURCE LAYER, which is the whole design. |
+| `gravity` / `wind` | px/s² `{x, y, z}` | Accelerations on every particle (+y up). |
+| `drag` | 0–20 /s | Bleeds speed away; what stops a wind accelerating for ever and a burst flying on. |
+| `turbulence.pattern` | `smooth` \| `billow` (default) \| `ridged` \| `swirl` \| `wave` | The field's character. All move particles by the same amount, so switching does not need `strength` re-tuned. |
+| `turbulence.strength` / `.scale` / `.speed` | 0–20,000 / 0.00001–1 / 0–20 | Amount; pattern size (smaller = finer); how fast the field changes (`0` freezes it). |
+| `turbulence.complexity` / `.direction` | 1–6 / 0–360° | Octaves; the wavefront heading (`wave` only). |
+| `vortex.mode` | `vortex` \| `orbit` \| `twist` \| `attract` \| `repel` | A second field centred on the box. |
+| `vortex.strength` / `.axis` / `.scale` / `.lift` | 0–20,000 / `x` \| `y` \| `z` / 1–100,000 px / 0–4 | `scale` is a falloff radius, not a wall; `lift` sends part of the pull along the axis. |
+| `return.strength` | 0–60 /s (0 = off) | Pulls every particle back toward where it was born. In a flow of speed `v` a particle settles about `v / strength` px from home: lines bulge where smoke passes and relax behind it, a shape made of particles re-forms after a gust. |
 
-Physics that must hold when authoring by hand: with a `text` container, keep `fluid.force` low (≤ 20) and `collision.bounce` high — inside channels as thin as letter strokes a strongly coupled crossing flow presses everything against one wall; give the emitter its own `speed` instead. `open` bounds are safe (Dirichlet pressure + sponge + CFL clamp are built in).
+`forces.fluid` and `forces.draft` are in [Smoke and fluid](#smoke-and-fluid-forcesfluid).
 
-**Starters** — the overrides each preset applies on top of the defaults, for a 1920×1080 composition (scale the px values with the frame). Everything not listed keeps its default (`forces.fluid.model` defaults to `off`, so the `fluid` block is what switches the physics on).
+## `render`: the look
+
+Drawn, not simulated: changing anything here never re-bakes (except the size fields while `packing` is on).
+
+| Field | Range | Meaning |
+| --- | --- | --- |
+| `mode` | `sprite` \| `layers` \| `lines` | `layers` stamps `objects.members` ([below](#layers-as-particles-objects)) and draws sprites while there are none; `lines` joins particles into ribbons ([Lines](#lines-trails-and-ready-made-rows)). |
+| `sprite` | `soft-disc` \| `star` \| `spark` | Procedural, sharp at any size. |
+| `blend` | `alpha` \| `additive` | Alpha particles are sorted back to front; additive ones add up and a dense cloud turns white. |
+| `opacity` | 0–1 | The layer's. |
+| `size` | `{start, end 0.1–4000, random 0–1}` px | Size over life, ± per particle. |
+| `colorOverLife` | ≤ 16 stops `{at 0–1, color}` | Stored `#rrggbbaa` (`rgba()` is accepted). **Alpha always comes from this ramp**, whatever `colorMode` says: end stops must be transparent or particles pop in and out. |
+| `colorMode` | `age` \| `source` \| `velocity` | Where RGB comes from: the ramp at the particle's age; the pixel it was born on (a `layer` emitter, sprites and lines only); or `velocityRamp` over `velocityRange` `{min, max}` px/s. |
+| `colorSourceTime` | `live` (default) \| `birth` | A `layer` emitter on a VIDEO with `colorMode: "source"`: `live` re-reads the frame playing now (the cloud is the moving picture), `birth` keeps each particle's colour from when it was born (keeps the system on the bake). |
+| `twinkle` | 0–1 | Per-particle flicker. |
+| `stretch` | 0–4 | Smear along the particle's own velocity: 0 a dot, high values a streak. |
+| `onKill` | `{fade 0–10 s, scale 0–1}` | How a particle leaves: it fades (and shrinks by `scale`) over its last `fade` seconds before it dies or hits a `kill` wall. `scale` needs a `fade` above 0. |
+
+## Smoke and fluid (`forces.fluid`)
+
+`forces.fluid` turns on a simulated force field: an incompressible velocity grid over the box that emission stirs and particles ride.
+Unlike turbulence it has memory: a plume meets the eddies it left behind, smoke curls back on itself, ink mushrooms. It moves the
+particles and is never drawn itself. It is the costliest part of the bake: the grid steps 360 times for a 6 s clip, about 4 ms a
+step at `low`, 10 at `medium`, 30 at `high`, 80 at `ultra` / `flat-hd`, 250 at `volume-hd`. Route "smoke", "ink in water",
+"cigarette smoke", "steam", "particles flowing like liquid" here when it is a layer of particles.
+
+| Field | Range | Meaning |
+| --- | --- | --- |
+| `model` | `off` (default) \| `fluid` \| `smoke` | `fluid` is velocity only; `smoke` adds density and heat riding the same field (buoyancy, weight, cooling, dissipation). |
+| `force` | 0–400 | How fast a particle trades its own velocity for the field's. High: a tracer. Low: keeps its inertia. |
+| `timeFactor` | 0.1–4 | The field's clock; particles keep real time. |
+| `viscosity` / `swirl` / `swirlSize` | 0–100 / 0–200 / 1–6 cells | Thickness of the medium; vorticity confinement (feeds small eddies back); the eddy size it reinforces. |
+| `fidelity` | `low` \| `medium` (default) \| `high` \| `ultra` \| `flat-hd` \| `volume-hd` | Grid at 16:9: 48×27×12, 64×36×16, 96×54×24, 128×72×32, 256×144×8, 192×108×48. The in-plane cell count follows the box's aspect, so a portrait box gets a tall grid. `flat-hd` spends the cells in plane for thin columns. |
+| `pressureSteps` / `fade` / `sharp` | 4–60 / 0–1 / bool | Pressure iterations; how fast the field calms; sharper advection (livelier, more detail). |
+| `bounds` | `closed` (default) \| `open` | Walls (a plume pools under the top) or outflow (it leaves the box). |
+| `reach` | `box` (default) \| `sources` | Who rides the flow: every particle, or only those inside a force emitter's `radius` (fading with distance), so the rest keep their own motion. `sources` needs `emitters[0].detach: true` (or a `rows` emitter) and at least one force emitter. |
+| `smoke` | `{buoyancy −200–600, weight 0–400, heat 0–100, cooling 0–4, dissipate 0–4}` | `smoke` model only. Emission deposits hot material; heat lifts, weight pulls. |
+| `forces.draft` | `{strength 0–300, direction 0–360°, gust 0–1}` | A gusting wind on the field, varying in time only, so it reads as weather. |
+
+With a text container ([Collision](#collision-and-containers-collision-colliders)) keep `force` low (≤ 20) and the
+collider's `bounce` high: in channels as thin as letter strokes a strongly coupled flow presses everything against one wall, so give
+the emitter its own `speed` instead. `open` bounds are safe.
+
+The fluid presets as overrides on the defaults (`model` defaults to `off`, so the `fluid` block is what turns the physics on), for
+1920×1080 (scale px values with the frame):
 
 *Rising Smoke* (`preset: "smoke"`): a buoyant plume that meets its own eddies.
 
@@ -224,9 +319,11 @@ Physics that must hold when authoring by hand: with a `text` container, keep `fl
 }
 ```
 
-To bend that plume with a fan, add `"forceEmitters": [{ "id": "b1", "kind": "jet", "position": { "x": -150, "y": -300, "z": 0 }, "radius": 180, "strength": 200, "push": 600, "direction": 0, "motion": "hold" }]` — a blower left of the plume base blowing right. `"kind": "vortex"` with `"spin": "cw"` and `radius` ≈ 400 makes a whirlpool instead.
+To bend that plume with a fan, add `"forceEmitters": [{ "id": "b1", "kind": "jet", "position": { "x": -150, "y": -300, "z": 0 }, "radius": 180, "strength": 200, "push": 600, "direction": 0, "motion": "hold" }]`:
+a blower left of the plume's base blowing right. `"kind": "vortex"` with `"spin": "cw"` and `radius` about 400 makes a whirlpool.
 
-*Shockwave* (`preset: "shockwave"`): a ring blast every 1.5 s that punches the fluid and dies down in its own wake. Do not use it, burst blasts or heavy turbulence to open a film; see [Effects in an intro](video-effects.md#effects-in-an-intro).
+*Shockwave* (`preset: "shockwave"`): a ring blast every 1.5 s that punches the fluid and dies down in its own wake. Not in an intro;
+see [Effects in an intro](video-effects.md#effects-in-an-intro).
 
 ```json
 "particleSystem": {
@@ -244,25 +341,36 @@ To bend that plume with a fan, add `"forceEmitters": [{ "id": "b1", "kind": "jet
 }
 ```
 
-The other fluid presets differ from these only in numbers: *Cigarette* is Rising Smoke as a thin column: a 5 px `sphere` source at rate 6400 (24,000 particles), `spread: 3`, `fidelity: "high"`, `bounds: "open"` and faint additive sprites; *Ink Drop* is `model: "fluid"` (`force: 320`, `swirl: 30`, `fidelity: "high"`), a `sphere` source shooting down at 420 px/s under gravity, and blue alpha sprites; *Ember Swirl* is `model: "fluid"` (`swirl: 170`) plus `forces.vortex: { "strength": 230, "scale": 420, "mode": "vortex", "axis": "z", "lift": 0.15 }` and additive orange embers.
+The other three differ in numbers: *Cigarette* is Rising Smoke as a thin column (a 5 px `sphere` source at 6,400/s, 24,000
+particles, `spread: 3`, `fidelity: "high"`, `bounds: "open"`, faint additive sprites); *Ink Drop* is `model: "fluid"` (`force: 320`,
+`swirl: 30`, `fidelity: "high"`) with a `sphere` source shooting down at 420 px/s under gravity −60 and blue alpha sprites; *Ember
+Swirl* is `model: "fluid"` (`swirl: 170`) plus `forces.vortex: { "strength": 230, "scale": 422, "mode": "vortex", "axis": "z", "lift": 0.15 }`
+and additive orange embers.
 
-**`render`** — evaluated while drawing, so **every field here is free**: changing it never re-bakes.
+### Force emitters (`forceEmitters`)
 
-| Field | Range | Meaning |
-| --- | --- | --- |
-| `mode` | `sprite` \| `layers` \| `lines` | `layers` stamps `objects.members` instead of a procedural sprite; `lines` joins particles into ribbons (see [Lines](#lines-rendermode-lines--trails-and-ready-made-lines)). |
-| `sprite` | `soft-disc` \| `star` \| `spark` | Procedural, resolution-independent. |
-| `blend` | `alpha` \| `additive` | Alpha systems are depth-sorted back-to-front; additive is order-independent. |
-| `size` | `{start, end, random}` px | Size over life, ± per particle. |
-| `colorOverLife` | ≤16 stops `{at 0–1, color}` | Colours are stored `#rrggbbaa` (`rgba()` is accepted and normalised). **Alpha always comes from this ramp**, whatever `colorMode` says — end stops must be transparent or particles pop in/out. |
-| `colorMode` | `age` \| `source` \| `velocity` | Where RGB comes from. `source` needs a `layer` emitter. (`colorFrom: 'ramp'\|'source'` migrates to `age`/`source`.) |
-| `velocityRamp` / `velocityRange` | ramp / `{min, max}` px/s | The `velocity` gradient and the speeds that read its ends (`max` is forced above `min`). |
-| `twinkle` / `stretch` / `opacity` | 0–1 / 0–4 / 0–1 | Per-particle flicker (a ~1 Hz opacity pulse); how far a particle is smeared along its own velocity, 0 a dot and high values a streak; layer opacity. |
-| `onKill` | `{fade 0–10 s, scale 0–1}` | How a particle **leaves**. Only possible because the clip is baked in advance: a particle knows a wall is coming and starts fading/shrinking before it goes. `scale` needs a non-zero `fade`. |
+Up to 3 forces placed in the box, with no particles of their own. Any of them keeps the layer on the bake.
 
-#### Emitting from a layer (`shape: "layer"`) — dissolve a picture into its own pixels
+| `kind` | What it does |
+| --- | --- |
+| `jet` | A **blower**: what is inside `radius` is blended toward `push` px/s along `direction` (0° = right, 90° = up) at a rate set by `strength`. With the fluid on it drives the field and the particles ride it; without, it pushes the particles directly. |
+| `vortex` | A force round its own point in one of the five `forces.vortex` modes (`mode`, `lift`); `spin` `ccw` \| `cw`. Acts on the particles directly, and on the field when it is on. |
+| `smoke` | A **source**: injects `density` (0–8 a second) at `heat` (0–100) into the field at its point, so smoke comes from places you choose. Needs `forces.fluid.model: "smoke"`. `strength: 0` makes it pure material lifted by buoyancy. |
+| `burst` | A **pulse**: a radial blast at `pulseStart` s, repeating every `pulseEvery` s (`0` = once), throwing what is inside `radius` outward at `push` px/s, particles and field alike. `strength` is not read. |
+| `layer` | **Layer Velocity**: another layer's own motion (keyframes, motion path, parenting, in 3D) drags the particles inside `radius`, and pushes the field. `fromItemId` names that layer (needed); `spinDrag` (default `true`) lets its rotation and scaling whip what is near it, `false` keeps only its travel. Moving that layer's keyframes re-bakes. |
 
-Particles are born on the artwork's opaque pixels and can keep the colour of the pixel they came from. **How the sites are picked:** the picture is scaled down to at most 512 px on its long side (smoothed, so fine detail softens), every pixel with alpha above 8 is a site, and births pick evenly among the sites: alpha does not weight them, so density is the NUMBER of opaque pixels in an area — draw a dense region with more pixels, not brighter ones. Give the picture as a file or link (`asset:`, `/media/…`, https): a `url` is cut at 2,048 characters, so a data URL does not fit. The artwork is a **bounded snapshot on the emitter**, never a live reference — the source layer can be trimmed, hidden or deleted without breaking the system. `fromItemId` is only a hint for finding that layer again when the artwork is refreshed from it.
+Every entry: `id`, `position` px `{x, y, z}`, `radius` px, `strength` 0–2,000 (a `jet`, `vortex` or `layer` entry at `0` does nothing),
+`motion` `hold` \| `orbit` \| `sweep` with `motionSpeed` 0.1–3 and `motionRadius` px (the point circles, or sweeps side to side).
+
+## Emit from a layer: dissolve a picture into its pixels
+
+With `shape: "layer"` particles are born on the opaque pixels of a picture and can keep each pixel's colour. The picture is drawn at
+most 512 px on its long side (fine detail softens), every pixel with alpha above 8 counts, and a table of sites is picked from them:
+`2 × maxParticles` sites, at least 1,024 and at most 8,192 (with Grow, exactly `maxParticles`). Births walk that table, so density
+is the number of opaque pixels in an area (alpha does not weight it), and with more than 4,096 particles at once some share a
+site. The artwork is a
+**snapshot on the emitter**: the source layer can be trimmed, hidden or deleted; `fromItemId` and `sourceName` only find it again
+to refresh the snapshot.
 
 ```json
 { "shape": "layer", "emit": "continuous", "rate": 0,
@@ -275,75 +383,97 @@ Particles are born on the artwork's opaque pixels and can keep the colour of the
               "fontSize": 96, "lineHeight": 1.15, "color": "#ffffff" } }
 ```
 
-**Several layers.** `emitters[0].source` stays the canonical FIRST source and `emitters[0].sources[]` holds up to three more, each `{source, sourceName, fromItemId, size {x,y}, position {x,y}, followTimeline}` with its OWN rect — two layers do not share one. Sites are shared by ARTWORK AREA, not evenly, so a word and a full stop keep the same density instead of taking half the cloud each. `followTimeline` (per source, default false) stops that source emitting outside its layer's span. Grow Points is single-source: the front sweeps one artwork's arrival field.
+`source` is one of (the same snapshot shape is used by `objects.members`, `collision` and `proximity.sources`):
 
-`source` is one of:
+- `{ "kind": "image", "url": "/media/admin/{board_id}/logo.png", "aspect": 1 }`: a file or link (`asset:`, `/media/…`, https). `url`
+  is cut at 2,048 characters, so a data URL does not fit.
+- `{ "kind": "video", "url", "aspect", "poster" }`: sites come from the `poster` still (or the first frame); with
+  `colorMode: "source"` the colours follow `render.colorSourceTime`.
+- `{ "kind": "text", "text" (≤ 200 chars), "fontFamily", "fontWeight" 100–1000, "fontSize" 4–2000, "lineHeight" 0.5–4, "color" }`
+- `{ "kind": "shape", "points": [{x, y, hIn?, hOut?}] (2–256, unit space), "closed", "fill", "stroke", "strokeWidth", "aspect" }`:
+  `aspect` is the layer box's height ÷ width; `strokeWidth` is a fraction of the artwork's width (0.02 = 2 %); an empty `fill` draws
+  white, so an outline only is `"fill": "transparent"` with a `stroke`.
 
-- `{ "kind": "image", "url": "/media/admin/{board_id}/logo.png", "aspect": 1 }`
-- `{ "kind": "text", "text", "fontFamily", "fontWeight" 100–1000, "fontSize" 4–2000, "lineHeight" 0.5–4, "color" }`
-- `{ "kind": "shape", "points": [{x, y, hIn?, hOut?}] (2–256, unit space), "closed", "fill", "stroke", "strokeWidth", "aspect" }`
+What makes it read as a dissolve rather than a leak (the panel's Pick a layer writes the first four):
 
-To match what the editor writes for a layer source (and what makes it read as a dissolve rather than a leak):
+- `emitter.size` = the layer's on-screen rect and `emitter.position` = its position: anything else reproduces the shape at the wrong
+  scale and place;
+- `solver.preRoll: 0`, `rate: 0`, one burst of the full `maxParticles` at `time: 0`, `speed: 0`: the picture is whole at frame 0 and
+  the forces take it apart;
+- `render.size.start` / `.end` ≈ `2.6 × sqrt(rectW × rectH / maxParticles)`, so the picture reads solid before it breaks up;
+- `render.colorMode: "source"`: each speck takes the colour of its pixel;
+- a `colorOverLife` that is opaque first and fades late.
 
-- `emitter.size` = the layer's real on-screen rect, `emitter.position` = its position — a fraction of the frame reproduces the shape at the wrong scale and in the wrong place;
-- `solver.preRoll: 0` (the picture must be whole at frame 0, not already blown apart), `rate: 0`, one burst of the full `maxParticles` at `time: 0`, `speed: 0` — the forces do the moving;
-- `render.colorMode: "source"` to keep each speck's own colour, with a `colorOverLife` that is opaque first and fades later (the ramp is then driving alpha alone);
-- `render.size.start`/`.end` ≈ `2.6 × sqrt(rectW × rectH / maxParticles)`, so the picture reads solid before it breaks up.
+The source layer does not disappear: hide it, trim it or fade it out at the moment the particles take over.
 
-The source layer itself does **not** disappear — a full dissolve transition still needs the layer hidden or faded separately.
+**Several layers.** `emitters[0].source` is the first; `emitters[0].sources[]` holds up to three more, each `{source, sourceName,
+fromItemId, size {x, y}, position {x, y}, followTimeline}` with its own rect. Sites are shared by artwork area, so a word and a full
+stop keep the same density. `followTimeline` (on the first source: `emitters[0].followTimeline`; default `false`, needs `fromItemId`)
+stops that source emitting outside its layer's span on the timeline. Grow uses the first source only.
 
-#### Particle Activation (`activation`) — a sweep instead of a pop
+## Grow: a front that releases the picture (`activation`)
 
-`mode: "immediate"` (default) means rate and bursts decide everything and the rest of the block is inert. `mode: "grow"` hands the emission sites to the same arrival bake Grow Fill uses, so a front travels *through the artwork* and switches particles on as it passes. **It only does anything for a `layer` emitter.**
-
-With `grow` on, emission stops being a rate and becomes a schedule: `rate`, `bursts` and `preRoll` are all ignored, `maxParticles` is clamped to the number of emission sites, and each site's particle is born (or released) at the instant the front reaches it.
+`mode: "immediate"` (default): rate and bursts decide and the rest of the block is inert. `mode: "grow"` (a `layer` emitter only)
+sweeps a front through the artwork, the same arrival field Grow Fill uses, and births or releases each site's particle as the front
+reaches it: `rate`, `bursts` and `preRoll` are ignored and every particle has its own site.
 
 | Field | Range | Meaning |
 | --- | --- | --- |
-| `inactive` | `frozen` \| `hidden` | `frozen` = every particle exists from frame 0 standing on its own pixel (the layer reads as the artwork until the front releases it; lifetime starts at release). `hidden` = nothing exists until the front arrives, so the layer builds up out of nothing. |
-| `start` / `speed` | 0–100 % / 0–400 %/s | Where the front is on frame one, and how fast it travels (`0` never moves). |
+| `inactive` | `frozen` (default) \| `hidden` | `frozen`: every particle stands on its pixel from frame 0 (the layer reads as the artwork) until the front releases it; its life starts then. `hidden`: nothing exists until the front arrives, so the picture builds out of nothing. |
+| `start` / `speed` | 0–100 % / 0–400 %/s | Where the front is at frame 0, and how fast it travels (`0` never moves). |
 | `reverse` | bool | Runs the sweep backwards. |
-| `softness` | 0–60 % | Dithers the front into a band instead of a cut line. |
-| `ignite` / `igniteBoost` / `igniteMode` / `igniteColor` / `igniteRamp` | 0–4 s / 0–400 % / `flash`\|`solid`\|`gradient` / colour / ramp | A flare on a just-released particle. **Drawn, not simulated** — tuning it never re-bakes. |
-| `from` | `left`\|`right`\|`top`\|`bottom`\|`center`\|`scatter` | Where the front starts. |
-| `seedCount` / `seedStagger` / `points` | 1–8 / 0–100 % / ≤8 `{x, y, delay}` | Number of start points, delay between them, or hand-placed seeds in the emitter's unit space (−0.5…0.5, +y up). |
-| `speedMap` + `noiseScale`/`noiseContrast`/`noiseSeed` | `uniform`\|`turbulent` | An uneven front. |
-| `bridges` / `bridgeReach` / `bridgeSlow` | bool / 1–80 px / 1–12× | Lets the front jump to a detached piece. **Reach must clear the gap between letters** or each glyph is its own island and only the seeded one ever activates. |
+| `softness` | 0–60 % | Dithers the front into a band. |
+| `from` | `left` \| `right` \| `top` \| `bottom` \| `center` \| `scatter` | Where it starts. |
+| `seedCount` / `seedStagger` / `points` | 1–8 / 0–100 % / ≤ 8 `{x, y, delay 0–1}` | Start points, the delay between them, or hand-placed seeds in the emitter's unit space (−0.5…0.5, +y up). |
+| `speedMap` + `noiseScale` / `noiseContrast` / `noiseSeed` | `uniform` \| `turbulent` | An uneven front. |
+| `bridges` / `bridgeReach` / `bridgeSlow` | bool / 1–80 px / 1–12× | Lets the front jump to a detached piece. **The reach must clear the gap between letters**, or each glyph is an island and only the seeded one ever activates. |
+| `ignite` / `igniteBoost` / `igniteMode` / `igniteColor` / `igniteRamp` | 0–4 s / 0–400 % / `flash` \| `solid` \| `gradient` / colour / ramp | A flare on a just-released particle. Drawn: tuning it never re-bakes. |
 
-#### Particle objects (`objects`) — stamp layers instead of sprites
+## Layers as particles (`objects`)
 
-With `render.mode: "layers"`, each particle stamps one of up to 12 members. Objects are a **render-only** concern — the solver moves anonymous points — so adding, removing or resizing them never re-bakes.
+With `render.mode: "layers"` each particle stamps one of up to 12 members instead of a sprite. Drawn only: adding, removing or
+resizing members never re-bakes (except with `packing` on). Stamped artwork needs far fewer particles than dots: the panel thins
+a system to 260 when the first member is set.
 
-`members[]`: `{ id, name, fromItemId?, source, included, weight 0–10, sizeScale 0.05–20, spinScale 0–20 }`, where `source` is the same snapshot shape as a layer emitter's. Block-level: `pick` (`cycle`\|`random`), `facing` (`billboard`\|`tumble`\|`velocity`), `size` px, `sizeRandom` 0–1, `spin` 0–20, `keepRatio`, `tint` (multiply the artwork by the life ramp). A member with no usable artwork is dropped rather than kept as a blank row. Stamped artwork needs far fewer particles than dots — the editor thins a system to ~260 when the artwork is first set.
+`members[]`: `{ id, name, fromItemId?, source, included, weight 0–10, sizeScale 0.05–20, spinScale 0–20 }`, where `source` is the
+snapshot shape above; a member without usable artwork is dropped. Block fields: `pick` `cycle` \| `random`; `facing` `billboard` \|
+`tumble` \| `velocity`; `size` px (1–4000); `sizeRandom` 0–1; `spin` 0–20; `keepRatio`; `tint` (multiply the artwork by the life
+ramp; `colorMode: "source"` does not apply to members); `playVideo` (default `false`: a video member is its still; `true`: every
+particle shows the video's current frame).
 
-#### Lines (`render.mode: "lines"`) — trails and ready-made lines
+## Lines: trails and ready-made rows
 
-`render.mode: "lines"` joins particles into ribbons instead of stamping each one. The simulation is unchanged — every force, the fluid and Return bend a line because they move its particles — and `render.lines` is draw-time only (never in the sim hash).
+`render.mode: "lines"` joins particles into ribbons. The simulation is unchanged (every force, the fluid and Return bend a line by
+moving its particles) and `render.lines` is drawn only. Lines keep the layer on the bake.
 
-- **`connect: "time"` — trails.** Each particle draws its own recent path, read from the baked cache.
-- **`connect: "rows"` — ready-made lines.** Needs `emitters[0].shape: "rows"`: `rows: { count 1–400, points 2–1000 }` tracers (count × points ≤ 50,000) spread over the emitter's `size`, all placed at `start`, at rest (row 0 is the top). Rows tracers never die of age and never stir the fluid, and the sanitiser sets `solver.maxParticles` to count × points. Each row is drawn whole from the first frame, bent by the forces. Give the box `bounds.behavior: "bounce"` so no point is killed at a wall (a missing point splits its row). With `connect: "rows"` and any other emitter shape, lines fall back to trails.
+- **`connect: "time"`: trails.** Each particle draws its own recent path, read from the bake.
+- **`connect: "rows"`: ready-made lines.** Needs `emitters[0].shape: "rows"` with `rows: { count 1–400, points 2–1000 }` (count ×
+  points ≤ 50,000) spread over the emitter's `size`, all placed at `start`, at rest (row 0 is the top). Rows never die of age and
+  never stir the fluid; `solver.maxParticles` becomes count × points. Each row is whole from the first frame and bent by the forces.
+  Use `bounds.behavior: "bounce"`: a point killed at a wall splits its row. With any other emitter shape, `rows` draws trails.
 
 | `render.lines` field | Range | Meaning |
 | --- | --- | --- |
-| `width` / `widthRandom` | 0.1–400 px / 0–1 | Ribbon width at the comp plane; per-line jitter. |
-| `taperStart` / `taperEnd` / `profile` | 0–1 / 0–1 / `linear`\|`smooth`\|`swell` | Thinning at the head / tail of a trail, the left / right end of a row. `swell` is fattest mid-line. |
-| `speedWidth` / `movedWidth` | −1–1 / 0–3 | Width by speed (range = `render.velocityRange`); extra width by distance moved from birth (range = `movedRange`). |
-| `length` / `shape` | 0.02–60 s / `trail`\|`full` | Seconds of path a trail shows; `full` = since birth. |
-| `end` / `stayFade` | `cut`\|`retract`\|`stay` / 0–60 s | What a trail does when its particle dies; `stay` + `shape: "full"` turns particles into pens. `stayFade: 0` keeps a stayed line. |
-| `share` | 0.01–1 | Fraction of particles that get a trail — keep dense systems near 1,500 trails. |
+| `width` / `widthRandom` | 0.1–400 px / 0–1 | Ribbon width; per-line jitter. |
+| `taperStart` / `taperEnd` / `profile` | 0–1 / 0–1 / `linear` \| `smooth` \| `swell` | Thinning at the head / tail of a trail, the left / right end of a row; `swell` is fattest mid-line. |
+| `speedWidth` / `movedWidth` | −1–1 / 0–3 | Width by speed (over `render.velocityRange`); extra width by distance moved from birth (over `movedRange`). |
+| `length` / `shape` | 0.02–60 s / `trail` \| `full` | Seconds of path a trail shows; `full` = since birth. |
+| `end` / `stayFade` | `cut` \| `retract` \| `stay` / 0–60 s | What a trail does when its particle dies; `stay` with `shape: "full"` turns particles into pens; `stayFade: 0` keeps it. |
+| `share` | 0.01–1 | Fraction of particles that get a trail; keep dense systems near 1,500 trails. |
 | `tailFade` / `fadeCurve` | 0–1 / 0.1–6 | Alpha falloff toward the tail. |
 | `pinEnds` | 0–0.5 | Rows: share of each row's length, per end, held on its rest line. |
-| `smooth` | 1 \| 2 \| 4 \| 8 | Maximum Catmull-Rom sub-samples between neighbouring points (only curved stretches use them). |
-| `colorMode` | `particle` \| `along` \| `moved` | `particle` = `render.colorOverLife` / velocity ramp at each point; `along` = `colorStart` → `colorEnd` head → tail (rows: top row → bottom row); `moved` = `colorStart` at rest → `colorEnd` at `movedRange` px from birth. Colours are `#rrggbbaa`. |
-| `showParticles` | bool | Also draw the sprites (with `render.size`) under the lines. |
+| `smooth` | 1 \| 2 \| 4 \| 8 | Most curve sub-samples between neighbouring points. |
+| `colorMode` | `particle` \| `along` \| `moved` | `particle`: the particle's colour at each point; `along`: `colorStart` → `colorEnd` head to tail (rows: top row to bottom row); `moved`: `colorStart` at rest → `colorEnd` at `movedRange` px from birth. |
+| `showParticles` | bool | Also draw the sprites (`render.size`) under the lines. |
 
-`render.blend` and `render.opacity` apply to lines too. *Smoke Lines* (`preset: "smoke-lines"`) is the starter for "lines bent by smoke":
+`render.blend` and `render.opacity` apply to lines. *Smoke Lines* (`preset: "smoke-lines"`), lines bent by a plume:
 
 ```json
 {
   "schemaVersion": 4, "preset": "smoke-lines", "seed": 7,
   "solver": { "preRoll": 0, "bounds": { "shape": "box", "size": { "x": 2304, "y": 1296, "z": 240 }, "behavior": "bounce" } },
-  "emitters": [{ "emit": "static", "shape": "rows", "position": { "x": 0, "y": 0, "z": 0 }, "size": { "x": 1920, "y": 972, "z": 0 }, "rows": { "count": 100, "points": 160 } }],
+  "emitters": [{ "emit": "static", "shape": "rows", "position": { "x": 0, "y": 0, "z": 0 }, "size": { "x": 1920, "y": 972, "z": 0 },
+    "rows": { "count": 100, "points": 160 }, "detach": true, "stir": { "strength": 0, "radius": 120 }, "variance": 0 }],
   "forces": {
     "wind": { "x": 0, "y": 0, "z": 0 }, "drag": 0, "turbulence": { "strength": 0 }, "return": { "strength": 2.5 },
     "fluid": { "model": "smoke", "force": 400, "swirl": 80, "viscosity": 4, "fidelity": "medium", "bounds": "open", "smoke": { "buoyancy": 300 } }
@@ -356,12 +486,112 @@ With `render.mode: "layers"`, each particle stamps one of up to 12 members. Obje
 }
 ```
 
-Move the plume with the smoke source's `position` / `motion` (`sweep` ripples the rows); `return.strength` sets how far a row is pulled before it settles (0 = carried off with the smoke).
+Move the plume with the smoke source's `position` / `motion` (`sweep` ripples the rows); `return.strength` sets how far a row is
+pulled before it settles (0 = carried off with the smoke).
 
-#### Particles in a world Scene
+## Collision and containers (`collision`, `colliders`)
 
-A particle layer is drawn flat over the picture. For particles that live in a world Scene as real objects (lit, shadowed, colliding with shapes, traced in Final 3D), write a simulation in the Scene instead: sim.md (GreenLight Dash only).
+A layer's artwork as a solid, extruded `depth` px through the box. `collision` is the first collider; `colliders[]` holds up to 3
+more of the same shape. Any collider keeps the layer on the bake.
 
-#### What re-bakes and what is free
+| Field | Range | Meaning |
+| --- | --- | --- |
+| `source` | snapshot | The artwork (the [source shapes](#emit-from-a-layer-dissolve-a-picture-into-its-pixels)); `null` = no collider. With `sourceName` and `fromItemId`. |
+| `faces` | `outer` (default) \| `inner` | `outer`: an obstacle (particles bounce, the flow routes round it). `inner`: a container (emission is clipped to it, particles stay inside): a text source gives particles inside letters. |
+| `bounce` | 0–1 | Speed kept at a contact. |
+| `depth` / `size` / `position` / `rotation` | px / px (width) / px `{x, y}` / ° | Where the artwork lies in the box. Filled in when the layer is picked; without `follow` they stay put whatever the layer does. |
+| `follow` | bool (default `false`, needs `fromItemId`) | The collider tracks that layer's artwork, position, scale and rotation every step (keyframes and parenting included), and exists only inside that layer's span on the timeline (hiding the layer does not remove it). `size` / `position` / `rotation` become the fallback for a deleted layer. A moving collider re-bakes whenever its pose changes, and it steers the particles only: the fluid passes through it. |
+| `releaseOutside` | bool (default `false`) | A container stops gathering particles already outside it. Turn it on when the collider arrives part-way through a shot, or it inhales the cloud. |
+| `open` | `{side none \| top \| bottom \| left \| right, spread 1–180°, at s, fade s}` | A container lets particles out through one side from `at`, taking `fade` seconds to open; `spread` is how much of that wall becomes a doorway. Sides are the frame's; `bottom` opens the floor of every stroke of a letter, and what leaves stays out. |
 
-Only simulation inputs invalidate the cache: `seed`, `solver`, `emitters[0]` (including `rows`), `forces` (including `return`), the layer emitter's artwork, and the *timing* parts of `activation` (`mode`, `inactive`, `start`, `speed`, `reverse`, `softness`). Everything in `render` (including `mode` and `lines`), `objects`, `quality`, plus `activation.ignite*`, is evaluated at draw time. Useful when a user asks for "the same motion, different colour" — that edit is instant and byte-identical in simulation.
+Several colliders: a particle stays outside every obstacle and inside every container, and emission is clipped to the containers'
+intersection (two containers that do not overlap cannot both be satisfied). Only the first fixed collider shapes the fluid. Two
+`follow` colliders on two spans give different collisions over time with no keyframes. The collider's field is a 384×216 grid
+scaled by the box's width: keep `bounds.size` near 16:9 or it is distorted along the short side.
+
+## Particles that pile up (`packing`)
+
+Particle-to-particle collision: a pour, a pile, a jar of beads, a mould filling up. **Off by default; leave it off unless the look
+needs it.** With it on, the drawn size is the collision radius, so `render.size` (or `objects.size` for layer objects) re-bakes.
+It keeps the layer on the bake. Emission refuses births with no room, so raising `rate` past what fits does nothing. Comfortable
+to about 6,000 particles. The fluid pushes a pack; the pack does not push the fluid.
+
+`{enabled, shape circle | object, substeps 1–8 (4), iters 1–12 (3), stiffness 0.05–1, gap px, friction 0–2 (0.45), restitution 0–1
+(0.05), radiusScale 0.1–3, cohesion 0–2, cohesionRange 0–2, sleep (true), sleepDrift 0–1, sleepFrames 1–240}`
+
+`shape: "object"` (layer objects, a flat box `bounds.size.z` ≤ 2) collides each object as its own outline: letters stack, tip over
+and swirl without overlapping, the simulation owns each one's angle (`objects.facing: "velocity"` steers it into its travel), and
+`objects.pick`, `spin`, `keepRatio` and each member's `spinScale` re-bake. Several times the cost of circles: tens to a few hundred
+objects. In a deep box it collides as circles.
+
+## Follow a path (`pathFollow`)
+
+Particles are pulled onto a spline and flow along it. `{enabled, attract 0–600, flow 0–600, proximity px, swirl 0–400, anchors[]}`:
+`attract` pulls toward the nearest point of the path, `flow` pushes along it, `swirl` braids round it, all fading past `proximity`
+px. `anchors` (≤ 64) are in the box's unit space (−0.5…0.5); empty uses the emitter's own `path`. Keeps the layer on the bake.
+
+## Proximity: another layer's shape drives the cloud
+
+The distance from each particle to another layer's silhouette drives the particles' look and motion, so a word or logo shapes a
+passing cloud along its outline. It acts only when `enabled: true`, at least one source is set and `fx` has at least one entry.
+The GPU engine does not read it: keep `maxParticles` at 50,000 or below.
+
+| Field | Range | Meaning |
+| --- | --- | --- |
+| `sources[]` | ≤ 4 × `{id, source, sourceName, fromItemId, follow, size px, position {x, y}, rotation, pickScale}` | `source` is a snapshot. `follow` (default `true`) takes position, rotation and scale live from `fromItemId` every frame (keyframes, paths, parenting) and acts only inside that layer's span (hiding it does not switch it off); `size` / `position` / `rotation` are the fallback. |
+| `measure` | `shape` (default) \| `edge` \| `inside` \| `centre` \| `x` \| `y` | Which distance: to the silhouette from outside (solid inside); either side of the outline; depth into the shape (with `invert`: the core only); to the centre; along the source's own x or y axis (a band). |
+| `range` / `falloff` | px | Full influence within `range` (default 90 at 1080p), fading out over `falloff` (340). Tune `falloff` against the artwork's thinnest feature: a 300 px band round 55 px strokes is a blob. |
+| `shape` / `combine` | `smooth` \| `linear` \| `sharp` / `max` \| `add` \| `average` \| `min` | The falloff curve; how several sources combine. |
+| `depth` | px | `0`: flat (the whole depth of the box). Above 0: a slab of that half-thickness. |
+| `invert` | bool | Swaps near and far. |
+| `colorMode` / `color` / `colorRamp` | `solid` \| `ramp` | What the `color` amount paints: one colour, or a ramp read by distance. |
+| `fx` | `{ key: amount }` | What the field drives, below. |
+
+| `fx` key | Range | Kind |
+| --- | --- | --- |
+| `size` / `opacity` / `color` / `spin` / `bright` / `stretch` / `twinkle` | % (`spin` in °) | **Look**: drawn, never re-bakes. With `packing` on, `size` re-bakes (it is the contact radius). |
+| `attract` | −6000–6000 px/s² | **Sim**. Positive pulls particles onto the shape along its true outline normal; negative pushes them away (the panel adds it at −2200, a repel). |
+| `flow` / `orbit` | −6000–6000 px/s² | **Sim**. Along the outline; round the source's centre. |
+| `drag` / `speed` / `turb` / `life` | 0–24 / % / % / % | **Sim**. Extra drag; speed, turbulence and lifetime scaled where the field is full. |
+| `freeze` | 0–100 % | **Sim**. `100` stops particles dead where the field is full, which paints the silhouette out of a passing cloud. |
+
+**Animating it.** `propertyKeyframes: { "px:<param>": [...] }` on the particle item: `range`, `falloff`, `depth` and every key present
+in `fx` take an ordinary numeric track (easings, HOLD, the graph editor, `propertyKeyframeFx`; [video-keyframes.md](video-keyframes.md)). A
+track on a look amount never re-bakes; one on a sim amount, or on `range` / `falloff` / `depth` while a sim amount is set, re-bakes
+like editing the number does. An amount stored at 0 and keyed away from 0 does reach the simulation. `measure`, `shape`, `combine`,
+`invert` and the colour fields take no tracks; a source's pose is animated by keyframing the source layer with `follow: true`.
+
+## A logo made of particles, and a morph between shapes
+
+**A logo that holds, then comes apart.** A `layer` emitter on the logo with the dissolve settings
+([above](#emit-from-a-layer-dissolve-a-picture-into-its-pixels)), `lifetime` longer than the layer, and every Dust motion
+zeroed (`wind` 0, `turbulence.strength` 0, `drag` 0) so it stands still; then a `burst` force emitter, a keyed source layer for
+Layer Velocity, or Grow (`inactive: "frozen"`) takes it apart. `forces.return` brings it back together after a gust.
+
+**A logo that builds out of nothing.** Grow with `inactive: "hidden"`: the front births each particle on its pixel. Or an ambient
+cloud and a Proximity source on the logo with `fx.attract` positive, then `fx.freeze: 100` once it has arrived.
+
+**A morph between shapes** (galaxy → sphere → ring): one system, and one hidden guide layer per shape, placed one after another on
+the timeline. Each guide is a `proximity.sources[]` entry with `follow: true` and its `fromItemId` (up to 4); a followed source acts
+only inside its layer's span, so the pull changes shape at each cut with no keyframe. `measure: "shape"`, a positive `fx.attract`
+with `fx.drag`, and `px:attract` / `px:drag` / `px:falloff` keys to ease each capture in and out; `px:size` / `px:bright` are free.
+Shape guides are `kind: "shape"` sources (a ring is a stroke with `"fill": "transparent"`). Inside a filled shape the pull keeps
+going toward its centreline and particles bead on it: ease `attract` down once the cloud has arrived and fill with `fx.turb` or
+hold it with `fx.freeze`. Keep `bounds.size.z` small (about 140, `bounce`) so a flat shape stays flat when the camera tilts.
+
+**The look.** Additive particles add up to white blobs and do not look clean: use `blend: "alpha"` with small round dots
+(`stretch: 0`), and make the light with one Deep Glow on an adjustment layer above them (`glow` with `thresholdBy: 0`,
+`glowThreshold` about 30 so the background stays dark, `tonemap: 2`; [effects-overlay.md](video-effects.md#deep-glow-glow)).
+
+## What re-bakes and what is free
+
+**Re-bakes** (simulation inputs): `seed`; the layer's length; `solver` except `engine`; all of `emitters[0]` (the layer artwork, the
+other sources, `rows`, `distribution` unless it is `random`); all of `forces` (`fluid`, `draft`, `return` included);
+`forceEmitters` and the animation of a Layer Velocity layer; `pathFollow`; `collision` and `colliders` and a followed collider's
+layer animation; `packing` when enabled, with the sizes and object fields it reads; `activation.mode`, `inactive`, `start`, `speed`,
+`reverse`, `softness`, and the front's seeds, map and bridges; Proximity when an `fx` sim amount is set (its field numbers, the sim
+amounts, their `px:` tracks and the source layers' animation).
+
+**Free** (drawn): all of `render` (`mode` and `lines` included), `objects`, `quality`, `solver.engine`, `activation.ignite*`, and
+Proximity's look amounts and colour, all unless `packing` is on for the sizes. "The same motion, a different colour" is instant and
+the same simulation.

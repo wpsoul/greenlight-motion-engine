@@ -17,6 +17,11 @@
  * chat     { height, full, onExpand(full) } — the studio in a chat's frame (chat.js): up to 900 px wide the mobile editor
  *          in a box `height` px tall (the whole screen when `full`), no purple; the returned studio's `chat.set({ height,
  *          full, onExpand })` follows the host. Without it the studio is laid out for a whole window (a column ≤ 900 px)
+ * camera   true: a Camera layer's controls (camera.js) — Free · Path · Rig · Zoom, lens focus, the gestures on the
+ *          preview — and the Camera and 3D Scene rows in the app's colours. Off unless asked: only the standalone hosts
+ *          (the page `greenlight-motion build` writes, the app's Export for agents, the CLI's review page) pass true;
+ *          without it nothing of camera.js runs (no style, no DOM, no listener). The rows' order is every page's:
+ *          GreenLight Dash's (rowOrder.js)
  * A host may set those globals itself before calling (the card does); a host may also write its own left rail
  * (.lab-side) first (the lab, older cards) — otherwise the standard one is built here.
  * One studio per page: its parts listen on the window.
@@ -30,6 +35,7 @@ import navigatorCss from './navigator.css?inline';
 import colorCss from './color.css?inline';
 import focusCss from './focus.css?inline';
 import chatCss from './chat.css?inline';
+import cameraCss from './camera.css?inline';
 import * as sketch from '../../components/sketch/sketchEngine.js';
 import { zipStore } from '../reviewNotes.js';
 import { setServerFiles } from '../assets';
@@ -43,6 +49,8 @@ import { install as highlight } from './highlight.js';
 import { install as chatLayout, whiten } from './chat.js';
 import { install as timelineZoom } from './timelineZoom.js';
 import { install as worldSwitch } from './worldSwitch.js';
+import { install as camera } from './camera.js';
+import { appChannelOrder } from '../rowOrder';
 
 const SORT_CARET = '<svg class="ve-nav-sort-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const COLLAPSE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 19h16M9 10.5 12 8l3 2.5M9 13.5l3 2.5 3-2.5"/></svg>';
@@ -84,7 +92,7 @@ ${key('Hide · Crop · Range', kbd('X', 'C', 'G'))}
 }
 
 let mounted = false;
-export function mountStudio(el, { project, sources, strips, parts, config, assets = null, serverFiles = false, chat = null } = {}) {
+export function mountStudio(el, { project, sources, strips, parts, config, assets = null, serverFiles = false, chat = null, camera: cameraOption = false } = {}) {
   if (!el) throw new Error('GreenLightMotion.mountStudio needs an element');
   if (mounted) throw new Error('GreenLightMotion.mountStudio: one studio per page');
   if (serverFiles) setServerFiles();
@@ -119,7 +127,7 @@ export function mountStudio(el, { project, sources, strips, parts, config, asset
   if (!document.querySelector('style[data-greenlight-studio]')) {
     const style = document.createElement('style');
     style.setAttribute('data-greenlight-studio', '');
-    const css = [labCss, notesCss, reviewCss, highlightCss, navigatorCss, colorCss, focusCss].join('\n');
+    const css = [labCss, notesCss, reviewCss, highlightCss, navigatorCss, colorCss, focusCss, ...(cameraOption ? [cameraCss] : [])].join('\n');
     style.textContent = chat ? whiten(css) : css;
     document.head.append(style);
   }
@@ -136,12 +144,15 @@ export function mountStudio(el, { project, sources, strips, parts, config, asset
   // Notes draw with the app's own sketch engine
   window.LabNoteEngine = { ...sketch, zipStore };
   const STUDIO = { el, assets };   // assets: the page's files, as mountPage takes them (a chat's .glvideo, the user's own)
+  STUDIO.appOrder = appChannelOrder;   // the layer list in the timeline's order, GreenLight Dash's (lab.js, rowOrder.js)
+  if (cameraOption) STUDIO.cameraRows = true;   // the Camera and 3D Scene rows in the app's colours (PlayerPage.jsx, lab.js, camera.css)
   mounted = true;
   // the order the card loaded them in: the page and the rail, the modes, then the parts that use them
   for (const install of [lab, review, color, inspector, gizmo, notes, highlight]) install(STUDIO);
+  if (cameraOption) camera(STUDIO, cameraOption);
   STUDIO.zoom = timelineZoom();
   if (chat) STUDIO.chat = chatLayout(STUDIO, chat);
-  // (chatswitch) a film with a 3D Scene: Draft | Final at the end of the Edit toolbar (nothing at all for a 2D film)
+  // (chatswitch) a film with a 3D Scene: the preview's Draft 3D | Final 3D in the player bar, starting in Draft (nothing at all for a 2D film)
   worldSwitch(STUDIO);
   return STUDIO;
 }

@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { materials as makeMaterial } from '../materialFactory';
 import {
   createBlitMaterial, createPictureCopyMaterial, createOverBlitMaterial, createAdjustmentMaterial, createMixMaterial,
-  createMaskCompositeMaterial, createTrackMatteMaterial, createDepthStampMaterial, createDepthCompositeMaterial,
+  createMaskCompositeMaterial, createTrackMatteMaterial, createDepthStampMaterial, createFootageDepthStampMaterial, createDepthCompositeMaterial,
 } from '../clipShader';
 import { createCameraDofDepthMaterial, createCameraDofMaterial } from '../cameraDof';
 import { createMotionBlurMixMaterial } from '../motionBlurLayer';
@@ -88,6 +88,11 @@ export function buildCompositePipeline(engine, { camera, initW, initH, fov }) {
   depthStampScene.add(new THREE.Mesh(fsQuadGeo, depthStampMaterial));
   engine.depthStampMaterial = depthStampMaterial;
   engine.depthStampScene = depthStampScene;
+  const footageDepthStampMaterial = makeMaterial.footageDepthStamp() ?? createFootageDepthStampMaterial();
+  const footageDepthStampScene = new THREE.Scene();
+  footageDepthStampScene.add(new THREE.Mesh(fsQuadGeo, footageDepthStampMaterial));
+  engine.footageDepthStampMaterial = footageDepthStampMaterial;
+  engine.footageDepthStampScene = footageDepthStampScene;
   // Camera-baked 3D colour + its real depth land together. Unlike the fallback
   // stamp above, this can resolve two crossing 3D surfaces per pixel.
   const depthCompositeMaterial = makeMaterial.depthComposite() ?? createDepthCompositeMaterial();
@@ -290,7 +295,7 @@ export function buildCompositePipeline(engine, { camera, initW, initH, fov }) {
   engine.overlayFxRT = null;
   // what disposeCompositePipeline releases: exactly the objects built here
   engine.pipelineBuilt = {
-    fsQuadGeo, blitMaterial, seqPlateCopyMaterial, depthStampMaterial, depthCompositeMaterial, cameraDofMaterial,
+    fsQuadGeo, blitMaterial, seqPlateCopyMaterial, depthStampMaterial, footageDepthStampMaterial, depthCompositeMaterial, cameraDofMaterial,
     cameraDofDepthMaterial, depthCompositeSplitMaterial, depthCompositeTranslucentMaterial,
     mixMaterial, maskMaterial, trackMatteMaterial, trackMattePlainMaterial, overBlitMaterial, adjustmentClipMesh,
     matteClipMaterial,
@@ -307,6 +312,7 @@ export function disposeCompositePipeline(engine) {
   b.blitMaterial.dispose();
   if (b.seqPlateCopyMaterial !== b.blitMaterial) b.seqPlateCopyMaterial.dispose();
   b.depthStampMaterial.dispose();
+  b.footageDepthStampMaterial?.dispose();
   b.depthCompositeMaterial.dispose();
   b.depthCompositeSplitMaterial.dispose();
   b.depthCompositeTranslucentMaterial.dispose();

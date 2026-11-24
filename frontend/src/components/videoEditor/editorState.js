@@ -5,7 +5,7 @@
  * Engine can normalize a project without loading the editor UI. VideoEditor.jsx imports and re-exports it.
  */
 import { normalizeMtimeNs } from "./mediaUrlVersion";
-import { ClipSource, TransitionType, TransitionEasing, currentEasing, currentEasingKey, TransitionOrder, LayerTransitionType, SHAPE_TYPES, TEXT_FONT_SIZE_PX_MIN, TEXT_FONT_SIZE_PX_MAX, TEXT_FONT_SIZE_PCT_MIN, TEXT_FONT_SIZE_PCT_MAX, DEFAULT_TEXT_FONT_SIZE_PX, DEFAULT_TEXT_FONT_SIZE_PCT, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT, textFontSizeUnitOf, MODEL_CONFIG_DEFAULTS, resolveTransitionType, migrateDirectionalTransition, TEXT_BG_REVEAL_TYPES, TEXT_BORDER_STYLES, TEXT_BG_REVEAL_STYLES, TEXT_BG_GROW_APPEAR } from "./types";
+import { ClipSource, TransitionType, TransitionEasing, currentEasing, currentEasingKey, TransitionOrder, LayerTransitionType, TAKE_MEDIA_TYPE, SHAPE_TYPES, TEXT_FONT_SIZE_PX_MIN, TEXT_FONT_SIZE_PX_MAX, TEXT_FONT_SIZE_PCT_MIN, TEXT_FONT_SIZE_PCT_MAX, DEFAULT_TEXT_FONT_SIZE_PX, DEFAULT_TEXT_FONT_SIZE_PCT, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT, textFontSizeUnitOf, MODEL_CONFIG_DEFAULTS, resolveTransitionType, migrateDirectionalTransition, TEXT_BG_REVEAL_TYPES, TEXT_BORDER_STYLES, TEXT_BG_REVEAL_STYLES, TEXT_BG_GROW_APPEAR } from "./types";
 import { BLEND_MODES } from "./clipShader";
 import { isPrimitiveKind, PRIMITIVE_DEFAULT_COLOR, PRIMITIVE_DEFAULT_TEXT } from "./model3dPresets";
 import { CAMERA_CHANNEL_KIND, CAMERA_KF_LABELS, CAMERA_MEDIA_TYPE, isCameraChannel, pinCameraChannelTop, sanitizeCameraPath } from "./projectCamera";
@@ -30,6 +30,7 @@ function lineStatesField(raw) {
   return cfg ? { textLineStates: cfg } : {};
 }
 import { sanitizeBezier, sanitizeEaseSlice } from "./easingCurves";
+import { sanitizeHeldKeyframes } from "./keyframeHold";
 import { AUDIO_FADE_CURVES } from "./audioFade";
 import { GIF_LOOP_MODES, GIF_LOOP_MODE_DEFAULT, GIF_SPEED_DEFAULT, GIF_SPEED_MIN, GIF_SPEED_MAX } from "./animatedImage";
 import { sanitizeObjectMotionPath, MOTION_PATH_KF_KEY, coerceMotionPathValue } from './objectMotionPath';
@@ -37,8 +38,9 @@ import { getAdjustmentEffect, makeEid, parseEffectKfKey, effectParamKfMeta, sani
 import { sanitizeObjectTrack } from "./objectTracking";
 import { RUNNING_GLOW_LAYER_EFFECT_ID, GLOW_DEFAULTS, GLOW_NUMBER_FIELDS, GLOW_ENUM_FIELDS, GLOW_COLOR_FIELDS } from "./runningGlow";
 import { DEPTH_PARALLAX_LAYER_EFFECT_ID, DEPTH_DEFAULTS, DEPTH_NUMBER_FIELDS } from "./depthParallax";
-import { DEPTH_MAP_LAYER_EFFECT_ID, DEPTH_MAP_MAX_DATA, DM_DEFAULTS, DM_ENUM_FIELDS } from "./depthMapEffect";
+import { DEPTH_MAP_LAYER_EFFECT_ID, DEPTH_MAP_MAX_DATA, DM_DEFAULTS, DM_ENUM_FIELDS, DM_NUMBER_FIELDS, sanitizeDepthVideo } from "./depthMapEffect";
 import { DEPTH_SCAN_LAYER_EFFECT_ID, SCN_DEFAULTS, SCN_NUMBER_FIELDS, SCN_ENUM_FIELDS, SCN_COLOR_FIELDS, SCN_GRADIENT_FIELDS } from "./depthScanLayer";
+import { DEPTH_KEY_LAYER_EFFECT_ID, DK_DEFAULTS, DK_NUMBER_FIELDS, DK_ENUM_FIELDS, DK_STRING_FIELDS } from "./depthKeyLayer";
 import { FRESNEL_RIM_LAYER_EFFECT_ID, FR_DEFAULTS, FR_NUMBER_FIELDS, FR_ENUM_FIELDS, FR_COLOR_FIELDS } from "./fresnelRimLayer";
 import { MOTION_BLUR_LAYER_EFFECT_ID, MBLUR_DEFAULTS, MBLUR_NUMBER_FIELDS, MBLUR_ENUM_FIELDS } from "./motionBlurLayer";
 import { POSTERIZE_TIME_EFFECT_ID, PT_DEFAULTS, PT_NUMBER_FIELDS } from './posterizeTime';
@@ -455,7 +457,7 @@ export function lineStrokeField(raw) {
   return clean ? { lineStroke: clean } : {};
 }
 
-export const SYNTHETIC_MEDIA_TYPES = new Set(['text', 'adjustment', 'shape', 'sequence', 'grid', 'motion', CAMERA_MEDIA_TYPE, RIG_MEDIA_TYPE, PARTICLE_MEDIA_TYPE, NULL_MEDIA_TYPE]);
+export const SYNTHETIC_MEDIA_TYPES = new Set(['text', 'adjustment', 'shape', 'sequence', 'grid', TAKE_MEDIA_TYPE, 'motion', CAMERA_MEDIA_TYPE, RIG_MEDIA_TYPE, PARTICLE_MEDIA_TYPE, NULL_MEDIA_TYPE]);
 
 export function sanitizeClip(clip) {
   if (!clip || typeof clip !== 'object') return null;
@@ -466,6 +468,7 @@ export function sanitizeClip(clip) {
     : clip.mediaType === 'shape' ? 'shape'
     : clip.mediaType === 'sequence' ? 'sequence'
     : clip.mediaType === 'grid' ? 'grid'
+    : clip.mediaType === TAKE_MEDIA_TYPE ? TAKE_MEDIA_TYPE
     : clip.mediaType === 'motion' ? 'motion'
     // A model layer carries a real .glb/.gltf/.obj url, so it is deliberately NOT in
     // SYNTHETIC_MEDIA_TYPES — a model clip with no url is as invalid as a video with none.
@@ -508,7 +511,7 @@ export function sanitizeClip(clip) {
         : typeof clip.thumbnail_url === 'string' && clip.thumbnail_url
           ? clip.thumbnail_url
           : null,
-    name: typeof clip.name === 'string' && clip.name ? clip.name : mediaType === 'text' ? 'Text Layer' : mediaType === 'audio' ? 'Audio' : mediaType === 'adjustment' ? 'Adjustment' : mediaType === 'shape' ? 'Shape' : mediaType === 'sequence' ? 'Sequence' : mediaType === 'grid' ? 'Grid' : mediaType === 'motion' ? 'Motion' : mediaType === 'model3d' ? '3D Model' : mediaType === PARTICLE_MEDIA_TYPE ? 'Particle Solver' : mediaType === CAMERA_MEDIA_TYPE ? 'Camera' : mediaType === HTML_MEDIA_TYPE ? 'HTML' : mediaType === NULL_MEDIA_TYPE ? 'Null' : mediaType === AE_MEDIA_TYPE ? 'After Effects' : 'Untitled',
+    name: typeof clip.name === 'string' && clip.name ? clip.name : mediaType === 'text' ? 'Text Layer' : mediaType === 'audio' ? 'Audio' : mediaType === 'adjustment' ? 'Adjustment' : mediaType === 'shape' ? 'Shape' : mediaType === 'sequence' ? 'Sequence' : mediaType === 'grid' ? 'Grid' : mediaType === TAKE_MEDIA_TYPE ? 'Take' : mediaType === 'motion' ? 'Motion' : mediaType === 'model3d' ? '3D Model' : mediaType === PARTICLE_MEDIA_TYPE ? 'Particle Solver' : mediaType === CAMERA_MEDIA_TYPE ? 'Camera' : mediaType === HTML_MEDIA_TYPE ? 'HTML' : mediaType === NULL_MEDIA_TYPE ? 'Null' : mediaType === AE_MEDIA_TYPE ? 'After Effects' : 'Untitled',
     duration: sanitizeNumber(
       clip.duration,
       mediaType === 'image' ? IMAGE_CLIP_DURATION_SECONDS : mediaType === 'text' ? TEXT_CLIP_DURATION_SECONDS : mediaType === 'adjustment' ? ADJUSTMENT_CLIP_DURATION_SECONDS : mediaType === 'shape' ? SHAPE_CLIP_DURATION_SECONDS : mediaType === 'model3d' ? MODEL_CLIP_DURATION_SECONDS : mediaType === PARTICLE_MEDIA_TYPE ? PARTICLE_CLIP_DURATION_SECONDS : mediaType === HTML_MEDIA_TYPE ? HTML_CLIP_DURATION_SECONDS : mediaType === NULL_MEDIA_TYPE ? NULL_CLIP_DURATION_SECONDS : mediaType === AE_MEDIA_TYPE ? AE_CLIP_DURATION_SECONDS : FALLBACK_CLIP_DURATION_SECONDS,
@@ -547,6 +550,46 @@ export function sanitizeClip(clip) {
   // it recursively so a loaded/pasted/preset container is always structurally valid.
   // A grid's channels are its cells (one member each), which is why the same
   // payload shape serves both.
+  if (mediaType === TAKE_MEDIA_TYPE) {
+    const rawTakes = Array.isArray(clip.takes) && clip.takes.length
+      ? clip.takes
+      : clip.sequence && typeof clip.sequence === 'object'
+        ? [{ id: createId(), name: base.name || 'Take 1', mediaType: 'sequence', sequence: clip.sequence }]
+        : [{ id: createId(), name: 'Take 1', mediaType: 'sequence', sequence: { clips: [], channels: [createDefaultChannel()] } }];
+    const seenIds = new Set();
+    const sanitizedTakes = rawTakes
+      .map((t, idx) => {
+        if (!t || typeof t !== 'object') return null;
+        const seqClip = sanitizeClip({
+          ...t,
+          mediaType: 'sequence',
+          name: typeof t.name === 'string' && t.name.trim() ? t.name.trim() : `Take ${idx + 1}`,
+        });
+        if (!seqClip) return null;
+        if (seenIds.has(seqClip.id)) seqClip.id = createId();
+        seenIds.add(seqClip.id);
+        return seqClip;
+      })
+      .filter(Boolean);
+    if (!sanitizedTakes.length) {
+      sanitizedTakes.push(sanitizeClip({
+        id: createId(),
+        name: 'Take 1',
+        mediaType: 'sequence',
+        sequence: { clips: [], channels: [createDefaultChannel()] },
+      }));
+    }
+    const active = sanitizedTakes.find((t) => t.id === clip.activeTakeId) || sanitizedTakes[0];
+    base.takes = sanitizedTakes;
+    base.activeTakeId = active.id;
+    base.ripple = clip.ripple !== false;
+    // Mirror active variant onto `sequence` + `duration` so Player, WebGL/WebGPU
+    // compositor, audio clock, exporter and headless render work identically to sequences.
+    base.sequence = active.sequence;
+    base.duration = Math.max(0.1, active.duration);
+    if (!base.thumbnailUrl && active.thumbnailUrl) base.thumbnailUrl = active.thumbnailUrl;
+    if (active.prerender) base.prerender = active.prerender;
+  }
   if (mediaType === 'sequence' || mediaType === 'grid') {
     const nested = clip.sequence && typeof clip.sequence === 'object' ? clip.sequence : {};
     const seqClips = (Array.isArray(nested.clips) ? nested.clips : []).map(sanitizeClip).filter(Boolean);
@@ -840,21 +883,26 @@ export function sanitizeLayerEffectChain(list) {
       }, raw));
       seen.add(raw.id);
     } else if (raw.id === DEPTH_MAP_LAYER_EFFECT_ID) {
-      // The shared depth source. It carries the MAP (top-level, like depth3d's
-      // own) plus the polarity flag every consumer agrees on.
+      // The shared depth source. It carries the still map OR per-frame depthVideo
+      // plus the polarity flag and optional 3D depth-buffer stamp settings.
       const params = {};
       for (const f of DM_ENUM_FIELDS) {
         const allowed = f.options.map(([value]) => value);
         const value = Number(raw.params?.[f.key]);
         params[f.key] = allowed.includes(value) ? value : DM_DEFAULTS[f.key];
       }
+      for (const f of DM_NUMBER_FIELDS) {
+        params[f.key] = sanitizeNumber(raw.params?.[f.key], DM_DEFAULTS[f.key], { min: f.min, max: f.max });
+      }
       const depthMap = sanitizeDepthMap(raw.depthMap);
+      const depthVideo = sanitizeDepthVideo(raw.depthVideo);
       out.push({
         id: DEPTH_MAP_LAYER_EFFECT_ID,
         eid: typeof raw.eid === 'string' && raw.eid ? raw.eid : makeEid(),
         enabled: raw.enabled !== false,
         params,
         ...(depthMap ? { depthMap } : {}),
+        ...(depthVideo ? { depthVideo } : {}),
       });
       seen.add(raw.id);
     } else if (raw.id === DEPTH_SCAN_LAYER_EFFECT_ID) {
@@ -881,6 +929,28 @@ export function sanitizeLayerEffectChain(list) {
       if ([1, 2, 3].includes(scnSpace)) params.scnSpace = scnSpace;
       out.push(applyEffectWindow({
         id: DEPTH_SCAN_LAYER_EFFECT_ID,
+        eid: typeof raw.eid === 'string' && raw.eid ? raw.eid : makeEid(),
+        enabled: raw.enabled !== false,
+        params,
+      }, raw));
+      seen.add(raw.id);
+    } else if (raw.id === DEPTH_KEY_LAYER_EFFECT_ID) {
+      const params = {};
+      for (const f of DK_NUMBER_FIELDS) {
+        params[f.key] = sanitizeNumber(raw.params?.[f.key], DK_DEFAULTS[f.key], { min: f.min, max: f.max });
+      }
+      for (const f of DK_ENUM_FIELDS) {
+        const allowed = f.options.map(([value]) => value);
+        const rawVal = raw.params?.[f.key];
+        const coerced = typeof allowed[0] === 'number' ? Number(rawVal) : rawVal;
+        params[f.key] = allowed.includes(coerced) ? coerced : DK_DEFAULTS[f.key];
+      }
+      for (const f of DK_STRING_FIELDS) {
+        const rawVal = raw.params?.[f.key];
+        params[f.key] = typeof rawVal === 'string' ? rawVal.slice(0, f.maxLength || 120) : DK_DEFAULTS[f.key];
+      }
+      out.push(applyEffectWindow({
+        id: DEPTH_KEY_LAYER_EFFECT_ID,
         eid: typeof raw.eid === 'string' && raw.eid ? raw.eid : makeEid(),
         enabled: raw.enabled !== false,
         params,
@@ -1440,7 +1510,8 @@ export const MODEL_SCREEN_SHADING = ['screen', 'lit'];
 export const MODEL_SCREENS_MAX = 8;
 
 // A screen that shows a layer of the same timeline (liveLayers.js: `layer`, an item or channel id, in place of `url`) and a real monitor's
-// look (`look: "monitor"` with its glow `strength`, its glass's roughness `glass`, its black level and Draft's `light`). Only stored when set.
+// look (`look: "monitor"` with its glow `strength`, its glass's roughness `glass`, its black level and Draft's `light`), and in a 3D Scene how
+// bright its page looks (`brightness`) or that it goes through the Scene's film (`filmed`). Only stored when set.
 function sanitizeScreenLive(s) {
   const layer = typeof s?.layer === 'string' && s.layer.trim() ? s.layer.trim().slice(0, 128) : null;
   const res = Array.isArray(s?.resolution) && s.resolution.length === 2 && s.resolution.every((v) => Number.isFinite(v) && v >= 16 && v <= 4096)
@@ -1452,6 +1523,10 @@ function sanitizeScreenLive(s) {
     ...(Number.isFinite(s?.glass) ? { glass: sanitizeNumber(s.glass, 0.1, { min: 0, max: 1 }) } : {}),
     ...(Number.isFinite(s?.blackLevel) ? { blackLevel: sanitizeNumber(s.blackLevel, 0.02, { min: 0, max: 0.5 }) } : {}),
     ...(s?.light === false ? { light: false } : {}),
+    // (screensharp2) how bright the page looks in a 3D Scene (1: as the page), apart from the light it throws (`strength`); `filmed`
+    // sends the picture through the Scene's exposure, curve and glow, as before 16.6.69 (world3d/render/screenLayer.js)
+    ...(Number.isFinite(s?.brightness) ? { brightness: sanitizeNumber(s.brightness, 1, { min: 0, max: 4 }) } : {}),
+    ...(s?.filmed === true ? { filmed: true } : {}),
     ...(res ? { resolution: res } : {}),
   };
 }
@@ -1603,6 +1678,9 @@ export function sanitizeModel3dConfig(item) {
       // (pose) A character's pose pipeline (modelPose.js): kept as written, as plain JSON. The pipeline reads it defensively (a field it
       // does not know does nothing; a name the file lacks is a warning), so the stored pose survives a re-import of the file. Only
       // stored when there is one.
+      // Skinning of the file's own skeleton: "dualQuaternion" keeps volume at bent joints (no candy-wrapper elbows), "linear" is
+      // the file's plain skinning. Only stored when written; the renderers read it (model3dLayer.js, world3dLayer.js).
+      ...(raw.skinning === 'dualQuaternion' || raw.skinning === 'linear' ? { skinning: raw.skinning } : {}),
       ...sanitizeModelPose(raw.pose),
       // (rigging) A skeleton made for a model file that has none (world3d/rig): plain JSON as written, like the pose. Only stored when
       // there is one.
@@ -1684,6 +1762,22 @@ export function sanitizeAiData(raw) {
     } catch { /* non-serializable — drop */ }
   }
   return Object.keys(out).length ? { aiData: out } : {};
+}
+
+function sanitizeCameraSolveOverride(raw, item) {
+  if (!raw || typeof raw !== 'object') return null;
+  const keyframes = sanitizePropertyKeyframes(raw.keyframes, [], item);
+  if (!Object.keys(keyframes).length) return null;
+  const k1 = Number(raw.camLensK1);
+  return {
+    enabled: raw.enabled !== false,
+    takeId: typeof raw.takeId === 'string' && raw.takeId ? raw.takeId.slice(0, 80) : null,
+    sourceUrl: typeof raw.sourceUrl === 'string' && raw.sourceUrl ? raw.sourceUrl.slice(0, 2000) : null,
+    rmsPx: Number.isFinite(Number(raw.rmsPx)) ? Math.round(Number(raw.rmsPx) * 1000) / 1000 : null,
+    inliers: Number.isFinite(Number(raw.inliers)) ? Math.max(0, Math.round(Number(raw.inliers))) : 0,
+    camLensK1: Number.isFinite(k1) && k1 !== 0 ? Math.max(-1, Math.min(1, k1)) : null,
+    keyframes,
+  };
 }
 
 export function sanitizeTimelineItem(item) {
@@ -1821,6 +1915,12 @@ export function sanitizeTimelineItem(item) {
   // same rules apply — including dropping orphans whose effect is gone.
   const sanitizedHiddenKeyframes = sanitizePropertyKeyframes(item.hiddenPropertyKeyframes, overlayEffects, item);
   const sanitizedHiddenKeyframeFx = sanitizeKeyframeFxMap(item.hiddenPropertyKeyframeFx, sanitizedHiddenKeyframes);
+  const heldKeyframes = item.heldKeyframes ? sanitizeHeldKeyframes(item.heldKeyframes, {
+    trimStart: sanitizeNumber(item.trimStart, 0, { min: 0 }),
+    trimEnd: sanitizeNumber(item.trimEnd, FALLBACK_CLIP_DURATION_SECONDS, { min: 0.1 }),
+    propertyKeyframes: sanitizedPropertyKeyframes,
+    hiddenPropertyKeyframes: sanitizedHiddenKeyframes,
+  }) : null;
   const layerEffects = sanitizeLayerEffectChain(rawLayerEffects);
   const adjustmentLut = sanitizeEffectLut(item.lut);
   const keyframeParenting = sanitizeParentingField(item);
@@ -1980,6 +2080,9 @@ export function sanitizeTimelineItem(item) {
     // Hidden tracks: parked outside propertyKeyframes, so nothing renders them.
     ...(Object.keys(sanitizedHiddenKeyframes).length ? { hiddenPropertyKeyframes: sanitizedHiddenKeyframes } : {}),
     ...(hasAnyKeyframeFx(sanitizedHiddenKeyframeFx) ? { hiddenPropertyKeyframeFx: sanitizedHiddenKeyframeFx } : {}),
+    // Hold Keys (keyframeHold.js): the whole tracks behind keys a held trim closed
+    // over. Kept only while they still describe this item's trims and tracks.
+    ...(heldKeyframes ? { heldKeyframes } : {}),
     // Camera inspector base values. They are only written on camera items, so
     // ordinary media layers keep their saved shape; shared keyframe tracks with
     // these labels override the base values at render time.
@@ -2297,6 +2400,12 @@ export function sanitizeTimelineItem(item) {
     // Scene Rig ▸ AI video: the prerendered source, the ready takes, the settings
     // (rigAiVideo.js sanitizeRigAi is the whitelist).
     ...(item.rigAi && typeof item.rigAi === 'object' ? (() => { const v = sanitizeRigAi(item.rigAi); return v ? { rigAi: v } : {}; })() : {}),
+    // 3D layer role in AI blocking vs post-take compositing (`standin` vs `composite`).
+    ...(item.aiRole === 'standin' || item.aiRole === 'composite' ? { aiRole: item.aiRole } : {}),
+    // Non-destructive VFX camera solve override locked to a placed AI take.
+    ...(item.cameraSolveOverride && typeof item.cameraSolveOverride === 'object'
+      ? (() => { const v = sanitizeCameraSolveOverride(item.cameraSolveOverride, item); return v ? { cameraSolveOverride: v } : {}; })()
+      : {}),
     // The rig look this item was last set from ({ id, name, hash } — rigPresets.js
     // rigLookHash), so the panel can tell "Studio Room" from "Studio Room · edited".
     ...(item.rigLook && typeof item.rigLook === 'object' && typeof item.rigLook.id === 'string' && item.rigLook.id
@@ -2632,6 +2741,32 @@ export function sanitizeLayerMarkers(rawMarkers, channels = []) {
     });
 }
 
+export function sanitizeTakeCuts(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const c of raw) {
+    if (!c || typeof c !== 'object') continue;
+    const id = typeof c.id === 'string' && c.id.trim() ? c.id.trim() : createId();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const name = typeof c.name === 'string' && c.name.trim() ? c.name.trim().slice(0, 80) : `Cut ${out.length + 1}`;
+    const selections = {};
+    if (c.selections && typeof c.selections === 'object') {
+      for (const [k, v] of Object.entries(c.selections)) {
+        if (typeof k === 'string' && k && typeof v === 'string' && v) selections[k] = v;
+      }
+    }
+    out.push({
+      id,
+      name,
+      ...(typeof c.description === 'string' && c.description.trim() ? { description: c.description.trim().slice(0, 160) } : {}),
+      selections,
+    });
+  }
+  return out;
+}
+
 export function normalizeEditorState(rawState) {
   const parsedState = rawState && typeof rawState === 'object' ? rawState : {};
   const clips = Array.isArray(parsedState.clips) ? parsedState.clips.map(sanitizeClip).filter(Boolean) : [];
@@ -2730,6 +2865,7 @@ export function normalizeEditorState(rawState) {
     aiFillZones,
     markers: sanitizeMarkers(parsedState.markers),
     layerMarkers: sanitizeLayerMarkers(parsedState.layerMarkers, activeChannels),
+    takeCuts: sanitizeTakeCuts(parsedState.takeCuts),
   };
 }
 
@@ -2752,5 +2888,6 @@ export function createEmptyEditorState() {
     background: null,
     aiFillZones: [],
     markers: [],
+    takeCuts: [],
   };
 }

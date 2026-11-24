@@ -118,6 +118,17 @@ export const SCN_ENUM_FIELDS = [
   { key: 'scnView', label: 'View', options: [[0, 'Result'], [1, 'Depth Map'], [2, 'Original']] },
 ];
 
+// A model layer only (its own pass slices its exact depth, engine/compositeHelpers.js). Not in SCN_DEFAULTS on purpose: the presets
+// write SCN_DEFAULTS, and they must not reset the axis; 0 is the default and is not written (editorState keeps 1–3 only).
+export const SCN_SPACE_FIELD = {
+  key: 'scnSpace',
+  label: 'Space',
+  options: [[0, 'Camera depth'], [1, 'Plane — model X'], [2, 'Plane — model Y'], [3, 'Plane — model Z']],
+};
+
+// Fields that act on a depth MAP only (cells, the silhouette cliff, the diagnostic views): they do nothing on a model.
+export const SCN_PICTURE_ONLY_KEYS = Object.freeze(['scnPixel', 'scnBorder', 'scnView']);
+
 export const SCN_COLOR_FIELDS = [
   { key: 'scnColor', label: 'Scan Color' },
 ];

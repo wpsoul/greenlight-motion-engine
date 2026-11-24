@@ -13,8 +13,12 @@
  *   every unit (character / word / line) an amount in −1…1; each effect's value
  *   is what the unit gets at 100 % selection, and the amount scales it:
  *     additive       position, rotation, rotate 3D, skew, tracking, blur, stroke width
- *     multiplicative scale (1 → value), opacity (1 → value)
+ *     multiplicative scale (1 → value), opacity (1 → value), font size (1 → value)
  *     paint          fill / gradient / hue fold into ONE paint, top to bottom
+ *     font           weight moves the unit's own toward the value, top to bottom (as a
+ *                    paint does); italic switches at half the amount. Size, weight and
+ *                    italic give a unit its own font: the host measures it and the row
+ *                    reflows (needsLayout, unitFont)
  *   Animators apply in list order. Each animator's transforms turn around ITS
  *   unit (Transform around, default = its Based on: a word range turns words —
  *   AE would still turn letters), nudged by the layer's Pivot X / Y. Animators on
@@ -42,7 +46,7 @@
  *   { aid, name, enabled,
  *     range:  { basedOn, around, units, start, end, offset, shape, smooth, easeHigh,
  *               easeLow, amount, randomize, seed, flow, loop },
- *     wiggle: { enabled, mode, max, min, rate, corr, tPhase, sPhase, seed },
+ *     wiggle: { enabled, mode, max, min, pick, rate, corr, tPhase, sPhase, seed },
  *     effects:[ { pid, type, enabled, ...fields } ] }
  *
  * Keyframe tracks (app: item.propertyKeyframes) — `txa:<aid>:<chan>`:
@@ -62,7 +66,9 @@ const TXA = (function () {
   const num = (label, def, min, max, step, unit = '', kf = true, title = '') => ({ type: 'num', label, default: def, min, max, step, unit, kf, title });
   const en = (label, def, labels, title = '') => ({ type: 'enum', label, default: def, values: Object.keys(labels), labels, title });
   const bool = (label, def, title = '') => ({ type: 'bool', label, default: def, title });
-  const col = (label, def) => ({ type: 'color', label, default: def });
+  // alpha: the field also takes #rrggbbaa (the picker's alpha bar); an opaque
+  // pick is stored as #rrggbb.
+  const col = (label, def, alpha = false) => (alpha ? { type: 'color', label, default: def, alpha: true } : { type: 'color', label, default: def });
   const cols = (label, def) => ({ type: 'colors', label, default: def });
   // A cubic bezier [x1, y1, x2, y2] — the keyframe graph's Custom curve — or null.
   const bez = (label, title = '') => ({ type: 'bezier', label, default: null, title });
@@ -157,7 +163,7 @@ const TXA = (function () {
     return !!DRIVE_ONLY[key];
   }
   // Effect fields that only show with another one on.
-  const FIELD_WHEN = { caret: { color: (v) => !!v.ownColor, hideAfter: (v) => !!v.hide }, box: { withText: (v) => v.shape === 'unit' } };
+  const FIELD_WHEN = { caret: { color: (v) => !!v.ownColor, hideAfter: (v) => !!v.hide }, box: { withText: (v) => v.shape === 'unit', borderColor: (v) => Number(v.border) > 0 } };
   const fieldShown = (type, key, values) => !(FIELD_WHEN[type] && FIELD_WHEN[type][key]) || FIELD_WHEN[type][key](values || {});
 
   const WIGGLE_FIELDS = {
@@ -165,12 +171,18 @@ const TXA = (function () {
     mode: en('Mode', 'intersect', { add: 'Add', subtract: 'Subtract', intersect: 'Intersect', min: 'Min', max: 'Max', difference: 'Difference' }),
     max: num('Max amount', 100, -100, 100, 1, '%'),
     min: num('Min amount', -100, -100, 100, 1, '%'),
+    // Crisp picks (see wigglePicks): a share of the units at 100 %, the rest at 0, nothing in between.
+    pick: num('Pick', 0, 0, 100, 1, '%', false,
+      'Above 0: this share of the units, chosen by the seed, gets 100 % and the rest 0, nothing in between. 0 = every unit its own amount between Min and Max'),
     rate: num('Wiggles / s', 2, 0, 30, 0.1, '/s', false),
     corr: num('Correlation', 0, 0, 100, 1, '%'),
     tPhase: num('Temporal phase', 0, -360, 360, 1, '°', false),
     sPhase: num('Spatial phase', 0, -360, 360, 1, '°', false),
     seed: num('Seed', 1, 0, 9999, 1, '', false),
   };
+  // Wiggle fields a panel shows: with Pick on, Max, Min and Correlation have nothing to do.
+  const PICK_IDLE = { max: 1, min: 1, corr: 1 };
+  const wiggleShows = (w, key) => !(w && w.pick > 0 && PICK_IDLE[key]);
 
   // Layer-level (item fields beside `textAnimators`): where in its unit every
   // transform turns. Pivot X / Y = % of the unit's box from its centre (100 =
@@ -207,6 +219,14 @@ const TXA = (function () {
       fields: { skew: num('Skew', 25, -85, 85, 1, '°'), axis: num('Axis', 0, -180, 180, 1, '°') } },
     { key: 'tracking', label: 'Tracking', group: 'Transform', desc: 'Space the units out — the line reflows',
       fields: { amount: num('Amount', 40, -200, 600, 1, 'px') } },
+    // Font size, weight and italic: each unit takes its own font, measured with it, so the line reflows around
+    // it (Scale only grows a unit in place) and every unit keeps the line's baseline (see unitFont).
+    { key: 'size', label: 'Font size', group: 'Font', desc: 'A bigger or smaller font for each unit — the line reflows',
+      fields: { size: num('Size', 150, 10, 1000, 1, '%', true, '% of the unit\'s own font size. The line makes room and the letters stay on its baseline') } },
+    { key: 'weight', label: 'Font weight', group: 'Font', desc: 'A heavier or lighter weight — the line reflows',
+      fields: { weight: num('Weight', 700, 100, 900, 10, '', true, 'The weight the unit moves to from its own. A variable font shows every step, a font with fixed weights the nearest one it has') } },
+    { key: 'italic', label: 'Italic', group: 'Font', desc: 'Real italic for the selection — the line reflows',
+      fields: { style: en('Style', 'italic', { italic: 'Italic', normal: 'Upright' }, 'Applies where the amount is 50 % or more. Upright takes the italic off an italic layer') } },
     { key: 'opacity', label: 'Opacity', group: 'Colour', desc: 'Fade the selected units',
       fields: { opacity: num('Opacity', 0, 0, 100, 1, '%') } },
     { key: 'fill', label: 'Fill colour', group: 'Colour', desc: 'Recolour the selection',
@@ -225,11 +245,13 @@ const TXA = (function () {
       fields: { amount: num('Blur', 18, 0, 120, 0.5, 'px') } },
     { key: 'box', label: 'Highlight box', group: 'Decorate', desc: 'A bar behind each selected run',
       fields: {
-        color: col('Colour', '#33efab'),
+        color: col('Colour', '#33efab', true),
         behind: en('Behind', 'selected', { selected: 'Selected', revealed: 'Revealed' }, 'Revealed = the text this animator lets through. On a typing animator the box grows with the typing'),
         shape: en('Shape', 'line', { line: 'Per line', unit: 'Per unit', block: 'Block' }, 'Per line = one bar per run of selected units in a row. Per unit = a bar behind each unit on its own. Block = one shape around all of it, growing a line at a time'),
         padX: num('Padding X', 12, 0, 200, 1, 'px'), padY: num('Padding Y', 4, -60, 200, 1, 'px'), radius: num('Radius', 10, 0, 200, 1, 'px'), opacity: num('Opacity', 100, 0, 100, 1, '%'), grow: bool('Grow with range', true),
         withText: bool('Fade with text', false, 'Each bar is only as visible as its unit: a word that has not appeared yet has no bar'),
+        border: num('Border', 0, 0, 40, 0.5, 'px', true, 'A line along the inside of the box edge, following its radius. 0 = none. For an outline only, give Colour no opacity'),
+        borderColor: col('Border colour', '#ffffff', true),
       } },
     // A text cursor at the edge of what this animator lets through (what an Opacity 0
     // on the same range leaves visible) — on an In animator it types with the text.
@@ -249,7 +271,7 @@ const TXA = (function () {
       fields: { offset: num('Offset', 6, -60, 60, 1, '') } },
   ];
   const EFFECT_BY_KEY = Object.fromEntries(EFFECTS.map((e) => [e.key, e]));
-  const EFFECT_GROUPS = ['Transform', 'Colour', 'Light', 'Decorate', 'Characters'];
+  const EFFECT_GROUPS = ['Transform', 'Font', 'Colour', 'Light', 'Decorate', 'Characters'];
 
   const MAX_ANIMATORS = 8;
   const MAX_EFFECTS = 12;
@@ -275,7 +297,12 @@ const TXA = (function () {
       case 'num': { const n = Number(v); return Number.isFinite(n) ? clamp(n, f.min, f.max) : f.default; }
       case 'enum': return f.values.includes(v) ? v : f.default;
       case 'bool': return typeof v === 'boolean' ? v : f.default;
-      case 'color': return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : f.default;
+      case 'color': {
+        if (typeof v !== 'string') return f.default;
+        if (/^#[0-9a-f]{6}$/i.test(v)) return v.toLowerCase();
+        if (f.alpha && /^#[0-9a-f]{8}$/i.test(v)) return (/ff$/i.test(v) ? v.slice(0, 7) : v).toLowerCase();
+        return f.default;
+      }
       case 'colors': {
         const list = Array.isArray(v) ? v.filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)).slice(0, 6) : [];
         return list.length >= 2 ? list.map((c) => c.toLowerCase()) : f.default.slice();
@@ -391,10 +418,19 @@ const TXA = (function () {
   function hasTransform(an) {
     return !!(an && Array.isArray(an.effects) && an.effects.some((e) => e && e.enabled !== false && XF_TYPES[e.type]));
   }
-  // Does any effect reflow the row (Tracking)? Only then must the evaluation run
-  // before the layout is final; otherwise it can wait for the paint.
+  // Does any effect reflow the row (Tracking, Font size / weight / Italic)? Only then must
+  // the evaluation run before the layout is final; otherwise it can wait for the paint.
+  const LAYOUT_TYPES = { tracking: 1, size: 1, weight: 1, italic: 1 };
+  const FONT_TYPES = { size: 1, weight: 1, italic: 1 };
   function needsLayout(list) {
-    return (list || []).some((an) => an.effects.some((e) => e.enabled !== false && e.type === 'tracking'));
+    return (list || []).some((an) => an.effects.some((e) => e.enabled !== false && LAYOUT_TYPES[e.type]));
+  }
+  // Does any live animator give units their own font (Font size, Font weight, Italic)? Only
+  // then does a host measure units with their own fonts (unitFont): other layers measure
+  // nothing more.
+  function hasFontEffects(list) {
+    return (list || []).some((an) => an && an.enabled !== false && Array.isArray(an.effects)
+      && an.effects.some((e) => e && e.enabled !== false && FONT_TYPES[e.type]));
   }
   // Does the stack change between frames? `hasTrack(aid)` says whether that
   // animator has any keyframe track. A static stack paints once and is cached.
@@ -477,7 +513,7 @@ const TXA = (function () {
         if ((k === 'easeHigh' || k === 'easeLow') && an.range?.shape === 'square') continue;
         row(an, k);
       }
-      if (an.wiggle && an.wiggle.enabled) for (const [k, f] of Object.entries(WIGGLE_FIELDS)) if (f.kf) row(an, `wig.${k}`);
+      if (an.wiggle && an.wiggle.enabled) for (const [k, f] of Object.entries(WIGGLE_FIELDS)) if (f.kf && wiggleShows(an.wiggle, k)) row(an, `wig.${k}`);
       for (const fx of an.effects || []) {
         const def = EFFECT_BY_KEY[fx.type];
         if (!def) continue;
@@ -615,6 +651,31 @@ const TXA = (function () {
     const k = r.units === 'percent' ? N / 100 : 1;
     return { S: (s + off) * k, E: (e + off) * k };
   }
+  // Wiggle: one selector index's own noise at `time`, in −1…1 (Correlation mixes in the
+  // noise every unit shares).
+  function wiggleNoise(w, i, time) {
+    const t = time * w.rate + w.tPhase / 360;
+    const nu = noise1(t + i * (w.sPhase / 360), hashU32(w.seed, i + 1));
+    return w.corr > 0 ? lerp(nu, noise1(t, hashU32(w.seed, 0)), w.corr / 100) : nu;
+  }
+  // Wiggle ▸ Pick: the units whose own noise is in the top `pick` % get 1, the others 0 —
+  // an exact share (round(N × pick / 100), ties by index), chosen by the seed. With
+  // Wiggles / s 0 the picks stay put; above it they change crisply over time. Animators
+  // with the same seed and rate rank the units alike, so a pick of 40 % lands on the units
+  // a continuous wiggle of that seed gives the most. Null while Pick is 0.
+  function wigglePicks(w, N, time) {
+    if (!(w && w.pick > 0) || N <= 0) return null;
+    const t = time * w.rate + w.tPhase / 360;
+    const v = new Float64Array(N);
+    for (let i = 0; i < N; i += 1) v[i] = noise1(t + i * (w.sPhase / 360), hashU32(w.seed, i + 1));
+    const order = Array.from({ length: N }, (_, i) => i).sort((a, b) => v[b] - v[a] || a - b);
+    const out = new Float32Array(N);
+    const K = Math.min(N, Math.round((N * w.pick) / 100));
+    for (let k = 0; k < K; k += 1) out[order[k]] = 1;
+    return out;
+  }
+  // A unit's wiggle amount (−1…1): its pick (1 / 0), or its noise mapped onto Min…Max.
+  const wiggleAmount = (w, picks, i, time) => (picks ? picks[i] : (w.min + ((wiggleNoise(w, i, time) + 1) / 2) * (w.max - w.min)) / 100);
   // One amount per selector index 0…N-1, in −1…1.
   function selection(r, w, N, time) {
     const out = new Float32Array(Math.max(0, N));
@@ -622,20 +683,14 @@ const TXA = (function () {
     const { S, E } = rangeEdges(r, N, time);
     const perm = r.randomize ? seededPerm(N, r.seed) : null;
     const amt = r.amount / 100;
+    const picks = w ? wigglePicks(w, N, time) : null;
     for (let i = 0; i < N; i += 1) {
       const c = (perm ? perm[i] : i) + 0.5;
       let f = r.loop
         ? Math.max(shapeAt(c - N, S, E, r, true), shapeAt(c, S, E, r, true), shapeAt(c + N, S, E, r, true))
         : shapeAt(c, S, E, r, false);
       f *= amt;
-      if (w) {
-        const t = time * w.rate + w.tPhase / 360;
-        const nu = noise1(t + i * (w.sPhase / 360), hashU32(w.seed, i + 1));
-        const ng = noise1(t, hashU32(w.seed, 0));
-        const v = lerp(nu, ng, w.corr / 100);
-        const wv = (w.min + ((v + 1) / 2) * (w.max - w.min)) / 100;
-        f = combine(f, wv, w.mode);
-      }
+      if (w) f = combine(f, wiggleAmount(w, picks, i, time), w.mode);
       out[i] = clamp(f, -1, 1);
     }
     return { amounts: out, S, E };
@@ -886,15 +941,10 @@ const TXA = (function () {
     const res = driveAmounts(r, N, ctx);
     const out = res.amounts;
     const amt = r.amount / 100;
+    const picks = w ? wigglePicks(w, N, time) : null;
     for (let i = 0; i < N; i += 1) {
       let f = out[i] * amt;
-      if (w) {
-        const t = time * w.rate + w.tPhase / 360;
-        const nu = noise1(t + i * (w.sPhase / 360), hashU32(w.seed, i + 1));
-        const ng = noise1(t, hashU32(w.seed, 0));
-        const v = lerp(nu, ng, w.corr / 100);
-        f = combine(f, (w.min + ((v + 1) / 2) * (w.max - w.min)) / 100, w.mode);
-      }
+      if (w) f = combine(f, wiggleAmount(w, picks, i, time), w.mode);
       out[i] = clamp(f, -2, 2);
     }
     return { amounts: out, S: null, E: null, drive: res };
@@ -1082,6 +1132,7 @@ const TXA = (function () {
       baseKnown: !!base, touched: false, paintK: 0,
       paint: { type: 'solid', c: base ? base.slice() : null }, overlays: null,
       stroke: null, outlineK: 0, glows: null, shadow: null, scramble: null, charShift: 0,
+      font: null,
     };
   }
   // A range with the instant's keyframed values in it.
@@ -1165,6 +1216,12 @@ const TXA = (function () {
     const xf = st.xf || (st.xf = {});
     return xf[level] || (xf[level] = { tx: 0, ty: 0, tz: 0, s: 1, sx: 1, sy: 1, rot: 0, rx: 0, ry: 0, skew: 0, axis: 0, persp: 0 });
   }
+  // A unit's font change, folded over every animator: its size × size, its weight as
+  // own × wA + wB (a weight moves the unit's own toward the value, whatever that is), its
+  // italic (null = as laid out). unitFont reads it against the unit's own font.
+  function fontOf(st) {
+    return st.font || (st.font = { size: 1, wA: 1, wB: 0, italic: null });
+  }
   function applyEffect(st, type, v, k, i, time, g, fillRgb, level = 'char') {
     const kp = clamp(k, 0, 1); // colour-type effects don't extrapolate
     switch (type) {
@@ -1174,6 +1231,11 @@ const TXA = (function () {
       case 'rotate3d': { const e = xfOf(st, level); e.rx += v.x * k; e.ry += v.y * k; e.persp = v.perspective; break; }
       case 'skew': { const e = xfOf(st, level); e.skew += v.skew * k; e.axis = v.axis; break; }
       case 'tracking': st.track += v.amount * k; break;
+      case 'size': { const f = fontOf(st); f.size *= 1 + (v.size / 100 - 1) * k; break; }
+      case 'weight': { const f = fontOf(st); f.wB = f.wB * (1 - k) + v.weight * k; f.wA *= 1 - k; break; }
+      // Italic is a face, not a quantity: it switches where the amount reaches half (a
+      // negative amount sets the other style).
+      case 'italic': if (Math.abs(k) >= 0.5) fontOf(st).italic = (v.style === 'italic') === (k > 0); break;
       case 'opacity': st.alpha *= 1 + (v.opacity / 100 - 1) * kp; break;
       case 'blur': st.blur += v.amount * k; break;
       case 'fill': if (kp > 0) paintFill(st, fillRgb, kp * (v.mix / 100)); break;
@@ -1212,6 +1274,30 @@ const TXA = (function () {
     }
     const n = Math.round(st.charShift);
     return n ? Array.from(token).map((ch) => shiftChar(ch, n)).join('') : token;
+  }
+
+  // The font a unit is drawn with after Font size / Font weight / Italic:
+  //   base = the unit's own font as laid out { size (px), weight, italic } — the layer's,
+  //          or what the Randomizer gave it
+  //   → { size, weight, italic }, or null when the unit keeps its own font.
+  // Size is a factor of the unit's own (kept within 5 %…2000 %); weight is rounded and
+  // kept within 100…900 — a variable font draws it as it is, a font with fixed weights
+  // draws the nearest weight it has (the browser's font matching), one that has none
+  // heavier a synthetic bold. The host measures the unit with this font, so its row
+  // reflows, and lowers / raises it by the change in size times the family's baseline
+  // depth, so it stays on the row's baseline.
+  const FONT_SIZE_MIN = 0.05;
+  const FONT_SIZE_MAX = 20;
+  function unitFont(st, base) {
+    const f = st && st.font;
+    if (!f || !base) return null;
+    const own = Math.round(base.weight);
+    const size = base.size * clamp(f.size, FONT_SIZE_MIN, FONT_SIZE_MAX);
+    const weight = Math.round(clamp(base.weight * f.wA + f.wB, 100, 900));
+    const italic = f.italic === null ? !!base.italic : f.italic;
+    const sized = Math.abs(size - base.size) >= 1e-3;
+    if (!sized && weight === own && italic === !!base.italic) return null;
+    return { size: sized ? Math.round(size * 100) / 100 : base.size, weight, italic };
   }
 
   // ── Transforms: levels, pivots, perspective ───────────────────────────────
@@ -1692,12 +1778,13 @@ const TXA = (function () {
         let j = k;
         let peak = amt[k];
         let last = k;
+        let top = cells[k].top, bottom = cells[k].bottom;
         while (j + 1 < n && cells[j + 1].row === cells[k].row && groups && g >= 0 && groups[j + 1] === g) {
           j += 1;
-          if (cells[j].ink > 0) { last = j; peak = Math.max(peak, amt[j]); }
+          if (cells[j].ink > 0) { last = j; peak = Math.max(peak, amt[j]); top = Math.min(top, cells[j].top); bottom = Math.max(bottom, cells[j].bottom); }
         }
         const f = cells[k], l = cells[last];
-        const x0 = f.x - v.padX, x1 = l.x + l.ink + v.padX, y0 = f.top - v.padY, y1 = f.bottom + v.padY;
+        const x0 = f.x - v.padX, x1 = l.x + l.ink + v.padX, y0 = top - v.padY, y1 = bottom + v.padY;
         if (x1 - x0 > 0.5 && y1 - y0 > 0.5) {
           out.push({ x0, y0, x1, y1, r: Math.max(0, Math.min(v.radius, (y1 - y0) / 2, (x1 - x0) / 2)), alpha: opacity * clamp(peak, 0, 1) });
         }
@@ -1713,7 +1800,13 @@ const TXA = (function () {
       if (!sel(i)) { i += 1; continue; }
       let j = i;
       let peak = 0;
-      while (j < n && cells[j].row === cells[i].row && sel(j)) { peak = Math.max(peak, amt[j]); j += 1; }
+      // The run's band: its tallest unit's (a unit with its own font size has its own).
+      let top = cells[i].top, bottom = cells[i].bottom;
+      while (j < n && cells[j].row === cells[i].row && sel(j)) {
+        peak = Math.max(peak, amt[j]);
+        top = Math.min(top, cells[j].top); bottom = Math.max(bottom, cells[j].bottom);
+        j += 1;
+      }
       const last = j - 1;
       const f = cells[i];
       const l = cells[last];
@@ -1730,7 +1823,7 @@ const TXA = (function () {
         for (let k = i; k < last && share(k) < 1; k += 1) x0 += (1 - share(k)) * adv(k);
         if (x1 < x0) x1 = x0;
       }
-      runs.push({ row: f.row, x0, x1, top: f.top, bottom: f.bottom, peak, covered: x1 - x0 });
+      runs.push({ row: f.row, x0, x1, top, bottom, peak, covered: x1 - x0 });
       i = j;
     }
     if (!runs.length) return [];
@@ -1787,6 +1880,15 @@ const TXA = (function () {
     }
     const one = rect(x0, y0, x1, y1, peak);
     return one ? [one] : [];
+  }
+
+  // A box's border: a line along the INSIDE of its edge (the box keeps its size), on the same
+  // radius. null when the box has none, so a box without a border costs nothing more.
+  //   q = one rect from boxRects  →  { x, y, w, h, r, width, color } for a stroked round rect
+  function boxBorder(v, q) {
+    const w = Math.min(Number(v.border) || 0, (q.x1 - q.x0) / 2, (q.y1 - q.y0) / 2);
+    if (!(w > 0.01)) return null;
+    return { x: q.x0 + w / 2, y: q.y0 + w / 2, w: q.x1 - q.x0 - w, h: q.y1 - q.y0 - w, r: Math.max(0, q.r - w / 2), width: w, color: v.borderColor };
   }
 
   // ── Caret ─────────────────────────────────────────────────────────────────
@@ -1864,9 +1966,9 @@ const TXA = (function () {
     RANGE_FIELDS, WIGGLE_FIELDS, LAYER_FIELDS, LAYER_ITEM_KEYS, EFFECTS, EFFECT_BY_KEY, EFFECT_GROUPS, CHARSETS,
     MAX_ANIMATORS, MAX_EFFECTS, EASE, KF_PREFIX,
     defaultsOf, sanitizeAnimators, sanitizeAnimator, sanitizeItemFields, layerSettings, newAnimator, newEffect,
-    liveAnimators, grainOf, needsLayout, animatorsMove,
+    liveAnimators, grainOf, needsLayout, hasFontEffects, animatorsMove,
     trackKey, parseTrackKey, channelInfo, trackLabel, buildKfProps,
-    evalTrack, evaluate, selection, rangeEdges, mapToUnits, glyphFor, mul, revealedOf, boxRects,
+    evalTrack, evaluate, selection, wigglePicks, wiggleShows, rangeEdges, mapToUnits, glyphFor, unitFont, mul, revealedOf, boxRects, boxBorder,
     LEVELS, levelOf, hasTransform, groupBoxes, maskedXf, unitTransform, unitTransform3d, unitTransformCam, m4Mul, applyH, hToCanvas, warpBegin, warpEnd,
     hexToRgb, rgbCss, mixRgb, sampleStops, paintCss, easeShape, shapeAt,
     CURVE_NAMES, RETIRED_CURVES, RANGE_ONLY, DRIVE_ONLY, rangeShows, fieldShown, curveFn, ranksOf, voiceFits, voiceTurns, driveAmounts, rangeAt,
@@ -1898,6 +2000,7 @@ export const {
   liveAnimators,
   grainOf,
   needsLayout,
+  hasFontEffects,
   animatorsMove,
   trackKey,
   parseTrackKey,
@@ -1907,12 +2010,16 @@ export const {
   evalTrack,
   evaluate,
   selection,
+  wigglePicks,
+  wiggleShows,
   rangeEdges,
   mapToUnits,
   glyphFor,
+  unitFont,
   mul,
   revealedOf,
   boxRects,
+  boxBorder,
   LEVELS,
   levelOf,
   hasTransform,

@@ -71,39 +71,56 @@ function inlineCssPlugin() {
 // reset (at zero specificity, as the app has it). One source of truth: the app's sheet.
 function editorModalCssPlugin() {
   const ID = 'virtual:editor-modal-css'
-  const RESOLVED = '\0' + ID
+  // The camera's (studio/camera.js, a page mounted with `camera: true`: the Camera Motion window, the camera map, Smooth
+  // path, the Zoom blocks on the camera layer, the preview's zoom framing surface, the focus pad): a sheet of its own, only
+  // the rules the windows' sheet does not have, which camera.js puts on the page. Without the camera the page carries
+  // exactly the windows' sheet, as before it.
+  const CAMERA_ID = 'virtual:editor-modal-css-camera'
   const ve = (f) => path.resolve(__dirname, 'src/components/videoEditor', f)
   const SOURCES = ['KeyframePresetModal.jsx', 'TextAnimatorPresetModal.jsx', 'TransitionPicker.jsx', 'Fields.jsx', 'DirectionPad.jsx']
+  const CAMERA_SOURCES = ['CameraMotionModal.jsx', 'cameraMoveMap.jsx', 'SmoothPathPopover.jsx', 'ZoomRangeLane.jsx', 'ZoomRangeOverlay.jsx', 'scenePanelMaps.jsx']
   return {
     name: 'motion-engine-editor-modal-css',
-    resolveId(id) { return id === ID ? RESOLVED : null },
+    resolveId(id) { return id === ID || id === CAMERA_ID ? '\0' + id : null },
     async load(id) {
-      if (id !== RESOLVED) return null
+      if (id !== '\0' + ID && id !== '\0' + CAMERA_ID) return null
+      const camera = id === '\0' + CAMERA_ID
       const fs = await import('node:fs')
       const { default: postcss } = await import('postcss')
-      const tokens = new Set()
-      for (const f of SOURCES.map(ve)) {
-        this.addWatchFile(f)
-        for (const m of fs.readFileSync(f, 'utf8').matchAll(/\bve-[a-z0-9-]+/g)) tokens.add(m[0])
+      const tokensOf = (files) => {
+        const tokens = new Set()
+        for (const f of files.map(ve)) {
+          this.addWatchFile(f)
+          for (const m of fs.readFileSync(f, 'utf8').matchAll(/\bve-[a-z0-9-]+/g)) tokens.add(m[0])
+        }
+        const prefixes = [...tokens].filter((t) => t.endsWith('-'))
+        const known = (c) => tokens.has(c) || prefixes.some((p) => c.startsWith(p))
+        return (sel) => {
+          const classes = [...sel.matchAll(/\.(ve-[\w-]+)/g)].map((m) => m[1])
+          return classes.length > 0 && classes.every(known)
+        }
       }
-      const prefixes = [...tokens].filter((t) => t.endsWith('-'))
-      const known = (c) => tokens.has(c) || prefixes.some((p) => c.startsWith(p))
-      const ours = (sel) => {
-        const classes = [...sel.matchAll(/\.(ve-[\w-]+)/g)].map((m) => m[1])
-        return classes.length > 0 && classes.every(known)
+      const base = tokensOf(SOURCES)
+      const all = camera ? tokensOf([...SOURCES, ...CAMERA_SOURCES]) : base
+      const css = fs.readFileSync(ve('videoEditor.css'), 'utf8')
+      // one pass over the app's sheet: the rules (selectors) `ours` keeps, the @keyframes they animate with
+      const pass = (ours) => {
+        const sheet = postcss.parse(css)
+        const animations = new Set()
+        sheet.walkComments((c) => c.remove())
+        sheet.walkRules((rule) => {
+          if (rule.parent?.type === 'atrule' && /keyframes$/i.test(rule.parent.name)) return
+          const keep = rule.selectors.filter(ours)
+          if (!keep.length) { rule.remove(); return }
+          rule.selectors = keep
+          rule.walkDecls(/^animation(-name)?$/, (d) => { for (const w of d.value.split(/[\s,]+/)) animations.add(w) })
+        })
+        return { sheet, animations }
       }
-      const sheet = postcss.parse(fs.readFileSync(ve('videoEditor.css'), 'utf8'))
-      const animations = new Set()
-      sheet.walkComments((c) => c.remove())
-      sheet.walkRules((rule) => {
-        if (rule.parent?.type === 'atrule' && /keyframes$/i.test(rule.parent.name)) return
-        const keep = rule.selectors.filter(ours)
-        if (!keep.length) { rule.remove(); return }
-        rule.selectors = keep
-        rule.walkDecls(/^animation(-name)?$/, (d) => { for (const w of d.value.split(/[\s,]+/)) animations.add(w) })
-      })
-      sheet.walkAtRules((at) => { if (/keyframes$/i.test(at.name) && !animations.has(at.params.trim())) at.remove() })
-      sheet.walkAtRules((at) => { if (at.nodes && !at.nodes.length) at.remove() })
+      const windows = pass(base)
+      const own = camera ? pass((sel) => all(sel) && !base(sel)) : windows
+      own.sheet.walkAtRules((at) => { if (/keyframes$/i.test(at.name) && (!own.animations.has(at.params.trim()) || (camera && windows.animations.has(at.params.trim())))) at.remove() })
+      own.sheet.walkAtRules((at) => { if (at.nodes && !at.nodes.length) at.remove() })
       // the theme variables the kept rules read (and the ones those read), from the app's first :root
       const theme = {}
       let rootSeen = false
@@ -112,22 +129,32 @@ function editorModalCssPlugin() {
         rootSeen = true
         r.walkDecls(/^--/, (d) => { theme[d.prop] = d.value })
       })
-      const wanted = new Set()
-      const scan = (value) => {
-        for (const m of String(value).matchAll(/var\(\s*(--[\w-]+)/g)) {
-          if (wanted.has(m[1]) || !(m[1] in theme)) continue
-          wanted.add(m[1])
-          scan(theme[m[1]])
+      const wantedBy = (sheet) => {
+        const wanted = new Set()
+        const scan = (value) => {
+          for (const m of String(value).matchAll(/var\(\s*(--[\w-]+)/g)) {
+            if (wanted.has(m[1]) || !(m[1] in theme)) continue
+            wanted.add(m[1])
+            scan(theme[m[1]])
+          }
         }
+        sheet.walkDecls((d) => scan(d.value))
+        return wanted
       }
-      sheet.walkDecls((d) => scan(d.value))
-      const vars = [...wanted].map((v) => `${v}: ${theme[v]};`).join(' ')
-      const base = [
+      if (camera) {
+        // the variables only the camera's rules read, on the windows' root as the windows' sheet puts its own
+        const had = wantedBy(windows.sheet)
+        const extra = [...wantedBy(own.sheet)].filter((v) => !had.has(v))
+        const vars = extra.length ? `.ve-kfp-overlay { ${extra.map((v) => `${v}: ${theme[v]};`).join(' ')} }\n` : ''
+        return `export default ${JSON.stringify(`${vars}${own.sheet.toString()}`)};`
+      }
+      const vars = [...wantedBy(own.sheet)].map((v) => `${v}: ${theme[v]};`).join(' ')
+      const root = [
         ':where(.ve-kfp-overlay, .ve-kfp-overlay *) { margin: 0; padding: 0; box-sizing: border-box; }',
         `.ve-kfp-overlay { ${vars} font-family: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--text-primary); -webkit-font-smoothing: antialiased; }`,
         ':where(.ve-kfp-overlay) :where(button, input, select, textarea) { font-family: inherit; }',
       ].join('\n')
-      return `export default ${JSON.stringify(`${base}\n${sheet.toString()}`)};`
+      return `export default ${JSON.stringify(`${root}\n${own.sheet.toString()}`)};`
     },
   }
 }

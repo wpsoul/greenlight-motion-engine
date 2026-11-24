@@ -7,12 +7,23 @@
 > and titles are the script's scenes. Ignore the `/api/...` routes and the Rig's settings below. To check the picture, use
 > look_at_video's critique in a chat, or `npx greenlight-motion check` locally.
 
-# 3D Scene: field notes
+# GLEA — 3D Scene field notes
 
 What real Scenes teach: the way an agent naturally builds something, what that looks like on screen, and the fields and
-values that do it right. Read it before you build a Scene; the format itself is [video-world3d.md](video-world3d.md) and the
-simulations' is sim.md (GreenLight Dash only). Each note is **Wrong** (the natural way and what it looks like), **Right** (fields and
-values) and **Why** (the mechanism, with its measured number).
+values that do it right. Read it before you build a Scene; the format itself is [video-world3d.md](video-world3d.md), the
+simulations' is sim.md (GreenLight Dash only) and a character's is [video-characters.md](video-characters.md). Each note is **Wrong** (the natural way
+and what it looks like), **Right** (fields and values) and **Why** (the mechanism, with its measured number). A note that
+holds as a general rule moves into the page that owns its topic.
+
+## Contents
+
+- [Motion](#motion)
+- [Materials and liquids](#materials-and-liquids)
+- [Light and look](#light-and-look)
+- [Text and screens in the world](#text-and-screens-in-the-world)
+- [Simulations](#simulations)
+- [Rendering and checking](#rendering-and-checking)
+- [Adding a note](#adding-a-note)
 
 ## Motion
 
@@ -24,27 +35,12 @@ values) and **Why** (the mechanism, with its measured number).
   over a 45-frame hold sweeps ±18°). A float of ±3 mm on an 80-frame cycle, faded with the hero's scale, adds life.
 - **Why:** at 24°/s the landing's speed falls 93 → 52 → 33 → 24°/s and holds there (read off the render): no stop, no jump.
 
-### Parts of a group that slide against it
-- **Wrong:** a part placed once, or carried by a second group that copies only the group's scale keys: when the group turns, the
-  part stays where it was and slides against the rest.
-- **Right:** `"parent": "<group id>"`, `at` in the group's own space, and in its own `keys` only its own motion (`scale` keys = its
-  size ratio: the parent's scale multiplies). Whatever sits in it rides the same way: a cup as the group's child, the cup's sim
-  with `transform: { "parent": "<cup group>", "rest": <s> }` (sim.md (GreenLight Dash only), time and place).
-- **Why:** a child takes its parent's `at`, `rot` and `scale` every frame; placed this way, parts land within 0.04 mm of a
-  Blender rig's world positions over the whole move. See [the pattern](video-world3d.md#the-pattern) (6).
-
-### Every channel keyed on its own
-- **Wrong:** scale, spread, camera, spin and the next hero each keyed on their own times and eases: each move works on its own,
-  starts and stops at its own moment, and the whole reads jerky.
-- **Right:** one clock per move and each channel its own remap of it ([clocks and drives](video-world3d.md#clocks-and-drives),
-  [the pattern](video-world3d.md#the-pattern) 1–3).
-- **Why:** channels that read one clock peak on the same frames (0 frames apart) while each keeps its own curve.
-
 ### A camera that travels through several beats
-- **Wrong:** `scene.camera` keyed pose to pose with in-out eases: it stops on every key. Or a `drive` on `at` / `target` with no
-  key on that field: the field is then the drive's sum alone, so the camera starts at the world's origin (the still's critique
-  reports every object "behind the frame").
-- **Right:** one base key per driven field and one drive term per move, each move its own linear clock and its own app ease, the
+For a `scene.camera` driven on the Scene's clocks ([only it does that](video-world3d.md#what-only-scenecamera-does)); a Camera layer
+chains its keys instead ([video-design.md](video-design.md#motion-grammar)).
+- **Wrong:** the camera keyed pose to pose with in-out eases: it stops on every key.
+- **Right:** one base key per driven field ([a drive on a field with no key replaces its value](video-world3d.md#clocks-and-drives)) and
+  one drive term per move, each move its own linear clock and its own app ease, the
   next move starting 0.3–0.5 s before the last one lands:
   `"keys": { "at": [{ "t": 0, "v": [0, 0.012, 0.5] }] }, "drive": { "at": [{ "clock": "dive", "map": [[0, [0, 0, 0], "aeSmooth"], [1, [-0.58, -0.17, -1.23]]] }, { "clock": "push", "map": [[0, [0, 0, 0], "aeSmooth"], [1, [0, 0, -0.1]]] }] }`.
   Split a dive into a `z` term and a later, slower `x`/`y` term to fly straight through a gap first and curve after it; a turn
@@ -105,13 +101,6 @@ values) and **Why** (the mechanism, with its measured number).
 
 ## Light and look
 
-### Blender's view exposure
-- **Wrong:** Blender's exposure *e* written as `"exposure": 2^e`: the picture is 0.43 stop over, and emissive screens and coat
-  reflections read washed out.
-- **Right:** `"exposure": 2^e / 1.35` (Blender's −0.2 is 0.645) with the same `look.view`
-  ([`exposure`](video-world3d.md#turn-it-on-and-write-a-scene): 1/1.35 is Blender's 0; a `.blend` import writes it).
-- **Why:** with it an emissive screen lands within 1–2 levels of Blender's own frame (108 against 108–109).
-
 ### Window shadows from a sun's gobo in a moving shot
 - **Wrong:** a sun with `"gobo": { "pattern": "window" }` and a camera that turns or pulls back toward the sun's side of the set:
   the gobo is real geometry standing out of frame toward the sun, and the camera comes to see it: a black band with the window's
@@ -119,26 +108,6 @@ values) and **Why** (the mechanism, with its measured number).
 - **Right:** keep the camera looking away from the sun's side for the whole move (check the move's last frame), or leave the gobo
   out of that shot (`lights: [{ "type": "sun", … }]` with no `gobo`); the same set from the other side keeps its gobo.
 - **Why:** the gobo is placed for the light, not for the camera; without it the same last frame showed the wall and the plant only.
-
-### Lights carried over from Blender
-- **Wrong:** raising lights by eye when lit surfaces come out darker than a Blender frame.
-- **Right:** carry them as they are: an area light's `power` in Blender's watts, a sun's `intensity` as its Strength, `env.intensity`
-  as the World strength and `env.rotation` as its mapping's turn; look for what differs in the scene itself (the room, what stands
-  between the light and the surface, the meshes).
-- **Why:** on a matte plate Final matches Cycles within 0.5 % for each (an area light 10 W at 2 m: 0.1875 against 0.1869; the
-  studio HDRI at 0.5 and a sun at 6.5: 1.00).
-
-### A shot that must read as a small camera's footage
-- **Wrong:** a fixed exposure, `look.grain` and a straight lens opened to fov 90+: driving from a sun patch under a table the
-  picture drops to near black (mean 52 of 255 against 138 in the sun), the grain is as strong in the sun as in the shade, and the
-  frame's edges stretch.
-- **Right:** `"camera": { "device": "actionCam", "fov": 72 }` (or its parts: `"autoExposure": { "lag": 0.6, "strength": 0.8,
-  "metering": "average", "min": -3, "max": 4 }`, `"noise": 1`, `"projection": "stereographic"`), the camera moving at a robot's
-  or a walker's pace (0.3–1.5 m/s) through light and shade; the windows' glare is the device's `look.bloom` 0.06 over 1.2.
-- **Why:** on a 7 s drive under a table the exposure opens 1.65 stops after the shade, two thirds of it in 0.6 s (dark for a moment,
-  then readable: mean grey 105 of 255 against 54 for a fixed exposure) and stops down twice as fast coming out (a short blow-out);
-  the noise follows that gain and the dark: about 4–4.7 levels of colour noise in the shadows against 1.2–1.3 in sunlit highlights.
-  A still gets exactly the exposure the same frame has inside the whole render.
 
 ## Text and screens in the world
 
@@ -168,21 +137,13 @@ values) and **Why** (the mechanism, with its measured number).
 - **Why:** a turned plane keeps the uv of its own x and y, which reads mirrored for a viewer in front; `uvPlanar` lays the picture
   as the face is seen.
 
-### A picture on a ready-made device's display
-- **Wrong:** the picture on a `model-preset:` device through `model3dConfig.screens` naming its display (`"material": "17ProMax_Screen"`):
-  the display stays black, with a Scene and without.
-- **Right:** the device's own `model3dConfig.screen`, `{ "url": "/media/….png", "fitMode": "cover" }`, on the preset layer standing in
-  the Scene ([video-3d.md](video-3d.md)): the picture reads upright on every preset, glows in Draft and Final and lights the set in Final.
-- **Why:** `screens` dresses only the mesh it names; `iphone_pro_max` has an opaque cover glass 0.1 mm over its display, which only
-  `screen` fades (to 0.15 opacity).
-
-### A ready-made device that comes out the wrong size
-- **Wrong:** `"fit": "unit"` with `fitValue` 1000, taking the device's file for metres: `macbook_pro` stood about 1.5 m wide on a
-  1.4 m desk. `"fit": "width"` on a tablet laid flat with `rotateX: -90`: it came out 1.39 times too big.
-- **Right:** size it by a real measure in % of the frame: a laptop by its width, `"fit": "width"`, `fitValue` = width × 1000 / W × 100
-  (a 31.3 cm MacBook Pro on a 1920-wide frame: 16.28); a device that stands portrait (`ipad`, a phone) by its long side,
-  `"fit": "height"`, `fitValue` = long side × 1000 / H × 100 (a 24.8 cm iPad on a 1080-high frame: 22.94), then turned flat.
-- **Why:** the fit measures the file's rest pose: the tablet's file stands portrait, so its width is the short side.
+### A monitor whose page must be read
+- **Wrong:** the lens focused on what stands in front (a keyboard at 0.774 m, f/4) with the monitor at 1.18 m, then the screen's
+  `strength`, the Scene's `exposure` or the bloom tuned to make the page readable.
+- **Right:** `camera.focus` keyed on the screen's middle along the move (1.177 m at 0 s to 1.061 m at 5 s, on the push-in's own
+  inOut), or a smaller aperture; the screen left at its defaults (`look: "monitor"`, `strength` for the light it throws on the desk).
+- **Why:** a screen's picture is drawn in the page's own colours whatever the exposure, so only the lens softens it: 13 px text
+  kept 0.36 of the page's 0.54 contrast with the focus on the keyboard and 0.48 with it on the screen.
 
 ### A page on a screen that is blank after the cut
 - **Wrong:** the html item that feeds a Scene's `screen` (a material's `layer`, a device's `screen.layer`) starting at its Scene's
@@ -200,15 +161,6 @@ values) and **Why** (the mechanism, with its measured number).
   `textarea, input, button, .chip { font-family: 'Inter', -apple-system, sans-serif !important; }`.
 - **Why:** `system-ui` is whatever the machine calls its UI font, and the pods resolve it to a mono face; a loaded face travels with
   the page (its font files are shipped with it) and sets the same at home and on the farm.
-
-### Titles that vanish behind the Scene
-- **Wrong:** a project whose bottom channels are all camera-locked (a hidden page that feeds a `screen`, then the Scene layer,
-  then camera-locked titles): the titles count as the background plate and every object in front of them covers them (still
-  `critique.layers2d`: `underScene: true`, `hidden: 1`).
-- **Right:** an ordinary (not camera-locked) channel at the bottom of the stack, such as the music's, and the feeding page's
-  channel not camera-locked; every camera-locked title above the Scene's channel then draws over the Scene.
-- **Why:** a camera-locked channel with only camera-locked channels under it (the Scene's own does not count) is laid under the
-  Scene; with the music's channel at the bottom a brand name under a glass coin went from 100 % hidden to whole.
 
 ### A bank of phones that each show a page or a picture
 - **Wrong:** a `model3d` preset layer for every phone: a reel of 15 phones is 15 timeline layers keyed in pixels, and they cannot
@@ -268,7 +220,7 @@ values) and **Why** (the mechanism, with its measured number).
 
 ### A long Final in one render
 - **Wrong:** one render of the whole film: the GPU is held for most of an hour, and a failure near the end loses all of it.
-- **Right:** `render-onserver-job` in ranges of about 24 frames, joined as a [film rendered in parts](video-motion-notes.md#a-film-rendered-in-parts)
+- **Right:** `render-onserver-job` in ranges of about 24 frames, joined as a film rendered in parts (GreenLight Dash only)
   is. 1080 × 1920 at `spp` 64 with `denoiseLook` "clean" takes 9.4 s of rendering a frame, 10.5 s with each range's start-up, on
   an M2 Max: 3.5–5 minutes a range, a 316-frame film 55 minutes.
 - **Why:** a range that fails costs only itself, a later change re-renders only its ranges, and the user's app gets the GPU back
@@ -277,7 +229,7 @@ values) and **Why** (the mechanism, with its measured number).
 ### A change that shows only in one window of a Scene
 - **Wrong:** `reuse` after changing one sim's material: the Scene layer counts as changed, and its whole span renders again.
 - **Right:** render only the ranges that show the change, at the first render's range boundaries, and join again
-  ([a film rendered in parts](video-motion-notes.md#a-film-rendered-in-parts)).
+  (a film rendered in parts (GreenLight Dash only)).
 - **Why:** reuse (GreenLight Dash only) renders a changed layer's whole time, and the Scene is one layer;
   ranges outside the change stay identical (0.00 levels).
 
@@ -290,47 +242,6 @@ values) and **Why** (the mechanism, with its measured number).
 - **Why:** the frames under the half-transparent card then show the shot dissolving away. Running the Scene under the whole card
   only adds traces nobody sees: on a 919-frame film whose card fades in over 0.45 s and stays 3.2 s, the farm plans 545 Final
   frames with the Scene ending once the card is opaque and 623 with it running to the end.
-
-### What Draft does not tell you
-- **Wrong:** judging a Scene's brightness or its liquids on Draft stills.
-- **Right:** judge them on Final stills (`render-still` with `"mode": "final"`, `critique` with `compare: true` for Final over
-  Draft, [check your work](video-world3d.md#check-your-work)).
-- **Why:** Draft's light itself is Final's: on a matte plate an area light, a sun and a studio environment each land within 1 %
-  of Final and Cycles. What Draft has no rays for is not: a furnished desk's light bounced round the room reads about 13 % brighter
-  in Draft over the whole frame and a pastel room's 14–18 %, while a studio product shot reads 3 % darker. Draft builds a liquid
-  from the picture behind it, so it differs most where that picture misleads: water resting on a dark glossy floor reads about 45
-  levels lighter than Final, a cloudy liquid (`transmission` 0.85) about 25 levels darker, and a clear splash stays a little
-  lighter at its foot.
-
-### Flicker in a Final video of a moving shot
-- **Wrong:** raising `spp` from 16 to 32 (twice the render time) to calm a Final video that seems to flicker, or judging its
-  frame-to-frame change against another renderer's video of the same shot without matching their light first.
-- **Right:** `spp` 16–24 with the defaults (each video frame steadied against the one before after the denoiser; `softReuse` unset);
-  judge flicker on a part of the frame nothing moves through (a wall the camera only slides over), or on what two renders of the shot
-  with different samples do not share; against another renderer, match the brightness first ([Blender's view exposure](#blenders-view-exposure)).
-- **Why:** on a moving shot almost all of the frame-to-frame change is the picture's own motion: on a 1080 × 1920 film shot 99.5 %
-  of it, and 32 samples instead of 16 lowered the flicker number 1.5 %. A darker, more contrasty light moves more levels for the same
-  motion: a film whose light was darker than Cycles' read 4.47 against Cycles' 3.91, and 3.86 once mapped onto Cycles' brightness.
-
-### Carrying the soft light between video frames
-- **Wrong:** `"softReuse": true` on a set with screens, prints, glossy gadgets or glowing parts (a desk interior, a product on a floor):
-  every frame then draws new samples and the light that is not carried (reflections, coats, glow) boils, with no cleaner frames once
-  the video is H.264.
-- **Right:** leave `softReuse` unset for video. Set it `true` only for a shot whose light is nearly all matte (walls, paper, wood, at
-  least 9/10 of the light) with much of the frame lens-blurred, delivered at a high bitrate (`"format": "mov-prores4444"`).
-- **Why:** measured through the export at 16 samples against the default: a glossy desk interior flickers 18 % more with it, an
-  emissive night desk 25 % more and a product on a floor 8 % more, with the same error in the MP4; a matte, lens-blurred film shot
-  gets 7–19 % cleaner frames as ProRes (0.5–2 % in the MP4) at equal flicker.
-
-### A still or a render at another shape than the project
-- **Wrong:** `render-still` (or a render) with a `width` / `height` of another aspect ratio than `videoSize` to get a quick small
-  check of a Scene that a Camera layer steers: the composition is resized to that frame and the Camera layer's px pan and zoom mean
-  another shot there; a square 4096 product shot asked at 1280 x 720 filmed no object at all and came back plain black.
-- **Right:** a check at the project's own shape (`width` / `height` in its ratio, or left out), or change `videoSize` itself and
-  look at a still before rendering; read `render-check` on the finished file (rendering.md (GreenLight Dash only)).
-- **Why:** a size of the same ratio renders a scaled copy (px keep their meaning); another ratio reflows the composition
-  (output size (GreenLight Dash only)). An empty shot is not
-  an error: a map's sky lets the layers below through, so it shows the project's background.
 
 ### Reading a turn off the render
 - **Wrong:** reading an object's turn from its silhouette's width: near facing the camera the width hardly changes (±18° moves it

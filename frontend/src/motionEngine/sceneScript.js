@@ -22,6 +22,7 @@ import { CAMERA_KF_LABELS, cameraMoveHash, perspectiveDistance } from '../compon
 import { ZOOM_MIN, ZOOM_MAX, ZOOM_RANGE_MIN_MS, sanitizeZoomRanges } from '../components/videoEditor/smartZoomCamera.js';
 import { PRESETS as ZOOM_FEELS } from '../components/videoEditor/smartZoom.js';
 import { svgDataUrl } from './mediaProbe.js';
+import { htmlDataUrl } from './htmlPageText.js';
 import GOOGLE_FONT_CATALOG from '../render-shims/googleFontCatalog.js';
 
 export const FORMATS = { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080], '4:5': [1080, 1350] };
@@ -343,7 +344,6 @@ export function compileScript(script, caps, files = new Map()) {
     if (Object.keys(pk).length) item.propertyKeyframes = pk;
     seq.clips.push({ id: `c-${id}`, source: 'LOCAL', mediaType: 'camera', url: '', proxyUrl: null, name: 'Camera', duration: r3(len) });
     seq.channels.push({ id: `ch-${id}`, name: 'Camera', kind: 'camera', visible: true, unsnapped: true, items: [item] });
-    seq.channels[0].cameraLocked = true;   // the scene's backdrop (its first channel)
   };
 
   const project = { name: String(S.title || 'GreenLight Motion video').slice(0, 120), videoSize: { w: W, h: H }, background: projectBg,
@@ -379,27 +379,43 @@ export function compileScript(script, caps, files = new Map()) {
       const bgItem = add('shape', uid(`${sceneId}-bg`), 0, D, { shapeType: 'rectangle', shapeSizeUnit: 'px', shapeWidthPx: W, shapeHeightPx: H,
         shapeFillColor: bg.solidColor || '#000000', ...(bg.type !== 'solid' ? { shapeBackground: bg } : {}) });
       if (bg.type === 'solid' && !sceneBg) fields.push({ bg: true, itemId: bgItem.id, color: bg.solidColor });
+      // camera-locked = a 2D layer at the bottom of the stack: it never depth-tests, so an element at a negative `z`
+      // stays in front of it (unlocked, the backdrop's plane at z 0 hides it), and a scene's camera never shows its edge
+      seq.channels[seq.channels.length - 1].cameraLocked = true;
     }
     const media = (el, ew, id, start, end, pos) => {
       const type = el.type;
       let f;
       if (el.svg && type === 'image') {
         try { f = { ...svgDataUrl(el.svg), kind: 'image', type: 'svg', name: el.label || 'art.svg' }; } catch (e) { problems.push(`${ew}: ${e.message}`); return null; }
+      } else if (el.html != null && type === 'html') {
+        // a page written into the script: kept in the project as a data: URL, the way SVG art is
+        if (el.src != null) { problems.push(`${ew}: an html element has "html" (the page written here) or "src" (a page file), not both`); return null; }
+        try { f = { url: htmlDataUrl(el.html), kind: 'html', type: 'html', name: el.label || 'page.html' }; } catch (e) { problems.push(`${ew}: ${e.message}`); return null; }
       } else f = fileFor(el.src, ew, [type]);
       if (!f) return null;
-      const iw = f.width || W; const ih = f.height || H;
-      if (!f.width) warnings.push(`${ew}: the size of "${f.name}" is unknown, so it is fitted to the frame`);
-      const s0 = type === 'video' ? Math.min(W / iw, H / ih) : f.type === 'svg' ? 1 : Math.min(1, W / iw, H / ih);   // drawn size at zoom 1
+      // an HTML layer: the page's own canvas (`page`: [width, height] px, the frame's by default), which the layer fits into
+      // the frame like a video; the page runs on the element's time (`startAt`: seconds into the page)
+      const isPage = type === 'html';
+      let pageSize = null;
+      if (isPage) {
+        const [pw, ph] = Array.isArray(el.page) ? el.page.map(Number) : el.page == null ? [W, H] : [];
+        if (!(pw >= 16 && pw <= 7680 && ph >= 16 && ph <= 7680)) { problems.push(`${ew}: page is the page's own size, [width, height] in px (16–7680), e.g. [1280, 720] — the frame's size without it`); return null; }
+        pageSize = { width: Math.round(pw), height: Math.round(ph) };
+      }
+      const iw = pageSize?.width || f.width || W; const ih = pageSize?.height || f.height || H;
+      if (!isPage && !f.width) warnings.push(`${ew}: the size of "${f.name}" is unknown, so it is fitted to the frame`);
+      const s0 = type === 'video' || isPage ? Math.min(W / iw, H / ih) : f.type === 'svg' ? 1 : Math.min(1, W / iw, H / ih);   // drawn size at zoom 1
       const bw = iw * s0; const bh = ih * s0;
       const fit = el.fit || (el.w || el.h ? null : type === 'video' ? 'cover' : 'contain');
       const zoom = el.w ? num(el.w, bw) / bw : el.h ? num(el.h, bh) / bh
-        : fit === 'cover' ? Math.max(W / bw, H / bh) : fit === 'contain' ? Math.min(W / bw, H / bh) * (el.fit ? 1 : 0.7) : 1;
+        : fit === 'cover' ? Math.max(W / bw, H / bh) : fit === 'contain' ? Math.min(W / bw, H / bh) * (el.fit || isPage ? 1 : 0.7) : 1;
       const len = Math.max(0.05, end - start);
       const from = Math.max(0, num(el.startAt, 0));
-      const srcLen = type === 'video' ? (f.duration || from + len) : len;
+      const srcLen = type === 'video' ? (f.duration || from + len) : isPage ? from + len : len;
       if (type === 'video' && f.duration && from + len > f.duration + 0.05) warnings.push(`${ew}: "${f.name}" is ${f.duration} s; from ${from} s it ends before the element (it holds its last frame)`);
       seq.clips.push({ id: `c-${id}`, source: 'LOCAL', mediaType: type, url: f.url, proxyUrl: null, name: f.name || id, duration: r3(srcLen),
-        ...(f.width ? { width: f.width, height: f.height } : {}) });
+        ...(isPage ? { html: pageSize } : f.width ? { width: f.width, height: f.height } : {}) });
       const vol = clamp(num(el.volume, 0), 0, 100);
       const item = { id, clipId: `c-${id}`, freeStart: r3(start), trimStart: r3(from), trimEnd: r3(from + len), zoom: r3(clamp(zoom, 0.02, 20)), ...pos,
         ...(el.rotate ? { rotation: num(el.rotate, 0) } : {}),
@@ -519,11 +535,11 @@ export function compileScript(script, caps, files = new Map()) {
           ...(cx ? { panX: r3((cx / W) * 100) } : {}), ...(cy ? { panY: r3((cy / H) * 100) } : {}), ...(z ? { panZ: r3(z) } : {}) });
         if (el?.draw !== false) item.propertyKeyframes = { lineTrimEnd: [{ position: 0, value: '0', easing: 'AE Out' }, { position: r3(Math.min(100, (0.7 / (end - start)) * 100)), value: '100', easing: 'Linear' }] };
         if (!el?.color || el.color === 'accent') accentTargets.push({ itemId: id, path: 'shapeFillColor' });
-      } else if (type === 'image' || type === 'video') {
+      } else if (type === 'image' || type === 'video' || type === 'html') {
         item = media(el, ew, id, start, end, pos);
         if (!item) return;
       } else {
-        problems.push(`${ew}: type must be text, rect, pill, circle, ring, line, image or video`);
+        problems.push(`${ew}: type must be text, rect, pill, circle, ring, line, image, video or html`);
         return;
       }
       if (el?.opacity != null) item.opacity = r3(clamp(num(el.opacity, 1), 0, 1) * 100);   // the item's opacity is 0–100 (its keyframe track 0–1)
@@ -534,7 +550,7 @@ export function compileScript(script, caps, files = new Map()) {
       // entrance / exit: the editor's keyframe presets over the first / last stretch (In-and-Out: the whole layer)
       const len = Math.max(1e-3, end - start);
       const span = Math.min(100, (KFP_DEFAULT_LENGTH / len) * 100);
-      const enter = el?.enter ?? (['text', 'image', 'video'].includes(type) ? null : 'pop-overshoot');
+      const enter = el?.enter ?? (['text', 'image', 'video', 'html'].includes(type) ? null : 'pop-overshoot');
       if (enter && enter !== 'none') {
         const v = KF_IN.get(enter);
         if (!v) problems.push(`${ew}: unknown entrance "${enter}"${near(enter, [...KF_IN.keys()])}`);
@@ -608,7 +624,7 @@ export function compileScript(script, caps, files = new Map()) {
         if (Object.keys(opts).length) sceneItem.transitionOptions = opts;
         sceneItem.transitionDuration = r3(clamp(num(sc?.transitionDuration, 0.6), 0.2, Math.min(prev, D) / 2));
         total -= sceneItem.transitionDuration;
-        if ((S.sound ?? 'auto') === 'auto') project.sounds.push({ sfx: soundOk('soft-swoosh', where) ? 'soft-swoosh' : 'standard-swoosh', on: project.channels[0].items.at(-1).id, at: 'end' });
+        if (S.sound === 'auto') project.sounds.push({ sfx: soundOk('soft-swoosh', where) ? 'soft-swoosh' : 'standard-swoosh', on: project.channels[0].items.at(-1).id, at: 'end' });
       }
     }
     // The camera: a quick move of the whole scene (CAMERAS: keys on the scene item), or a REAL camera — a camera layer
@@ -624,8 +640,13 @@ export function compileScript(script, caps, files = new Map()) {
         'drift-right': { translateX: k('x', 0, 36) }, 'drift-up': { translateY: k('y', 0, -28) } }[cam];
       if (camKeys) sceneItem.propertyKeyframes = camKeys;
     }
+    // A scene with depth and no real camera gets a still one: only under a camera is the camera-locked backdrop a 2D layer
+    // behind everything; without one, the backdrop's plane at z 0 hides every element behind it (a negative `z`)
+    const backdrop = S.world == null || !!sceneBg;
+    if (!real && backdrop && ([...zOf.values()].some(Boolean) || els.some((e) => e?.keyframes?.z != null)))
+      sceneCamera({ keyframes: { zoom: [[0, 1]] } }, `${where}, camera`, D, seq, sceneId, elIds, zOf);
     for (const s of Array.isArray(sc?.sounds) ? sc.sounds : []) if (s?.sfx && soundOk(s.sfx, where)) project.sounds.push({ sfx: s.sfx, on: sceneId, at: r3(num(s.at, 0)), ...(s.gain ? { gain: num(s.gain, 0) } : {}) });
-    if ((S.sound ?? 'auto') === 'auto' && si === 0 && firstHeadline && soundOk('whoosh-3', where)) project.sounds.push({ sfx: 'whoosh-3', on: sceneId, at: r3(firstHeadline.start) });
+    if (S.sound === 'auto' && si === 0 && firstHeadline && soundOk('whoosh-3', where)) project.sounds.push({ sfx: 'whoosh-3', on: sceneId, at: r3(firstHeadline.start) });
     project.channels[0].items.push(sceneItem);
     total += D;
     summary.push(`${si + 1}. ${sc?.name || 'scene'} — ${D} s, ${els.length} element(s)${sceneItem.transition ? `, enters with ${sceneItem.transition}` : ''}`);

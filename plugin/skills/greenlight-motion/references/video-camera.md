@@ -4,7 +4,7 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Camera layers, depth of field, paths, rigs and presets
+# GLEA — Camera layers, depth of field, paths, rigs and presets
 
 > Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts. Load only the sections needed for the task.
 
@@ -188,6 +188,12 @@ automatic from a screen recording's clicks, or placed by hand. Nothing is baked 
   - `mode: "follow"` aims at the clicks inside the range. `mode: "fixed"` centres the view exactly on `point` (0..1 of
     the frame).
   - `disabled: true` keeps a range but skips it.
+  - **Ease zones** — `leadMs` and `releaseMs` (0–6000) on a range: how long before its `startMs` the camera sets off
+    (default the preset's pre-roll, 0) and how long after its `endMs` it takes to be back at rest (default the
+    preset's spring settle: about 0.97 s Studio, 1.49 s Calm; never shorter). The camera layer draws them as faded ends
+    of the zoom's block, and the panel edits them (Ease in / Ease out). Zooms added or moved in the editor keep out of
+    their neighbours' zones; an agent placing ranges should too: the next range's `startMs − leadMs` no earlier than the
+    last one's `endMs + releaseMs`. A longer `releaseMs` glides the camera back over that time.
   - Writing `ranges` replaces the automatic list. Copy the automatic ones first (ids `r1`, `r2`…) to keep them.
     Removing `ranges` goes back to the automatic zooms.
 
@@ -212,6 +218,8 @@ automatic from a screen recording's clicks, or placed by hand. Nothing is baked 
   camera stays where its pose puts it, turns its head to the range's `target` (`"@<Scene object id>"`, a layer or a point, followed as it
   moves) or to the range's point of the view before the zoom, and its lens zooms by `zoom` times its own `camZoom`. With depth of field on,
   the focus goes to the target and the blur grows as a lens's does at one f-number. The camera at rest zooms as above, about the comp plane.
+  Between two zooms with targets the turn hands over from the last target to the next as a blend, across the rest between their ease
+  zones (or their overlap), so it never steps, even when the next zoom starts while the camera is still coming back from the last.
   Example: [video-world3d.md](video-world3d.md#a-zoom-onto-a-scene-object-and-back).
 - **Changing it:**
   - Patch `smartZoom.preset` on the live project to change the look, or `smartZoom.ranges` to place zooms.
@@ -267,10 +275,18 @@ Global JSON files under `media/camera-presets/` — a separate directory from `v
 Endpoints:
 
 ```
-GET    /api/camera-presets              → { "presets": [{ "id", "name", "description", "duration", "keyframes", "base", "updated_at" }] }
-POST   /api/camera-presets              { "name", "duration?", "keyframes", "base?" }   # keyframes is required: send [] for a base-only preset
+GET    /api/camera-presets[?include_builtin=false]   → { "presets": [{ "id", "name", "description", "duration", "keyframes", "base", "source", "updated_at" }] }
+POST   /api/camera-presets                           { "name", "duration?", "keyframes", "base?" }   # keyframes is required: send [] for a base-only preset
 DELETE /api/camera-presets/{preset_id}
+
+GET    /api/world3d/camera-moves[?category=&include_custom=true]   → { "moves": [...], "count" }
+POST   /api/world3d/camera-moves/compose
+       { "moves": [{ "id": "cm-quiet-push", "duration?": 3.5, "intensity?": 1, "holdAfter?": 0.4 }, ...],
+         "width?": 1920, "height?": 1080, "fps?": 30, "clipName?": "Camera", "startTime?": 0 }
+       → { "ok": true, "clip": {...}, "item": {...}, "duration", "moves": [...], "keyframes": [...], "base": {...}, "critique": { "ok", "issues", ... } }
 ```
+
+Use `/api/world3d/camera-moves` and `/api/world3d/camera-moves/compose` to discover the built-in camera moves (the 28 below) and chain up to 24 moves (step `duration` 0.05–120 s, `intensity` 0–5, `holdAfter` 0–30 s, total duration <= 600 s, `fps` 1–240) into one continuous Camera layer clip + item checked by `motion_critique`. Note: `target` (`cameraLookAt`) is not supported on `/compose` (omit it; use `POST /api/world3d/camera-layer` with `lookAt: true` for aimed look-at cameras).
 
 Keyframe `position` is 0–100 % of the preset's own `duration`. To apply one: expand each snapshot into per-property tracks on a camera item (`{position, value, easing}` per property, plus `bezier` when the easing is `Custom`). Because positions are percentages, a preset spreads across whatever length the camera clip already has — applying one never needs to resize it.
 
@@ -280,7 +296,7 @@ A preset key may carry a `bezier: [x1,y1,x2,y2]` alongside `easing: "Custom"` �
 
 #### Built-in camera moves
 
-The editor's 24 built-in moves, as compact snapshots. Each line is `id`, category, duration in seconds and its keys as `[position, easing of the segment after the key, values set at this key]` (plus `{"bezier": […]}` before the values on a `Custom` key). To turn one into tracks:
+Built-in moves (28: the editor's presets, also listed by `GET /api/world3d/camera-moves`). Each line below lists one of them (`id`, category, duration in seconds and its keys as `[position, easing of the segment after the key, values set at this key]`, plus `{"bezier": […]}` before the values on a `Custom` key). To turn one into tracks (or call `POST /api/world3d/camera-moves/compose`):
 
 1. **Values carry forward:** each key holds every value set at it or at an earlier key.
 2. **The first key resets the pose:** unless the move is `sparse`, a move that animates any of `camZoom`, `camX`, `camY`, `camRoll`, `camDolly`, `camTiltX`, `camTiltY` first sets all seven to neutral (`camZoom` 1, the rest 0), so it starts from a clean pose. A depth-of-field field it uses starts from its neutral in the [Camera properties](#camera-properties) table.
@@ -288,13 +304,16 @@ The editor's 24 built-in moves, as compact snapshots. Each line is `id`, categor
 4. Write every value as a string, one track per property with a key at every position, and set `"cameraMoveMode": "free"` when the move touches the pose (above).
 
 ```jsonc
-{"id": "cm-quiet-push", "cat": "Cinematic", "dur": 6, "k": [[0, "AE Smooth", {"camZoom": 1.02, "camY": 1}], [100, null, {"camZoom": 1.16, "camDolly": 80, "camY": 0}]]}
+{"id": "cm-quiet-push", "cat": "Cinematic", "dur": 6, "k": [[0, "Smooth", {"camZoom": 1.02, "camY": 1}], [100, null, {"camZoom": 1.16, "camDolly": 80, "camY": 0}]]}
 {"id": "cm-swoop-dive", "cat": "Cinematic", "dur": 4.5, "k": [[0, "Expo Out", {"camY": 9, "camTiltX": -14, "camZoom": 1.35, "camDolly": -120, "camRoll": -3}], [100, null, {"camY": -3, "camTiltX": 3, "camZoom": 1.1, "camDolly": 160, "camRoll": 0}]]}
-{"id": "cm-corkscrew", "cat": "Cinematic", "dur": 5, "k": [[0, "AE Smooth", {"camRoll": -22, "camTiltY": -10, "camZoom": 1.6, "camX": -5, "camY": -3}], [100, null, {"camRoll": 0, "camTiltY": 4, "camZoom": 1.08, "camX": 1, "camY": 0}]]}
+{"id": "cm-corkscrew", "cat": "Cinematic", "dur": 5, "k": [[0, "Smooth", {"camRoll": -22, "camTiltY": -10, "camZoom": 1.6, "camX": -5, "camY": -3}], [100, null, {"camRoll": 0, "camTiltY": 4, "camZoom": 1.08, "camX": 1, "camY": 0}]]}
 {"id": "cm-fast-orbit", "cat": "Cinematic", "dur": 3, "k": [[0, "Linear", {"camTiltY": -20, "camX": -8, "camZoom": 1.12}], [100, null, {"camTiltY": 20, "camX": 8, "camZoom": 1.12}]]}
 {"id": "cm-lateral-glide", "cat": "Cinematic", "dur": 6, "k": [[0, "Smooth", {"camX": -7, "camY": 0.8, "camTiltY": -1.8, "camZoom": 1.08}], [50, "Smooth", {"camX": 0, "camY": 0, "camTiltY": 0, "camZoom": 1.1}], [100, null, {"camX": 7, "camY": -0.8, "camTiltY": 1.8, "camZoom": 1.12}]]}
 {"id": "cm-parallax-arc", "cat": "Cinematic", "dur": 7, "k": [[0, "Smooth", {"camX": -8, "camTiltY": -4.5, "camDolly": -80, "camZoom": 1.08}], [50, "Smooth", {"camX": 0, "camTiltY": 0, "camDolly": 170, "camZoom": 1.13}], [100, null, {"camX": 8, "camTiltY": 4.5, "camDolly": -80, "camZoom": 1.08}]]}
 {"id": "cm-arc-closeup", "cat": "Cinematic", "dur": 6, "k": [[0, "Cubic Out", {"camX": -11, "camY": 2, "camTiltY": -9, "camDolly": -140, "camZoom": 0.96}], [30, "Smooth", {"camX": -4, "camY": 1, "camTiltY": -4, "camDolly": 40, "camZoom": 1.06}], [65, "Smooth", {"camX": 5, "camY": -1, "camTiltY": 2, "camDolly": 230, "camZoom": 1.26}], [100, null, {"camX": 1.5, "camY": 0, "camTiltY": 3, "camDolly": 160, "camZoom": 1.16}]]}
+{"id": "push-in", "cat": "Cinematic", "dur": 4, "k": [[0, "Smooth", {}], [100, null, {"camZoom": 1.16, "camDolly": 150}]]}
+{"id": "orbit-hold", "cat": "Cinematic", "dur": 3.6, "k": [[0, "Sine Smooth", {"camZoom": 1.04, "camX": -3, "camDolly": 20, "camTiltY": -8}], [75, "Sine Smooth", {"camZoom": 1.08, "camX": 3, "camDolly": 50, "camTiltY": 8}], [100, null, {"camZoom": 1.092, "camDolly": 62}]]}
+{"id": "rise-and-reveal", "cat": "Cinematic", "dur": 4.5, "k": [[0, "Smooth", {"camZoom": 1.16, "camY": -4.5, "camDolly": 160, "camTiltX": 10}], [100, null, {"camZoom": 1, "camY": 0, "camDolly": -50, "camTiltX": 0}]]}
 {"id": "cm-grand-reveal", "cat": "Cinematic", "dur": 3.5, "k": [[0, "Linear", {"camZoom": 2.3, "camRoll": -5, "camY": -4, "camDolly": 220}], [55, "Smooth", {}], [100, null, {"camZoom": 1, "camRoll": 0, "camY": 0, "camDolly": 0}]]}
 {"id": "cm-slingshot", "cat": "Editorial", "dur": 1.8, "k": [[0, "Impulse", {"camZoom": 1.05}], [100, null, {"camZoom": 1.75, "camDolly": 260, "camY": -1}]]}
 {"id": "cm-step-zoom", "cat": "Editorial", "dur": 2.4, "k": [[0, "Hold", {}], [25, "Hold", {"camZoom": 1.16, "camX": 2}], [50, "Hold", {"camZoom": 1.32, "camX": -1.5}], [75, "Hold", {"camZoom": 1.5, "camX": 0}], [100, null, {}]]}
@@ -305,6 +324,7 @@ The editor's 24 built-in moves, as compact snapshots. Each line is `id`, categor
 {"id": "cm-s-curve-drift", "cat": "Energy", "dur": 6.5, "k": [[0, "Smooth", {"camX": -10, "camY": 3, "camTiltY": -6, "camDolly": -90, "camZoom": 1.05, "camRoll": -1}], [33, "Smooth", {"camX": 4, "camY": -1.5, "camTiltY": 1, "camDolly": 60, "camZoom": 1.12, "camRoll": 0.5}], [66, "Smooth", {"camX": -3, "camY": 1, "camTiltY": -2, "camDolly": 160, "camZoom": 1.18, "camRoll": -0.5}], [100, null, {"camX": 10, "camY": -2, "camTiltY": 5, "camDolly": 90, "camZoom": 1.1, "camRoll": 1}]]}
 {"id": "cm-macro-sweep", "cat": "Energy", "dur": 5, "k": [[0, "Smooth", {"camZoom": 1.5, "camX": -8, "camTiltY": -5, "camY": 1}], [50, "Smooth", {"camZoom": 1.62, "camX": 2, "camTiltY": 1, "camY": -0.5}], [100, null, {"camZoom": 1.46, "camX": 9, "camTiltY": 5, "camY": 1}]]}
 {"id": "cm-punch-through", "cat": "Energy", "dur": 8.7, "sparse": true, "k": [[0, "Linear", {"camDolly": 98}], [71, "Custom", {"bezier": [0.8187, 0.1079, 0.9089, 0.302]}, {"camDolly": 234.7692}], [100, "AE In (arrive)", {"camDolly": 2600}]]}
+{"id": "whip", "cat": "Energy", "dur": 1.2, "k": [[0, "Punch", {"camZoom": 1.04, "camX": -12, "camDolly": -20, "camTiltY": -14}], [100, null, {"camZoom": 1.1, "camX": 12, "camDolly": 40, "camTiltY": 14}]]}
 {"id": "cm-orbit-pulse", "cat": "Loops", "dur": 7, "k": [[0, "Sine Smooth", {"camTiltY": -13, "camX": -5, "camY": 1, "camZoom": 1.06}], [50, "Sine Smooth", {"camTiltY": 13, "camX": 5, "camY": -1, "camZoom": 1.2}], [100, null, {"camTiltY": -13, "camX": -5, "camY": 1, "camZoom": 1.06}]]}
 {"id": "cm-float", "cat": "Loops", "dur": 5.5, "k": [[0, "Sine Smooth", {"camY": 2.2, "camRoll": -1.6, "camZoom": 1.1}], [50, "Sine Smooth", {"camY": -2.2, "camRoll": 1.6, "camZoom": 1.17}], [100, null, {"camY": 2.2, "camRoll": -1.6, "camZoom": 1.1}]]}
 {"id": "cm-figure-eight", "cat": "Loops", "dur": 6, "k": [[0, "Sine Smooth", {"camX": -11, "camY": 0, "camRoll": 0, "camZoom": 1.15}], [25, "Sine Smooth", {"camX": 0, "camY": 7, "camRoll": 2.5}], [50, "Sine Smooth", {"camX": 11, "camY": 0, "camRoll": 0}], [75, "Sine Smooth", {"camX": 0, "camY": -7, "camRoll": -2.5}], [100, null, {"camX": -11, "camY": 0, "camRoll": 0}]]}
@@ -405,3 +425,14 @@ The editor's twelve rig presets. Fields not listed take the defaults in [Rig par
 #### Mode precedence
 
 **A rig or a live path BEATS the pose keyframes.** The camera reads its tracks first; then a rig (mode `"rig"`) or a live path (mode `"path"` or absent) overwrites `camX`, `camY`, `camDolly` — plus `camTiltX`/`camTiltY` whenever an aim is computed, and `camRoll` then cants the aimed view about its line of sight. So on a rigged camera, `camX`/`camY`/`camDolly`/tilt keyframes are stored, drawn in the timeline, and **render as nothing**. `camZoom`, the whole depth-of-field family, `camPathT` and `camFollowTarget` are untouched by both and compose freely. To emit a pose move, emit `"cameraMoveMode": "free"` explicitly with it (omitting the field leaves a live `cameraPath` in control). The editor enforces the same rule by flipping the mode to `"free"` when a camera preset that animates those props is applied, keeping `cameraRig` and `cameraPath` on the item so switching back restores the move.
+
+### Verifying camera motion before rendering
+
+`GET /api/moodboards/{board_id}/video-projects/{project_id}/motion-check[?fps=30]` (or `POST /api/world3d/motion-check` with `{ "data", "fps?" }`) measures each Camera layer track frame by frame as the camera plays it — through the editor's easing, `easeSlice` and the track's ƒx — with no render. Each track is a row in its own unit (`camX`/`camY` `% of frame`, `camDolly` px, tilt and roll degrees, `camZoom` x) with `maxSpeed`, `maxAccel`, `maxSpeedStep`, `stillShare`, its holds and the cuts its Hold keys make. It flags a speed step at a key (`velocity_jump`; a Hold-key cut is a cut, not a jump), a Linear move that stops dead at a key inside the shot (`linear_stop`), more than 8 keys on a track (`too_many_keys`), an easing the editor does not have or plays as another (`ease`), and 2 s within one shot where nothing in the picture moves (`dead_hold`).
+
+A track the camera does not play is listed in `skipped` with the reason, not measured: `camX`, `camY`, `camDolly`, `camTiltX`, `camTiltY` under a rig or a live path ([Mode precedence](#mode-precedence)), every track under Smart Zoom, tilt under `cameraLookAt`. The check does not look at framing (what stays in frame) or cut spacing. To change timing in step across camera keys, clips and Scene clocks, use `POST /api/moodboards/{board_id}/video-projects/{project_id}/retime` ([video-projects.md](video-projects.md#motion-critique--lockstep-retiming)).
+
+### A move from a reference video
+
+To take a camera move from a video the user shows, measure it with `motion-from-reference` (`target: "camera"`) and put it on a
+Camera layer with `apply-reference-motion`: motion-reference.md (GreenLight Dash only).

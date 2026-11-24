@@ -4,7 +4,7 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Video projects and timeline basics
+# GLEA — Video projects and timeline basics
 
 > Part of the greenlight-dash skill. Read this shared contract before editing a timeline, then only the relevant topic in README.md (GreenLight Dash only). Do not load every video reference.
 
@@ -13,7 +13,7 @@
 - [Editing and verification](#editing-and-verification)
 - [Text animation pace](#text-animation-pace): a pointer to design.md
 - [Video Projects (per board)](#video-projects-per-board): [list](#list-video-projects) · [get](#get-video-project) · [card](#project-card-what-a-canvas-card-shows) · [create](#create-video-project) · [update](#update-video-project) · [collaborative boards](#on-a-collaborative-board) · [refresh revision](#watch-for-editor-project-changes) · [activate](#activate-video-project) · [delete](#delete-video-project) · [build from clips](#build-a-project-from-a-flat-list-of-clips-agent-friendly)
-- [Editor `data` shape](#editor-data-shape-for-postput-video-projects): [channel order](#channel-order-is-stacking-order) · [one live item per channel](#one-live-item-per-channel) · [sorted unsnapped items](#keep-unsnapped-items-sorted-by-freestart) · [preview source](#preview-source) · [screen recordings](#screen-recordings) · [scale](#layer-scale-is-three-fields) · [grade (`filter*`)](#layer-grade--the-static-filter-fields) · [blend mode](#blend-mode) · [mirror](#mirror) · [layer titles](#layer-titles) · [real-size media](#videos-and-photos-draw-at-their-real-size) · [Fit screen](#fit-screen) · [SVG](#svg-clips-are-vector-layers) · [GIF / WebP / APNG](#animated-image-clips-gif-animated-webp-apng) · [timeline markers](#timeline-markers) · [layer markers](#layer-markers) · [colour tokens](#design-tokens-project-colour-palette) · [photo slots](#photo-slots-pictures-people-may-replace) · [background](#project-background) · [motion blur](#motion-blur-render-only) · [renderer](#renderer) · [sound and fades](#sound--audio-fades)
+- [Editor `data` shape](#editor-data-shape-for-postput-video-projects): [channel order](#channel-order-is-stacking-order) · [one live item per channel](#one-live-item-per-channel) · [sorted unsnapped items](#keep-unsnapped-items-sorted-by-freestart) · [preview source](#preview-source) · [screen recordings](#screen-recordings) · [scale](#layer-scale-is-three-fields) · [grade (`filter*`)](#layer-grade--the-static-filter-fields) · [blend mode](#blend-mode) · [mirror](#mirror) · [flat layers and the 3D Scene](#flat-layers-and-the-3d-scene) · [layer titles](#layer-titles) · [real-size media](#videos-and-photos-draw-at-their-real-size) · [Fit screen](#fit-screen) · [SVG](#svg-clips-are-vector-layers) · [GIF / WebP / APNG](#animated-image-clips-gif-animated-webp-apng) · [timeline markers](#timeline-markers) · [layer markers](#layer-markers) · [colour tokens](#design-tokens-project-colour-palette) · [photo slots](#photo-slots-pictures-people-may-replace) · [background](#project-background) · [motion blur](#motion-blur-render-only) · [renderer](#renderer) · [sound and fades](#sound--audio-fades)
 - [Sequence clips](#sequence-clips-mediatype-sequence)
 - [Video presets](#video-presets-save--load-reusable-sequences)
 - [Project export and import (.zip bundles)](#project-export-and-import-zip-bundles)
@@ -99,6 +99,76 @@ On **409**, GET the latest project, reapply only your intended changes to that
 fresh `data`, and PUT with its new `version`. Never retry the stale full payload
 or drop `expected_version` to force it through. If the same fields changed and
 the intended merge is unclear, describe the conflict and ask which edit to keep.
+
+### Motion critique & lockstep retiming
+
+**Motion critique (no render):** `GET /api/moodboards/{board_id}/video-projects/{project_id}/motion-check[?fps=30]`
+(the stored project; the reply also carries its `version`) or `POST /api/world3d/motion-check` `{ "data", "fps?" }`.
+`fps` is 1–240 (default the project's `renderFps`, else 30). Items are placed as the editor places them (transitions,
+unsnapped channels, speed ramps), and each motion track is measured frame by frame as the app plays it:
+
+- a layer's `translateX/Y/Z`, `xPercent`/`yPercent`, `rotate*`, `scale*` and motion path, through the easing the editor
+  plays (retired names and `aeSmooth`-style aliases play as their current curve), `easeSlice` and its track ƒx;
+- a Camera layer's tracks (see [video-camera.md](video-camera.md#verifying-camera-motion-before-rendering));
+- in a 3D Scene item, each object's, camera's and flat card's `at`, `target`, `rot`, `scale`, `along`, `bank`, `fov`,
+  `lens` on the item's own clock (timeline time minus the item's start), with its `fx` and its `drive` on the Scene's
+  clocks (each clock through its `filter`).
+
+Opacity, colour and effect tracks are not measured as motion; they only count as the picture changing. Each `rows[]`
+entry reports, in its own `unit`, `maxSpeed`, `maxAccel`, `maxSpeedStep`, `stillShare`, its `holds` (`[start, end]`,
+0.25 s or longer) and the `cuts` its Hold keys make; `summary.maxSpeed` is given per unit. Issues (`issues[]`, the
+first 300; `summary.issuesByCode` counts all):
+
+- `velocity_jump` — the speed steps at a key or a remap point (not at a Hold-key cut, nor where a scale grows from or
+  shrinks to 0);
+- `linear_stop` — a Linear move stops dead at a key inside the shot (a Linear drift that runs into the cut is fine);
+- `dead_hold` — nothing in the picture moves or changes for 2 s within one shot (a rest after a move is not one while
+  anything else moves);
+- `too_many_keys` — more than 8 keys on a row;
+- `ease` — an easing the app does not have, or plays as another.
+
+What it cannot evaluate is listed in `skipped` with the reason, never measured from its keys: a Custom ƒx or a drive
+expression, a Camera layer track a rig, a live path, Smart Zoom or `cameraLookAt` overrides, a nested sequence's own
+timeline. It does not check framing, cut cadence or jerk.
+
+**Retime:** `POST /api/moodboards/{board_id}/video-projects/{project_id}/retime`
+`{ "ops": [...], "apply?": false, "expected_version": 7 }` changes the time of everything in step: timeline items
+(where the editor lays them out), every layer's keys, markers, a Camera layer's Smart Zoom ranges, pose clips, and in
+each Scene item its keys, clocks, rigid starts and its sims' clips. Ops apply in order, each on the times the one
+before it left. Times are timeline seconds unless noted.
+
+- `hold` `{ "at", "delta" }` — what plays at `at` stands still for `delta` seconds; everything after plays `delta`
+  later. A move under way at `at` is cut there without changing its curve (a layer key gets the editor's `easeSlice`;
+  a Scene key gets bezier pieces of its curve), so it stops, holds and goes on. Footage (video, audio, HTML, Motion, a
+  sequence) running through `at` is split there and its second part starts `delta` later. A sim gets a clip `freeze`.
+- `insert` `{ "at", "delta" }` — `delta` seconds inserted at `at`: what straddles `at` plays slower over the longer
+  span (a key segment stretches, a sim runs on); what comes after plays `delta` later. Footage is split as for a hold.
+- `stretch` `{ "start", "end", "factor" | "newDuration" }` — `start..end` plays `factor` times as long (or lasts
+  `newDuration`); what comes after moves by the difference. Footage inside plays at 1/`factor` speed, a sim's clip at
+  1/`factor` of its own.
+- `move_cut` (or `moveCut`) `{ "at", "to" }` — the cut at `at` (an item starts or ends there, within 1 ms) rolls to
+  `to`: footage at the cut is trimmed, and other items and all animation between the cuts either side are warped onto
+  their new spans. A move that would pass another cut is refused.
+- `start_at` (or `startAt`) `{ "target", "t", "kind?", "item?" }` — one thing starts at `t` with its keys: an item (by
+  id, clipId or name; `t` in timeline seconds), or in a Scene item a clock, sim, object or flat card (by id or name;
+  `t` in Scene seconds). `kind` (`item`, `clock`, `sim`, `object`, `layer2d`) and `item` (the Scene item's id) pick one
+  when a name matches several. An item may not land over another on its channel.
+
+Key counts stay the same for every op except a `hold` that falls inside a move, which adds keys (`keys_added` in
+`changes`: 2 per cut track, more where the curve needs several beziers, 1 on a key between two moves). What runs on its
+own time is moved, not warped, and named in `warnings`: a sim's inner times (its pulses, gusts, ops, fields,
+colliders), baked .blend motion (`anim`, an object's `track`, a material's `reveal`), ƒx and `fx`, a drive expression of
+`time`, a clock `filter`, pose clip speed, a camera rig, a nested sequence's own timeline. Warnings also name a channel
+or key shape the retime had to unsnap (and any cross transition that no longer meets the item before it). Send `"apply": false`
+first to read `changes`, `warnings` and the new `data`, then `"apply": true` with `expected_version` (409 on conflict).
+A retime that changes nothing is not saved and keeps the version.
+
+**A hold that drags: play its middle faster, never cut frames out of it.** Whatever still moves in a hold (a slow turn, a float, a slow camera push) jumps at a cut: a 22-frame cut jumps a 24°/s turn by 17°. Map every time through one piecewise time map instead (the middle 44 frames of a 48-frame hold at 2× make it 26): Scene keys, layer keyframes, items' `freeStart` and `trimEnd`, a sim's `clip.start`. Leave the moves' own keys as they are, and compute what must keep its speed (a rest turn, a float) on the new time. The nearly still channels only run faster for those frames, and the moves before and after stay frame for frame what they were.
+
+**Motion by reference & camera move library:**
+
+- A move taken from a reference video, for a Camera layer, a layer or a 3D Scene: motion-reference.md (GreenLight Dash only).
+- `GET /api/world3d/camera-moves` and `POST /api/world3d/camera-moves/compose`: compose named camera moves into a Camera clip + item with `motion-check` critique ([video-camera.md](video-camera.md#camera-presets-save--load-reusable-camera-moves)).
 
 **Your write is never silently overwritten.** The editor sends `expected_version`
 on every save, so a save built before your write is rejected rather than applied
@@ -193,17 +263,18 @@ The video-editor `mediaType` values are:
 
 - `video`, `image`, `audio`, `text`, `shape`, `adjustment`;
 - `sequence`: a compound clip, see [Sequence clips](#sequence-clips-mediatype-sequence);
+- `take`: a Houdini-style sequence switcher holding multiple alternative sequences (`clip.takes`) with automatic Ripple insertion and named project Cuts (`takeCuts`), see takes.md (GreenLight Dash only);
 - `grid`: Grid Builder, a container that lays its members out by a rule, see [video-grid.md](video-grid.md);
-- `motion`: a native MotionFast animated template, see motion.md (GreenLight Dash only);
-- `model3d`: a live 3D model rendered in its own pass, see [video-3d.md](video-3d.md). Its clip `url` must be a `model-preset:` or `model-primitive:` sentinel or a real asset URL, **never empty**;
-- `rig`: the Scene Rig (one set for every 3D layer), see [video-3d.md](video-3d.md#scene-rig--one-set-for-every-3d-layer);
+- `motion`: a native MotionFast animated template, see motionfast.md (GreenLight Dash only);
+- `model3d`: a 3D model (a device preset, a model file, a Gaussian splat, a character) standing in the project's 3D Scene, see [video-3d.md](video-3d.md). Its clip `url` must be a `model-preset:` or `model-primitive:` sentinel or a real asset URL, **never empty**;
+- `rig`: the Scene layer, the project's 3D Scene: its world (`rig.scene`), render settings and its Rig backdrop, lights and environment, see [video-world3d.md](video-world3d.md);
 - `particles`: a seeded particle simulation in a Solver Box, filmed by the project camera, see [video-particles.md](video-particles.md). The whole system lives on the ITEM as `particleSystem`;
 - `camera`: a virtual camera over the whole stack, see [video-camera.md](video-camera.md);
 - `html`: an HTML page as a layer, see html-clips.md (GreenLight Dash only);
 - `after-effects`: a render of one After Effects composition, see ae-clips.md (GreenLight Dash only);
 - `null`: a transform with no picture, never drawn in any render; the parent other layers hang off, see [Layer parenting and null layers](video-keyframes.md#layer-parenting-and-null-layers-keyframeparenting). Its clip `url` is `""`; the item's `nullColor` (default `#ff3b30`) and `nullSize` (marker diameter in composition px, 2–2000, default 24) style only the editor's preview marker.
 
-Any other value loads as `video`, and a `video` clip whose url is an audio file loads as `audio`. A clip of a type that needs a file (`video`, `image`, `audio`, `model3d`, `html`, `after-effects`) is dropped on load when its `url` is empty. A **device mockup** is not its own `mediaType`: it is a rendered `video` clip that may carry a `mockupConfig` for re-editing (see motion.md (GreenLight Dash only)). Which render path draws which type: rendering.md (GreenLight Dash only).
+Any other value loads as `video`, and a `video` clip whose url is an audio file loads as `audio`. A clip of a type that needs a file (`video`, `image`, `audio`, `model3d`, `html`, `after-effects`) is dropped on load when its `url` is empty. A **device mockup** is not its own `mediaType`: it is a rendered `video` clip that may carry a `mockupConfig` for re-editing (see motionfast.md (GreenLight Dash only)). Which render path draws which type: rendering.md (GreenLight Dash only).
 
 If you need to build the editor state by hand instead of using `/from-clips`, start from this minimum shape; the editor fills in the rest when it loads:
 
@@ -247,7 +318,7 @@ On an `unsnapped` channel the editor treats the item BEFORE a clip in the `items
 
 #### Screen recordings
 
-A recording clip carries `recordingMeta` (its clicks and a light cursor path, in seconds of the file) and may carry `recordingTrackUrl` (the full-rate `.glcursor` beside it) and `recordingMeta.cursorInVideo: false` (no cursor in its picture: the editor draws one). Its camera is a Smart Zoom item, and its item's `recordingCursor` sets the drawn cursor's look. Both are in [camera.md](video-camera.md) ("Smart Zoom" and "Drawn cursor").
+A recording clip carries `recordingMeta` (its clicks and a light cursor path, in seconds of the file) and may carry `recordingTrackUrl` (the full-rate `.glcursor` beside it) and `recordingMeta.cursorInVideo: false` (no cursor in its picture: the editor draws one). Its camera is a Smart Zoom item, and its item's `recordingCursor` sets the drawn cursor's look. Both are in [video-camera.md](video-camera.md) ("Smart Zoom" and "Drawn cursor").
 
 #### Layer scale is three fields
 
@@ -264,6 +335,11 @@ Every visual item carries a CSS-style grade applied to the layer before it compo
 #### Mirror
 
 `mirrorH` / `mirrorV` (booleans, default false) flip the layer's picture on its own axes, after scale and before rotation. Not the same as a negative scale — they never change the layer box, so framing, masks and child layers are unaffected.
+
+#### Flat layers and the 3D Scene
+
+A flat layer stands in a 3D Scene only through `inWorld` (an image, a video or an HTML clip, [video-world3d.md](video-world3d.md#pictures-in-the-world-inworld)), `textInWorld` or `text3d` (text, [video-world3d.md](video-world3d.md#3d-text-in-the-world)); turned with `rotateX` / `rotateY` it stays flat ([video-keyframes.md](video-keyframes.md#turning-a-flat-layer-in-3d)).
+`shadowPlate` (`castShadow`, `receiveShadow`, `occludes` on image, video, text and shape items, all `false` by default) is the old per-layer Rig's flat plate: its shadows do nothing in a 3D Scene, nor does `occludes` (it lets the layer's pixels write depth, and on every frame a Scene draws each flat layer on an ordinary channel is depth-tested against the world already), and on text the whole block does nothing there ([video-text.md](video-text.md#flat-text-in-the-3d-scene-textinworld)). Do not write it.
 
 #### Layer titles
 
@@ -324,7 +400,7 @@ Set `"background": { …backgroundConfig… }` at the `data` root to fill the st
 
 #### Motion blur (render-only)
 
-Set `"motionBlurEnabled": true` at the `data` root — a project-wide switch, not per layer — to bake cinematic shutter blur into full renders. The choice is made per output **frame**, not per layer: a frame where motion is detected is rendered as a multi-sample accumulation of the **whole composition** across a shutter window centred on the frame, so every layer that changes inside that window blurs (keyframed layers, text animators, motion layers, transitions, particles), not only the one that triggered it. A frame with no detected motion renders once and stays sharp, so cost only grows where motion exists.
+Set `"motionBlurEnabled": true` at the `data` root — a project-wide switch, not per layer — to bake cinematic shutter blur into full renders. The choice is made per output **frame**, not per layer: a frame where motion is detected is rendered as a multi-sample accumulation of the **whole composition** across a shutter window centred on the frame, so every layer that changes inside that window blurs (keyframed layers, text animators, motion layers, transitions, particles), not only the one that triggered it. A frame with no detected motion renders once and stays sharp, so cost only grows where motion exists. How many sub-frames a moving frame takes follows how far its picture travels on screen across the shutter: one a pixel of travel, up to the strength's count, and a frame that moves less than a pixel renders once. What the render cannot measure takes the strength's full count: a 3D Scene, a model layer, particles, a live html page, a MotionFast layer, letters a Text Animator moves, a tracked layer, and a layer inside a transition.
 
 Two things are not re-sampled across that window:
 
@@ -407,6 +483,7 @@ Rules:
   - The editor drops an `essential` sequence clip from `clips` once no item uses it.
 - **Rendering:** the full renders bake sequences in; the fast `/render` rejects them (what each render path bakes (GreenLight Dash only)). Adjustment layers inside a sequence composite (grade + effects chain + layer mask alike). Known nested limits: the project's global Depth of Field doesn't composite inside a sequence (a sequence's own camera clip's depth of field does: AI Viral Edits use it), and inner audio only exports when the sequence item plays at flat 1× speed.
 - Keep ids unique across the whole document, inner timelines included.
+- **Swappable sequence variants (`Takes`):** to convert a sequence into a multi-variant Take switcher with Ripple insertion, add alternative sequences, save named Cuts, or batch-render combinations, see takes.md (GreenLight Dash only) (`GET/POST …/takes`, `POST …/takes/render`).
 
 ### Video presets (save & load reusable sequences)
 

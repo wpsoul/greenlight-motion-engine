@@ -223,3 +223,12 @@ export function modelClipMovesBetween(animation, clips, a, b) {
   }
   return false;
 }
+
+/** Whether a standalone `model3d` layer (not held by the 3D Scene world) moves internally over `[localStart, localEnd]`.
+ *  `physics === 'falls'` is only active inside the 3D Scene's world and never triggers standalone 16x sub-frame fallback. */
+export function standaloneModelMovesBetween({ item, clip, worldModel, modelClips = null, localStart, localEnd, poseMayMove }) {
+  if (clip?.mediaType !== 'model3d' || worldModel) return false;
+  if (item?.model3dConfig?.animation?.clip && modelClipMovesBetween(item.model3dConfig.animation, modelClips, localStart, localEnd)) return true;
+  if (item?.model3dConfig?.pose && poseMayMove?.(item.model3dConfig.pose, localStart, localEnd)) return true;
+  return false;
+}

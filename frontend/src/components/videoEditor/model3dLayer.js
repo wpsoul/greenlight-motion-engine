@@ -3,6 +3,7 @@ import { materials as makeMaterial } from './materialFactory';
 import { selectedBackend } from './videoRenderer';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { registerGltfSplatPlugin } from '../../world3d/splat/gltfSplatPlugin';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 // Custom-uploaded environments may be .exr; three's own loader handles both formats
 // into the same equirectangular float texture the PMREM step expects.
@@ -38,8 +39,11 @@ import { requestVideoFrame, isSupportedMotionVideo, getMotionVideoSource, videoL
 import { LiveSurface, liveLayerTime } from './liveLayers';
 // (pose) A character's pose pipeline: model3dConfig.pose (modelPose.js). A layer without one keeps the mixer path below, unchanged.
 import { makePoseRig, applyPose, sceneObjectMatrix, metresToEditor, poseInfo } from './modelPose';
+import { findModelEntry, resolveModelTarget, modelBoxShape, shapeFromSceneObject } from './handPose';
 import { solidLayerEuler } from './keyframeParenting';
 import { bindRig, solveRigAhead } from '../../world3d/rig/bind.js';
+import { hasSkinnedMesh, updateSkinnedBounds, applyImportedDualQuat } from '../../world3d/rig/skinnedBounds.js';
+import { withWorldClocks } from '../../world3d/audioClock.js';
 import { editorRigSolver } from './rigSolveEditor.js';
 import { useDualQuaternionsWebGL } from './skinDQWebGL.js';
 
@@ -81,7 +85,12 @@ let gltfLoader = null;
 let objLoader = null;
 
 function getLoaders() {
-  if (!gltfLoader) gltfLoader = new GLTFLoader();
+  if (!gltfLoader) {
+    gltfLoader = new GLTFLoader();
+    // A splat in a .glb is drawn by the world alone (it loads the file with its own loader): here it is its box, read without decoding
+    // the splat, and nothing of it is kept.
+    registerGltfSplatPlugin(gltfLoader, null, { proxyBox: true, boxOnly: true });
+  }
   if (!objLoader) objLoader = new OBJLoader();
   return { gltfLoader, objLoader };
 }
@@ -132,13 +141,13 @@ function loadAsset(url) {
   }
 
   // A splat is drawn by the world alone. Here it is an unseen box of its own size, so placing, fitting and selecting work as for any
-  // model. The reader loads with the first splat and stays out of the app until then.
+  // model: its centres are read for that box and nothing else. The reader loads with the first splat and stays out of the app until then.
   if (isSplatUrl(url)) {
     entry.promise = fetch(url)
       .then((r) => { if (!r.ok) throw new Error(`Could not load this file (${r.status}).`); return r.arrayBuffer(); })
       .then(async (bytes) => {
-        const { gunzip, readSplat } = await import('../../world3d/splat/readSplat.js');
-        const { min, max } = readSplat(await gunzip(bytes)).box;
+        const { gunzip, readSplatBox } = await import('../../world3d/splat/readSplat.js');
+        const { min, max } = readSplatBox(await gunzip(bytes));
         const size = new THREE.Vector3(...max).sub(new THREE.Vector3(...min));
         const box = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
         box.position.fromArray(min).addScaledVector(size, 0.5);
@@ -1479,7 +1488,10 @@ export function ensureModelInstance(item, clip) {
   // shape has none (the world takes its parts as plain arrays): figures to rig are built in the Scene's own graph.
   const skeleton = item?.model3dConfig?.skeleton;
   const skeletonKey = skeleton && typeof skeleton === 'object' && !Array.isArray(skeleton) && !isPrimitiveUrl(url) ? JSON.stringify(skeleton) : null;
-  if (entry && (entry.url !== url || (entry.skeletonKey || null) !== skeletonKey)) {
+  const skinning = !skeletonKey && !isPrimitiveUrl(url) && item?.model3dConfig?.skinning
+    ? (item.model3dConfig.skinning === 'dualQuaternion' ? 'dualQuaternion' : 'linear')
+    : null;
+  if (entry && (entry.url !== url || (entry.skeletonKey || null) !== skeletonKey || (entry.skinning || null) !== skinning)) {
     // Retire the previous asset BEFORE the replacement finishes loading. Keeping it
     // until `ready` made model switching appear to do nothing on large presets.
     disposeInstance(entry);
@@ -1533,6 +1545,12 @@ export function ensureModelInstance(item, clip) {
       if (bound?.clips?.length) animations = [...asset.animations, ...bound.clips];
       // the rest pose with the bones in it (the file itself has none)
       restSource = root.clone();
+    } else if (skinning === 'dualQuaternion') {
+      const converted = applyImportedDualQuat(root, 'dualQuaternion');
+      if (converted.length) {
+        root.userData.skinned = true;
+        skinDQ = converted.map(useDualQuaternionsWebGL).filter(Boolean);
+      }
     }
     entry = {
       tintMaterials,
@@ -1551,7 +1569,10 @@ export function ensureModelInstance(item, clip) {
       restSource,
       envKey: null,
       skeletonKey,
+      skinning,
       skinDQ,
+      // (asked once) whether a pose has skinned bounds to update
+      skinned: hasSkinnedMesh(root),
       skeletonReport: bound ? { joints: bound.joints.map((j) => ({ name: j.name, parent: j.parent >= 0 ? bound.joints[j.parent].name : null, at: j.at })), landmarks: bound.landmarks || null, found: bound.found || [], report: bound.report, warnings: bound.warnings } : null,
     };
     instances.set(item.id, entry);
@@ -3178,7 +3199,7 @@ function samePoseInputs(entry, frameToken, config, prs, rig, W, H, time, sceneTu
  * shared shadow map, then its own pass — with the same inputs: the second call gets
  * the held pose instead of evaluating the mixer and the floor bounding box again.
  */
-function poseModel(entry, item, config, prs, rig, W, H, time, frameToken, sceneTime = null, sceneTurn = false) {
+function poseModel(entry, item, config, prs, rig, W, H, time, frameToken, sceneTime = null, sceneTurn = false, channels = null) {
   if (samePoseInputs(entry, frameToken, config, prs, rig, W, H, time, sceneTurn) && entry.pose) return entry.pose;
   entry.pose = null;
   // Fit + anchor on the inner group.
@@ -3224,7 +3245,7 @@ function poseModel(entry, item, config, prs, rig, W, H, time, frameToken, sceneT
   if (config.pose && typeof config.pose === 'object' && entry.animations) {
     // (pose) The pose pipeline (modelPose.js), a pure function of the layer's time like the mixer path: clips, morphs, bones, then
     // the floor on that pose, then the constraints against this frame's world transform.
-    applyModelPose(entry, config, time, rig, sceneTime ?? time, placeOnFloor);
+    applyModelPose(entry, config, time, rig, sceneTime ?? time, placeOnFloor, channels);
   } else {
     // Animation, sampled by ABSOLUTE time. A delta-driven mixer is a function of frame
     // pacing, which would make export frames drift from preview and scrubbing
@@ -3234,6 +3255,7 @@ function poseModel(entry, item, config, prs, rig, W, H, time, frameToken, sceneT
     applyModelAnimation(entry, config.animation, time);
     placeOnFloor();
   }
+  if (entry.skinned) updateSkinnedBounds(entry.root);
   entry.pose = { fit, sx, sy, sz };
   return entry.pose;
 }
@@ -3280,7 +3302,7 @@ export function poseModelLayer(opts) {
   const config = item?.model3dConfig || {};
   syncPrimitiveTint(entry, config);
   setShadowFlags(entry.outer, config.castShadow !== false, config.receiveShadow !== false, true);
-  poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken, opts.sceneTime, !!opts.sceneTurn);
+  poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken, opts.sceneTime, !!opts.sceneTurn, opts.env?.channels || opts.channels || null);
   entry.lastFrameToken = opts.frameToken ?? 0;
 }
 
@@ -3460,7 +3482,7 @@ export function renderModelLayer(renderer, opts) {
   applyContactShadow(entry, hasRigFloor ? { enabled: false } : config.shadow);
 
   // Fit, layer transform, floor placement and animation (poseModel).
-  const { fit, sx, sy, sz } = poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken, opts.sceneTime, !!opts.sceneTurn);
+  const { fit, sx, sy, sz } = poseModel(entry, item, config, prs, rig, W, H, time, opts.frameToken, opts.sceneTime, !!opts.sceneTurn, opts.env?.channels || opts.channels || null);
   if (rig) {
     // Shared by every model's injected material — the floor is the rig's.
     GROUND_AO.uGroundAoY.value = -H * 0.42 + (rig.cyclorama?.y || 0);
@@ -3845,12 +3867,17 @@ function proxyDistance(W, H) {
  * Targets: [x, y, z] in the Scene's metres (the editor's 3D space scaled by WORLD_UNITS), "@id" a Scene object as it stands at the scene's
  * time, { bone } one of the model's own. `attach` hands a Scene object to a bone: entry.attachments, for the world (modelAttachments).
  */
-function applyModelPose(entry, config, time, rig, sceneTime, placeOnFloor) {
+// (audio clocks) the scene the world was built from (world3dLayer.js hands it over): its audio clocks are baked, the Rig's own are not
+let worldScene = () => null;
+export function setWorldSceneSource(fn) { worldScene = typeof fn === 'function' ? fn : () => null; }
+
+function applyModelPose(entry, config, time, rig, sceneTime, placeOnFloor, channels = null) {
   for (const a of entry.activeActions || []) a.stop();
   entry.activeActions = null;
   if (entry.activeAction) { entry.activeAction.stop(); entry.activeAction = null; }
   entry.poseRig ||= makePoseRig(entry.root, entry.animations || [], entry.restSource);
-  const scene = rig?.scene && typeof rig.scene === 'object' ? rig.scene : null;
+  // a pose's "@id" target stands where the world shows it: with the clocks the world baked (an audio clock's envelope and place)
+  const scene = rig?.scene && typeof rig.scene === 'object' ? withWorldClocks(rig.scene, worldScene()) : null;
   const attachments = new Map();
   // a pose asks at its own (layer) seconds; the Scene's objects stand at the Scene's: the two clocks differ by where the layer starts
   const sceneAt = (t) => sceneTime + ((Number.isFinite(t) ? t : time) - time);
@@ -3860,23 +3887,66 @@ function applyModelPose(entry, config, time, rig, sceneTime, placeOnFloor) {
       const m = sceneObjectMatrix(scene, ref.replace(/^@/, ''), sceneAt(t));
       if (m) return new THREE.Vector3().setFromMatrixPosition(metresToEditor(m));
     }
-    return null;
+    const mt = resolveModelTarget(ref, instances, channels, 1000);
+    return mt ? mt.point : null;
   };
   const ctx = {
     sceneRef: scene,
+    // (lipsync) a pose's `speech` reads its clock on the Scene's time
+    sceneTime: sceneAt,
     resolve: (ref, t) => point(ref, t),
     resolveMatrix: (ref, t) => {
-      if (typeof ref !== 'string' || !scene) return null;
-      const m = sceneObjectMatrix(scene, ref.replace(/^@/, ''), sceneAt(t));
-      if (!m) return null;
-      const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
-      metresToEditor(m).decompose(p, q, s);
-      return m.compose(p, q, s.set(1, 1, 1));
+      if (typeof ref === 'string' && scene) {
+        const m = sceneObjectMatrix(scene, ref.replace(/^@/, ''), sceneAt(t));
+        if (m) {
+          const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+          metresToEditor(m).decompose(p, q, s);
+          return m.compose(p, q, s.set(1, 1, 1));
+        }
+      }
+      return resolveModelTarget(ref, instances, channels, 1000)?.matrix || null;
+    },
+    resolveShape: (ref, t) => {
+      const found = findModelEntry(ref, instances, channels);
+      if (found?.entry) return modelBoxShape(found.entry);
+      if (typeof ref === 'string' && scene && Array.isArray(scene.objects)) {
+        const sid = ref.replace(/^@/, '');
+        const so = scene.objects.find((o) => o && o.id === sid);
+        if (so) {
+          const m = sceneObjectMatrix(scene, sid, sceneAt(t));
+          if (m) return shapeFromSceneObject(so, metresToEditor(m));
+        }
+      }
+      return null;
     },
     attach: (id, matrix, w) => {
-      if (!scene || !Array.isArray(scene.objects) || !scene.objects.some((o) => o?.id === id)) return false;
-      attachments.set(id, { matrix: matrix.toArray(), weight: w });
-      return true;
+      if (scene && Array.isArray(scene.objects) && scene.objects.some((o) => o?.id === id)) {
+        attachments.set(id, { matrix: matrix.toArray(), weight: w });
+        return true;
+      }
+      const found = findModelEntry(id, instances, channels);
+      if (found?.entry && found.itemId !== entry.itemId) {
+        attachments.set(found.itemId, { matrix: matrix.toArray(), weight: w });
+        const targetEntry = found.entry;
+        const ownNode = targetEntry.inner || targetEntry.root;
+        if (ownNode) {
+          ownNode.updateWorldMatrix(true, false);
+          const ownMat = ownNode.matrixWorld.clone();
+          const ownP = new THREE.Vector3();
+          const ownQ = new THREE.Quaternion();
+          const ownS = new THREE.Vector3();
+          ownMat.decompose(ownP, ownQ, ownS);
+          const mP = new THREE.Vector3();
+          const mQ = new THREE.Quaternion();
+          const mS = new THREE.Vector3();
+          matrix.decompose(mP, mQ, mS);
+          const heldMat = new THREE.Matrix4().compose(ownP.lerp(mP, w), ownQ.slerp(mQ, w), ownS);
+          targetEntry.heldMatrix = heldMat;
+          targetEntry.heldDelta = heldMat.clone().multiply(ownMat.invert());
+        }
+        return true;
+      }
+      return false;
     },
     beforeConstraints: placeOnFloor,
   };
@@ -3965,12 +4035,31 @@ export function applyModelAnimation(entry, animation, time) {
 // would double the memory of an already heavy asset. Its lights come along (a
 // MeshStandardMaterial with no light and no environment renders black) and the caller
 // gets a function that puts everything back exactly as it was.
+export function clearHeldModelMatrices() {
+  for (const entry of instances.values()) {
+    entry.heldMatrix = null;
+    entry.heldDelta = null;
+  }
+}
+
 /** A model's fitted group: what the world renderer places the file under, in world px. */
 export function modelWorldMatrix(itemId) {
   const entry = instances.get(itemId);
   if (!entry?.inner) return null;
   entry.inner.updateWorldMatrix(true, false);
   return entry.inner.matrixWorld.elements;
+}
+
+/** A model node's/bone's world matrix in editor space (unit scale), or null. */
+export function modelNodeWorldMatrix(itemId, nodeName = null) {
+  const mt = resolveModelTarget(nodeName ? { model: itemId, bone: nodeName } : itemId, instances);
+  return mt ? mt.matrix.toArray() : null;
+}
+
+/** An OBB shape descriptor for a posed model layer in editor space, for `pinch` or inspection. */
+export function modelShapeForPose(itemId, channels = null) {
+  const found = findModelEntry(itemId, instances, channels);
+  return found?.entry ? modelBoxShape(found.entry) : null;
 }
 
 /** What a model's effects in the world measure by, as its own pass does (model3dFx.js): the asset root's frame in world px, the asset's
@@ -4060,6 +4149,10 @@ export function modelScreensForWorld(itemId) {
       strength: Number.isFinite(holder.screenSpec?.strength) ? holder.screenSpec.strength : null,
       glass: Number.isFinite(holder.screenSpec?.glass) ? holder.screenSpec.glass : null,
       light: holder.screenSpec?.light !== false,
+      // (screensharp2) how bright the page looks in the Scene (1: as the page) apart from the light it throws; `filmed` sends it back
+      // through the Scene's film (world3d/render/screenLayer.js)
+      brightness: Number.isFinite(holder.screenSpec?.brightness) ? holder.screenSpec.brightness : null,
+      filmed: holder.screenSpec?.filmed === true,
     });
   }
   return out;

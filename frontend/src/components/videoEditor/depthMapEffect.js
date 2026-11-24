@@ -42,7 +42,10 @@ const LEGACY_DEPTH_OWNER_ID = 'depth3d';
 export const DEPTH_MAX_EDGE = 384;
 
 export const DM_DEFAULTS = {
-  dmInvert: 0,   // 0 = white is near (what Depth Anything V2 returns)
+  dmInvert: 0,       // 0 = white is near (what Depth Anything V2 returns)
+  dmWrite3dDepth: 0, // 1 = stamp video/image depth into 3D composite Z-buffer
+  dmDepthNear: 0.4,  // metres mapped to disparity 1.0 when writing 3D Z
+  dmDepthFar: 8.0,   // metres mapped to disparity 0.0 when writing 3D Z
 };
 
 export const DM_ENUM_FIELDS = [
@@ -53,6 +56,31 @@ export const DM_ENUM_FIELDS = [
   },
 ];
 
+export const DM_NUMBER_FIELDS = [
+  { key: 'dmWrite3dDepth', label: 'Write 3D Depth', min: 0, max: 1, step: 1 },
+  { key: 'dmDepthNear', label: 'Near (m)', min: 0.05, max: 50, step: 0.05 },
+  { key: 'dmDepthFar', label: 'Far (m)', min: 0.2, max: 200, step: 0.1 },
+];
+
+export function sanitizeDepthVideo(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.url !== 'string' || !raw.url) return null;
+  const w = Math.max(2, Math.min(4096, Math.round(Number(raw.w) || 0)));
+  const h = Math.max(2, Math.min(4096, Math.round(Number(raw.h) || 0)));
+  const fps = Math.max(1, Math.min(120, Math.round(Number(raw.fps) || 15)));
+  const startTime = Math.max(0, Number(raw.startTime) || 0);
+  const duration = Math.max(0.1, Number(raw.duration) || 5);
+  return {
+    url: raw.url.slice(0, 2000),
+    w,
+    h,
+    fps,
+    startTime,
+    duration,
+    ...(typeof raw.name === 'string' && raw.name ? { name: raw.name.slice(0, 120) } : {}),
+    ...(raw.calibrated ? { calibrated: true } : {}),
+  };
+}
+
 export function getDepthMapEffect(item) {
   const list = item?.layerEffects;
   if (!Array.isArray(list)) return null;
@@ -60,6 +88,7 @@ export function getDepthMapEffect(item) {
 }
 
 const validMap = (d) => (d && typeof d.data === 'string' && d.data.length > 0 ? d : null);
+const validVideo = (v) => (v && typeof v.url === 'string' && v.url.length > 0 ? v : null);
 
 /** The legacy 3D Depth entry's own map, for projects written before 10.4.89. */
 export function getLegacyDepthMap(item) {
@@ -74,15 +103,34 @@ export function getItemDepthMap(item) {
   return validMap(getDepthMapEffect(item)?.depthMap) || getLegacyDepthMap(item);
 }
 
+/** Per-frame stabilized grayscale depth MP4 descriptor stored on the shared entry. */
+export function getItemDepthVideo(item) {
+  return validVideo(getDepthMapEffect(item)?.depthVideo);
+}
+
+export function hasDepthSource(item) {
+  return !!(getItemDepthMap(item) || getItemDepthVideo(item));
+}
+
 export function hasDepthMap(item) {
-  return !!getItemDepthMap(item);
+  return hasDepthSource(item);
 }
 
 /** Shared field-shaping params. Neutral by default, so nothing existing moves. */
 export function resolveDepthMapParams(item) {
   const params = getDepthMapEffect(item)?.params || {};
   const invert = Number(params.dmInvert);
-  return { dmInvert: Number.isFinite(invert) ? invert : DM_DEFAULTS.dmInvert };
+  const write3d = Number(params.dmWrite3dDepth);
+  const near = Number(params.dmDepthNear);
+  const far = Number(params.dmDepthFar);
+  const dmDepthNear = Number.isFinite(near) ? Math.max(0.05, Math.min(50, near)) : DM_DEFAULTS.dmDepthNear;
+  const dmDepthFar = Number.isFinite(far) ? Math.max(dmDepthNear + 0.1, Math.min(200, far)) : Math.max(dmDepthNear + 0.1, DM_DEFAULTS.dmDepthFar);
+  return {
+    dmInvert: Number.isFinite(invert) ? invert : DM_DEFAULTS.dmInvert,
+    dmWrite3dDepth: write3d >= 0.5 ? 1 : 0,
+    dmDepthNear,
+    dmDepthFar,
+  };
 }
 
 /* Shared by every Depth Effect's `available` gate so the pack appears and
@@ -334,6 +382,13 @@ export function releaseDepthWorker() {
 // What the file picker offers. Deliberately the ordinary image types: a depth
 // map from another tool arrives as a PNG far more often than anything exotic,
 // and anything the browser can decode into a canvas works here.
+export async function generateDepthVideo(mediaUrl, { startTime = 0, duration = 5, fps = 15, maxSide = DEPTH_MAX_EDGE, onProgress, signal } = {}) {
+  const { bakeDepthVideo } = await import('./depthVideoBake.js');
+  return bakeDepthVideo({ videoUrl: mediaUrl, startTime, duration, fps, maxSide, onProgress, signal });
+}
+
+export const DEPTH_VIDEO_FILE_ACCEPT = 'video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov';
+
 export const DEPTH_MAP_FILE_ACCEPT = 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp';
 
 /* The sanitizer drops a map whose payload is longer than this on load — silently,

@@ -4,7 +4,7 @@
 > here. `frontend/src/…` paths are files of the engine's public source repository. MotionFast templates (`mediaType: "motion"`)
 > stay in GreenLight Dash.
 
-# GreenLight Dash — Keyframes, easing and expressions
+# GLEA — Keyframes, easing and expressions
 
 > Read [video-projects.md](video-projects.md) for the shared project, clip, channel, timing and versioned-write contracts. Load only the sections needed for the task.
 
@@ -53,8 +53,20 @@ Every timeline item can animate its visual properties over the clip's duration. 
 }
 ```
 
-**Transform origin** is one item-level field, `keyframeTransformOrigin` (`"center"`, `"top"`, `"bottom"`, `"left"`, `"right"`, a corner such as `"bottom left"`, or `"x% y%"`): the point every rotation (static and keyed, 2D and 3D) and the keyed scale turn about, while `panX`/`panY`/`panZ` stay the layer's resting centre — see [Turning a flat layer in 3D](video-3d.md#turning-flat-layers-in-3d--pivot-and-stacking).
+**Transform origin** is one item-level field, `keyframeTransformOrigin` (`"center"`, `"top"`, `"bottom"`, `"left"`, `"right"`, a corner such as `"bottom left"`, or `"x% y%"`): the point every rotation (static and keyed, 2D and 3D) and the keyed scale turn about, while `panX`/`panY`/`panZ` stay the layer's resting centre — see [Turning a flat layer in 3D](#turning-a-flat-layer-in-3d).
 To scale or turn about a point, set it to `"x% y%"` of the item's box (a full-frame item: x / W, y / H of the point); the point then stays put under any keyed `scale` and rotation, so no `translateX` / `translateY` keys compensate. To move that point as well (a push that ends with it at the frame centre), key `translateX` / `translateY` by the distance in composition px: they are added after the scale.
+
+<a id="turning-a-flat-layer-in-3d"></a>**Turning a flat layer in 3D.** Every flat layer (image, video, shape, text, HTML clip) turns in 3D
+with the static `rotateX` / `rotateY` / `rotateZ` fields and the `rotateX` / `rotateY` / `rotate` tracks alike: a static angle and the same
+angle reached by a key give the same pose, and mixing static and keyed channels never moves the layer. It turns, and the keyed `scale` /
+`scaleX` / `scaleY` grow it, about `keyframeTransformOrigin` on the layer's own box (the drawn plate; for text, the laid-out block), while
+`panX` / `panY` / `panZ` place its centre as it rests unturned and the static `zoom` sizes it about that centre. So a card that stands up
+off a page is placed **flat**, with `keyframeTransformOrigin: "bottom"` and `rotateX` 0 → −90 keyed (or static −90): its bottom edge stays
+on the line it lay on, and a keyed `scaleY` 0 → 1 with the card already standing grows it up out of that line, with no translate arc.
+Flat layers composite back to front; a layer turned in 3D is ordered against every flat layer it does not cross by which side of that
+layer's plane it stands on, so a card standing on a page always draws over it, wherever the camera looks. A turned layer stays flat: it is
+not part of a 3D Scene's world (no light, shadow or trace there); a picture or words stand in a Scene with `inWorld`, `textInWorld` or
+`text3d` ([video-world3d.md](video-world3d.md#pictures-in-the-world-inworld)).
 
 `propertyKeyframes` is baked by **`/render-onserver`** and the desktop render; the fast `/render` ignores keyframes entirely.
 
@@ -126,9 +138,9 @@ A track on an item without the matching feature is a harmless no-op, and a track
 | Colour (CSS colour strings) | `color`, `backgroundColor`, `textColor` (text fill), `textBgColor` (caption bar), `textOutlineColor` (unset falls back to the text colour), `shapeFill` (a shape's background paint while its type is solid or gradient), `borderColor`. `textColor` and `shapeFill` keys may hold a CSS gradient (`linear-gradient(90deg, #fff 0%, #8b5cf6 100%)`); gradients blend stop by stop, solid↔gradient included |
 | Filters | `blur` (px), `brightness`, `contrast`, `saturate` (%, 100 = neutral), `hue-rotate` (degrees), `grayscale`, `sepia`, `invert` (%, 0 = neutral), `effectAmount` (0–1), `lutAmount` (%) — each overrides the item's static `filter*` field while its track exists |
 | Shape layers | `shapeWidthPx`/`shapeHeightPx` or `shapeWidthPct`/`shapeHeightPct` (the unit the shape uses; `shapeRadiusPx`/`shapeRadiusPct` on a circle), the radius tracks (under Transform) in the item's `borderRadiusUnit` on `rectangle` shapes, `backdropBlur` (px), `backdropSaturation` (%), the stroke tracks (`lineWidth`, `lineTrimStart/End/Offset`, …) and the non-scalar `shapePath` — see [video-shapes.md](video-shapes.md) |
-| Layer Effects | `glowAmount` … `glowSourceLevel` (Running Glow), `depthStrength`, `depthFocus`, `glass*`, `mskAmount`, and each effect's own tracks (`mblur*`, `trail*`, `af*`, `rep*`, `ds*`, …) — listed per effect in [video-effects.md](video-effects.md#greenlight-dash--video-editor-layer-effects-and-overlay-effects) |
+| Layer Effects | `glowAmount` … `glowSourceLevel` (Running Glow), `depthStrength`, `depthFocus`, `glass*`, `mskAmount`, and each effect's own tracks (`mblur*`, `trail*`, `af*`, `rep*`, `ds*`, …) — listed per effect in [video-effects.md](video-effects.md#glea--video-editor-layer-effects-and-overlay-effects) |
 | Camera clips | their own registry: `camZoom`, `camX`, `camY`, `camRoll`, `camDolly`, `camTiltX`, `camTiltY`, `camPathT`, `camPathOffsetX/Y/Z`, `camFollowTarget` and the depth-of-field fields — see [video-camera.md](video-camera.md#camera-properties) |
-| Playback rate | `speed` — retimes the clip rather than restyling it; see Speed curves (GreenLight Dash only) |
+| Playback rate | `speed` — retimes the clip rather than restyling it; see speed.md (GreenLight Dash only) |
 
 #### Prefixed track namespaces
 
@@ -136,17 +148,17 @@ These keys animate things outside the static registry, in the same `propertyKeyf
 
 | Track key | Animates | Notes |
 |---|---|---|
-| `fx:<eid>:<paramKey>` | An Overlay Effect numeric param, plus synthetic `mix` | `<eid>` is the effect's stable id in `item.effects`. Number params only. Running Glow / 3D Depth keep their named tracks above. See [video-effects.md](video-effects.md#greenlight-dash--video-editor-layer-effects-and-overlay-effects). |
-| `mp:<paramKey>` | A **motion layer's numeric template option** (`number`/`range` field) | `<paramKey>` is the template's `fields[].key`. Which options accept a track: motion.md (GreenLight Dash only). |
+| `fx:<eid>:<paramKey>` | An Overlay Effect numeric param, plus synthetic `mix` | `<eid>` is the effect's stable id in `item.effects`. Number params only. Running Glow / 3D Depth keep their named tracks above. See [video-effects.md](video-effects.md#glea--video-editor-layer-effects-and-overlay-effects). |
+| `mp:<paramKey>` | A **motion layer's numeric template option** (`number`/`range` field) | `<paramKey>` is the template's `fields[].key`. Which options accept a track: motionfast.md (GreenLight Dash only). |
 | `mpc:<paramKey>` | A **motion layer's colour template option** (`color` field) | Separate prefix on purpose — a colour under `mp:` is silently dropped. |
 | `gr:<key>` | A **grid layer's layout parameter** | Only the keys the current layout mode reads; see [video-grid.md](video-grid.md). |
-| `rig:<pid>:<chan>` | One **Rig (Puppet) pin's pose channel** | Offsets from the pin's rest. See [video-effects.md](video-effects.md#greenlight-dash--video-editor-layer-effects-and-overlay-effects). |
+| `rig:<pid>:<chan>` | One **Rig (Puppet) pin's pose channel** | Offsets from the pin's rest. See [video-effects.md](video-effects.md#glea--video-editor-layer-effects-and-overlay-effects). |
 | `msk:<mid>:<chan>` | One **layer mask's** geometry channel | `x`/`y`/`w`/`h`/`rot`/`feather`/`expand`/`opacity`/`grow` are numeric; **`msk:<mid>:path` is NON-SCALAR** — its value is a JSON point list, like `shapePath`. See [Layer Mask entry](video-effects.md#layer-mask-entry). |
 | `txa:<aid>:<chan>` | One **text animator's** range, wiggle or effect value | `<chan>` is `start`/`end`/`offset`/`amount`/`smooth`/`easeHigh`/`easeLow` (under `drive: "time"`/`"voice"` only `amount`), `wig.max`/`wig.min`/`wig.corr`, or `<pid>.<field>` for a numeric effect field except `scramble` `rate`/`seed` and `caret` `width`/`blink`/`hideAfter`. Numeric, in the field's units. See [Advanced Animations](video-text.md#advanced-animations--effects-over-a-moving-range-of-characters-words-or-lines). |
 | `ph:<n>` | One **text placeholder counter's** progress | The placeholder names its track with `kf=<n>`. See [video-text.md](video-text.md). |
-| `sc:<id>:<chan>` / `scc:<id>:col` | A **3D scene rig** channel (numeric / colour) | Rig clips carry only these. See [video-3d.md](video-3d.md). |
-| `px:<param>` | A **particle layer's proximity-effector parameter** | `range`, `falloff`, `depth` plus any key present in `proximity.fx`. See [video-particles.md](video-particles.md). |
-| `cc:<path>` | One number of a **video/image item's `colorCorrection`** | `<path>` addresses the value inside the object: `mix`, `wb.temp`, `tone.exposure`, `levels.<rgb\|r\|g\|b>.<inB\|gamma\|inW\|outB\|outW>`, `color.saturation`, `wheels.<shadows\|midtones\|highlights>.<x\|y\|l>`, `hsl.<hue\|sat\|lum>.<0-7>`, `detail.<details\|sharpen>`. Values are clamped to the field's range. See [video-effects.md](video-effects.md#greenlight-dash--video-editor-layer-effects-and-overlay-effects). |
+| `sc:<id>:<chan>` / `scc:<id>:col` | A Scene layer's Rig channel (numeric / colour): its lights, backdrop, environment and animated materials | Rig clips carry only these. See [video-world3d.md](video-world3d.md#the-rig-backdrop-rig-lights-and-environment). |
+| `px:<param>` | A **particle layer's proximity-effector parameter** | `range`, `falloff`, `depth` plus any key present in `proximity.fx`. See [video-particles.md](video-particles.md#proximity-another-layers-shape-drives-the-cloud). |
+| `cc:<path>` | One number of a **video/image item's `colorCorrection`** | `<path>` addresses the value inside the object: `mix`, `wb.temp`, `tone.exposure`, `levels.<rgb\|r\|g\|b>.<inB\|gamma\|inW\|outB\|outW>`, `color.saturation`, `wheels.<shadows\|midtones\|highlights>.<x\|y\|l>`, `hsl.<hue\|sat\|lum>.<0-7>`, `detail.<details\|sharpen>`. Values are clamped to the field's range. See [video-effects.md](video-effects.md#glea--video-editor-layer-effects-and-overlay-effects). |
 
 Tracks whose target no longer exists are dropped on load (an effect removed from the chain, a motion layer swapped to another template), with one exception: a `px:` track whose driven property has been removed from `proximity.fx` is kept, so a shaped curve survives the property being toggled off and on. Nothing reads it while the property is gone.
 
@@ -174,6 +186,10 @@ A track can be parked instead of deleted. `hiddenPropertyKeyframes` has the same
   "hiddenPropertyKeyframeFx":  { "rotate": { "type": "elastic", "params": { "amp": 100, "freq": 1.1, "decay": 5 } } }
 }
 ```
+
+#### Keys past a trimmed edge (`heldKeyframes`)
+
+A plain trim stretches the tracks with the layer (positions are % of the layer). Trimming with **Shift** held keeps every key at its moment instead. A key the edge closes over is cut at the edge (a key holding the value shown there), and the whole track is kept on the item as `heldKeyframes: { from, to, trimStart, trimEnd, tracks: { propertyKeyframes?: {…}, hiddenPropertyKeyframes?: {…} } }`, so a later Shift trim that opens the edge again brings the keys back. Nothing renders it. It is valid only while the item's `trimStart`/`trimEnd` equal the ones stored in it, so when you write new trims or tracks you can leave it alone: it is dropped at the next save. To keep keys in place when you change a layer's length yourself, re-express each `position` against the new span: `new % = (old trimStart + old % / 100 × old span − new trimStart) / new span × 100`, where span = `trimEnd − trimStart`. Keep the results inside 0–100: a key outside the new span has to be cut at the edge, like a split cuts it.
 
 ### Track expressions (`propertyKeyframeFx`)
 

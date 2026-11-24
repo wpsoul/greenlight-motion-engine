@@ -22,7 +22,7 @@
 import * as THREE from 'three';
 import { isChromaKeyEnabled } from '../chromaKeyLayer';
 import { createClipMaterial, resetMaterialUniforms, resumeBlendMode, suspendBlendMode } from '../clipShader';
-import { isLayerMaskEnabled } from '../layerMask';
+import { needsLayerMaskPass } from './layerHelpers';
 import { materials as makeMaterial } from '../materialFactory';
 import { applyChromaKey } from './layerPasses';
 import { applyLayerMask } from './layerStages';
@@ -65,10 +65,11 @@ export function prepareWorldLayerFx(engine, layers, t) {
   const renderer = engine.renderer;
   if (renderer) {
     for (const layer of layers) {
-      const { item, mesh, entry: span } = layer;
+      const { item, clip, mesh, entry: span } = layer;
       if (!item || !span || !mesh?.visible) continue;
       const keyed = isChromaKeyEnabled(item);
-      const masked = isLayerMaskEnabled(item);
+      // a box mask is cut by the card's own material, which draws it in the world as it is (layerHelpers.js)
+      const masked = needsLayerMaskPass(item, clip);
       if (!keyed && !masked) continue;
       const material = mesh.material;
       const geo = mesh.geometry;

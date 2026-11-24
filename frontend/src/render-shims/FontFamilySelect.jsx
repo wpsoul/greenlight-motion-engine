@@ -379,8 +379,16 @@ export default function FontFamilySelect({
   const [customFonts, setCustomFonts] = useState(getCustomFonts);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  // "In this project" as it stood when the list opened: ↑/↓ set the font live,
+  // and each step changes which families the document uses — a live list would
+  // reshuffle under the highlight.
+  const [openProjectFonts, setOpenProjectFonts] = useState(null);
   const wrapRef = useRef(null);
+  const triggerRef = useRef(null);
+  const listRef = useRef(null);
   const fileInputRef = useRef(null);
+  // The value the list opened with — Escape puts it back.
+  const openedWith = useRef(value);
   const selectedFont = findFontFamily(value);
   const selectedLabel = selectedFont?.name || getFontName(value);
   const selectedCss = selectedFont?.css || getFontCSS(value);
@@ -390,9 +398,10 @@ export default function FontFamilySelect({
     return subscribeCustomFonts(setCustomFonts);
   }, []);
 
+  const projectSource = isOpen ? openProjectFonts : projectFonts;
   const allFonts = useMemo(() => [...customFonts, ...FONT_FAMILIES], [customFonts]);
   // customFonts is a dependency: findFontFamily resolves uploaded families from its cache.
-  const projectList = useMemo(() => buildProjectFontEntries(projectFonts), [projectFonts, customFonts]);
+  const projectList = useMemo(() => buildProjectFontEntries(projectSource), [projectSource, customFonts]);
 
   const query = search.trim().toLowerCase();
   const filteredProject = useMemo(() => filterFontList(projectList, query), [projectList, query]);
@@ -455,11 +464,79 @@ export default function FontFamilySelect({
   ].filter((section) => section.fonts.length > 0);
   const showHeadings = sections.length > 1;
 
-  const handleSelect = (font) => {
-    onChange?.(returnValue === 'css' ? font.css : font.name);
+  const pickFont = (font) => onChange?.(returnValue === 'css' ? font.css : font.name);
+
+  const openMenu = () => {
+    openedWith.current = value;
+    setOpenProjectFonts(projectFonts);
+    setIsOpen(true);
+  };
+
+  const closeMenu = (refocus) => {
     setIsOpen(false);
     setSearch('');
+    if (refocus) triggerRef.current?.focus({ preventScroll: true });
   };
+
+  const handleSelect = (font) => {
+    pickFont(font);
+    closeMenu(false);
+  };
+
+  // ↑/↓ walk the shown list (a family listed twice counts once) and SET the
+  // font with the list open, like Blend Mode; a font outside the shown list
+  // starts from the nearest end.
+  const stepFont = (dir) => {
+    const seen = new Set();
+    const walk = [];
+    sections.forEach((section) => section.fonts.forEach((font) => {
+      const key = font.name.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      walk.push(font);
+    }));
+    if (walk.length === 0) return;
+    const currentName = (selectedFont?.name || selectedLabel || '').toLowerCase();
+    const cur = walk.findIndex((font) => font.name.toLowerCase() === currentName);
+    const next = cur < 0
+      ? (dir > 0 ? 0 : walk.length - 1)
+      : Math.min(walk.length - 1, Math.max(0, cur + dir));
+    if (next !== cur) pickFont(walk[next]);
+  };
+
+  const handleDropdownKeyDown = (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      event.stopPropagation();
+      stepFont(event.key === 'ArrowDown' ? 1 : -1);
+    } else if (event.key === 'Enter') {
+      // Enter on a focused button (upload, a row) keeps doing what the button does.
+      if (event.target.closest?.('button')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (openedWith.current && openedWith.current !== value) onChange?.(openedWith.current);
+      closeMenu(true);
+    } else if (event.key === 'Tab') {
+      closeMenu(false);
+    }
+  };
+
+  // Keep the current row in view as ↑/↓ move it. Scrolls the list only — a
+  // scrollIntoView would also scroll the panel the picker sits in.
+  useEffect(() => {
+    if (!isOpen) return;
+    const list = listRef.current;
+    const row = list?.querySelector('.ff-picker-option-selected');
+    if (!row) return;
+    const listBox = list.getBoundingClientRect();
+    const rowBox = row.getBoundingClientRect();
+    if (rowBox.top < listBox.top) list.scrollTop -= listBox.top - rowBox.top + 4;
+    else if (rowBox.bottom > listBox.bottom) list.scrollTop += rowBox.bottom - listBox.bottom + 4;
+  }, [isOpen, value]);
 
   const handleUploadFile = async (event) => {
     const file = event.target.files?.[0];
@@ -495,9 +572,10 @@ export default function FontFamilySelect({
   return (
     <div ref={wrapRef} className={`ff-picker ${className}`.trim()}>
       <button
+        ref={triggerRef}
         type="button"
         className={`ff-picker-trigger ${triggerClassName}`.trim()}
-        onClick={() => setIsOpen((prev) => !prev)}
+        onClick={() => (isOpen ? closeMenu(false) : openMenu())}
       >
         <span className="ff-picker-trigger-copy">
           <span className="ff-picker-trigger-preview" style={{ fontFamily: selectedCss }}>{selectedLabel}</span>
@@ -505,7 +583,7 @@ export default function FontFamilySelect({
         <ChevronIcon open={isOpen} />
       </button>
       {isOpen && (
-        <div className={`ff-picker-dropdown ${dropdownClassName}`.trim()}>
+        <div className={`ff-picker-dropdown ${dropdownClassName}`.trim()} onKeyDown={handleDropdownKeyDown}>
           <div className="ff-picker-search-wrap">
             <input
               className="ff-picker-search"
@@ -535,7 +613,7 @@ export default function FontFamilySelect({
             />
             {uploadError && <div className="ff-picker-upload-error">{uploadError}</div>}
           </div>
-          <div className="ff-picker-list">
+          <div className="ff-picker-list" ref={listRef}>
             {sections.map((section) => (
               <Fragment key={section.key}>
                 {(showHeadings || section.key === 'google') && (

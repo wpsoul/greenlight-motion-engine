@@ -11,7 +11,10 @@ export function install(STUDIO) {
   };
   document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+icons[el.dataset.icon]+'</svg>'; });
   if (!window.GreenLightMotion) { $('#loading').textContent='The local engine bundle is missing. Run: cd frontend && npm run build:motion-engine'; return; }
-  let handle=GreenLightMotion.mountPage(STUDIO.el, {project:window.GL_LAB_PROJECT,theme:'dark',assets:STUDIO.assets});
+  // the layer list in GreenLight Dash's order, as the timeline (index.js appOrder); a page with the camera's controls marks
+  // its Camera and 3D Scene rows for the app's colours (index.js camera)
+  const pinCameraRows=!!STUDIO.cameraRows,pinned=STUDIO.appOrder||(c=>c);
+  let handle=GreenLightMotion.mountPage(STUDIO.el, {project:window.GL_LAB_PROJECT,theme:'dark',assets:STUDIO.assets,pinCameraRows});
   const api = () => GreenLightMotion.page;
   // a card without Edit (rendered videos: nothing to edit here) has no Layers or Project tab and opens on Sources
   const CFG=window.RV_CONFIG||{}, EDIT=!CFG.modes||CFG.modes.includes('edit');
@@ -59,7 +62,7 @@ export function install(STUDIO) {
   $('#nav-collapse').onclick=()=>{const g=navGroups();collapsed=collapsed.size>=g.length?new Set():new Set(g.map(x=>x.key));renderNav(true);};
   function navGroups(){
     const byId=new Map(api().layers().map(l=>[l.id,l]));
-    const chans=[...window.GL_LAB_PROJECT.channels].reverse().map(ch=>({ch,rows:ch.items.map(it=>byId.get(it.id)).filter(Boolean)}));
+    const chans=[...pinned(window.GL_LAB_PROJECT.channels)].reverse().map(ch=>({ch,rows:ch.items.map(it=>byId.get(it.id)).filter(Boolean)}));
     const flat=chans.flatMap(c=>c.rows);
     if(sortMode==='type'){const m=new Map();flat.forEach(l=>{const t=GLYPHS[l.type]?l.type:(l.type==='shape'?'shape':'layer');if(!m.has(t))m.set(t,[]);m.get(t).push(l);});return [...m].map(([t,rows])=>({key:'type:'+t,label:TYPE_LABELS[t]||t,sub:null,rows}));}
     if(sortMode==='time60'||sortMode==='time10'){const size=sortMode==='time10'?10:60,m=new Map();flat.forEach(l=>{const b=Math.floor((l.start||0)/size);if(!m.has(b))m.set(b,[]);m.get(b).push(l);});return [...m].sort(([a],[b])=>a-b).map(([b,rows])=>({key:`time${size}:${b}`,label:size===60?`${b}–${b+1} min`:`${b*10}–${b*10+10}s`,sub:null,rows:rows.sort((x,y)=>(x.start||0)-(y.start||0))}));}
@@ -118,7 +121,7 @@ export function install(STUDIO) {
     const picked=api().selected();
     const sig=JSON.stringify([rows.map(r=>r.map(l=>[l.id,l.type,nameOf(l)])),muted,picked]);if(sig===gutterSig)return;gutterSig=sig;box.replaceChildren();
     rows.forEach(clips=>{const l=clips.find(c=>c.id===picked)||clips[0];const one=clips.length===1;const off=clips.every(c=>muted[c.id]!=null);
-      const row=document.createElement('div');row.className='lab-track-label'+(off?' is-muted':'');row.dataset.id=l.id;
+      const row=document.createElement('div');row.className='lab-track-label'+(off?' is-muted':'')+(pinCameraRows&&(l.type==='camera'||l.type==='rig')?' is-pin':'');row.dataset.id=l.id;
       if(!one)row.title=clips.map(nameOf).join(' · ');
       const g=document.createElement('span');g.className='rv-gl-glyph';g.innerHTML=svg(GLYPHS[l.type]||GLYPHS.layer);
       const n=document.createElement('span');n.className='rv-gl-name';n.textContent=nameOf(l);
@@ -154,7 +157,7 @@ export function install(STUDIO) {
   async function remount(proj,{at=null,select=null}={}){
     const p=api(),t=at??p?.state().currentTime??0;
     window.GL_LAB_PROJECT=proj;
-    handle.unmount();handle=GreenLightMotion.mountPage(STUDIO.el,{project:proj,theme:'dark',assets:STUDIO.assets});
+    handle.unmount();handle=GreenLightMotion.mountPage(STUDIO.el,{project:proj,theme:'dark',assets:STUDIO.assets,pinCameraRows});
     await new Promise(r=>{const w=()=>{const q=GreenLightMotion.page;if(q&&q!==p&&q.ready&&$('.glm-side')&&$('.glm-tlwrap')&&$('.glm-top'))r();else setTimeout(w,50);};w();});
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     api().seek(Math.min(t,api().duration));if(select)api().select(select);

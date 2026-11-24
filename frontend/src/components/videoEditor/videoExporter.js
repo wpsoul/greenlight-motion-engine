@@ -4,6 +4,7 @@ import { audioFadeGainWindow } from './audioFade';
 import { filmFrames } from './frameGrid';
 import { autoQuantizerFor, estimateDetailBitrate } from './renderBitrate';
 import { measureEncoderDelay, insertAudioEditList, createPrimingStreamPatcher } from './mp4AudioPriming';
+import { frameFaultOn } from './frameGuard';
 
 const AUDIO_SAMPLE_RATE = 48000;
 const AUDIO_CHANNELS = 2;
@@ -952,16 +953,20 @@ export async function exportVideo(opts) {
       ? firstFrameTimeoutMs
       : frameTimeout;
     let frameTimedOut = false;
+    let renderSettled = false;
     // (badframes) what the guard weighs: the frame's own error, and the GPU state it started from
     let frameError = null;
     const frameSince = performance.now();
     const resetsBefore = gpuResetCount?.() ?? 0;
+    const renderPromise = Promise.resolve()
+      .then(() => renderFrameAtTime(time))
+      .catch((e) => { frameError = e; console.warn(`[export] renderFrameAtTime(${i}) @ ${tlTime}s errored: ${e?.message || e}`); })
+      .finally(() => { renderSettled = true; });
     await Promise.race([
-      Promise.resolve()
-        .then(() => renderFrameAtTime(time))
-        .catch((e) => { frameError = e; console.warn(`[export] renderFrameAtTime(${i}) @ ${tlTime}s errored: ${e?.message || e}`); }),
+      renderPromise,
       new Promise((resolve) => setTimeout(() => { frameTimedOut = true; resolve(); }, frameBudgetMs)),
     ]);
+    if (!frameTimedOut && frameFaultOn('frameTimeout')) frameTimedOut = true;
     // A frame that stops the render (a Final trace that cannot end, a frame the guard gave up on) stops it here, before anything of it
     // is encoded: the next frame's checkFatal said it one frame late, after encoding this one.
     if (frameError?.finalStall && checkFrame) {
@@ -969,9 +974,15 @@ export async function exportVideo(opts) {
       throw new Error(`Render stopped at ${tlTime}s — ${frameError.message}`);
     }
     // (badframes) the guard's verdict on what was just read, before it leaves; a retry draws the frame again
-    const guardSays = async () => {
-      if (!checkFrame || frameTimedOut) return false;
-      const verdict = await checkFrame(i, time, guardAttempt, { error: frameError, since: frameSince, resets: resetsBefore });
+    const guardSays = async (stillRunning = false) => {
+      if (!checkFrame) return false;
+      let verdict;
+      try {
+        verdict = await checkFrame(i, time, guardAttempt, { error: frameError, since: frameSince, resets: resetsBefore, timedOut: frameTimedOut, timeoutMs: frameBudgetMs, stillRunning });
+      } catch (err) {
+        try { encoder?.close(); } catch { /* already closed */ }
+        throw err;
+      }
       if (verdict?.retry) { guardAttempt += 1; return true; }
       guardAttempt = 0;
       return false;
@@ -981,6 +992,15 @@ export async function exportVideo(opts) {
     if (frameTimedOut) {
       stalledFrames += 1;
       console.warn(`[export] frame ${i} @ ${tlTime}s stalled >${frameBudgetMs}ms (${stalledFrames} in a row)`);
+      if (!renderSettled) {
+        await Promise.race([renderPromise, new Promise((resolve) => setTimeout(resolve, 1500))]);
+      }
+      if (checkFrame && await guardSays(!renderSettled)) {
+        // Retry cleanly without double-counting the same frame toward stallLimitAt or encoding the timed-out canvas.
+        stalledFrames = Math.max(0, stalledFrames - 1);
+        i -= 1;
+        continue;
+      }
       if (stalledFrames >= stallLimitAt(time)) {
         encoder?.close();
         if (gpuReset) throw gpuResetError();

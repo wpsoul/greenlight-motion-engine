@@ -48,8 +48,7 @@ export function resolveScaledOutputSize(output, compW, compH) {
  * into the composition-sized buffer (interpolated pixels, no new detail), and the
  * resampler then shrinks it back. A 2× zoom on a 4K recording in a 4K project
  * delivered at 1080p is a pixel-for-pixel crop of the source; magnify-then-shrink
- * turned its 1 px lines grey (a third of the edge sharpness — plan 1.8 of
- * PLANS/SCREEN_RECORDER_SMOOTH_MOTION_PLAN.md).
+ * turned its 1 px lines grey (a third of the edge sharpness).
  *
  * So the buffer shrinks with the zoom, to the size at which a composition pixel
  * under the camera is one buffer pixel again (composition / zoom), and never below

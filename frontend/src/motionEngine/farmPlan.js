@@ -24,7 +24,7 @@ export function estimateHere({ frames, probeMs = [], firstMs = 0 } = {}) {
 }
 
 /** A pod's seconds per frame for this film: the measured reference speed scaled by samples and pixels (Draft: the reference as is). */
-export function podSecPerFrame(gpu, { spp = 64, pixels = REF_PIXELS, mode = 'final' } = {}) {
+export function podSecPerFrame(gpu, { spp = 32, pixels = REF_PIXELS, mode = 'final' } = {}) {
   const ref = gpu.secPerFrame;   // measured on the chat path at gpu.refSpp, gpu.refPixels (Final), or Draft
   if (mode !== 'final') return gpu.draftSecPerFrame ?? ref;
   const fixed = gpu.fixedSecPerFrame ?? 0;   // the per-frame part that does not trace (composite, readback, encode)
@@ -38,7 +38,7 @@ export function podSecPerFrame(gpu, { spp = 64, pixels = REF_PIXELS, mode = 'fin
  * sends each pod (the project + the user's files); uplinkBps / downlinkBps: the user's line (measured by the page on the first job,
  * else 50 / 100 Mbit/s); targetSec: the wall time the pod count aims at; maxPods: the cap (owner: 1–10); pods: the user's own count.
  */
-export function planFarm({ frames, fps = 30, spp = 64, pixels = REF_PIXELS, mode = 'final', gpus = [], startSec = 120, uploadBytes = 0,
+export function planFarm({ frames, fps = 30, spp = 32, pixels = REF_PIXELS, mode = 'final', gpus = [], startSec = 120, uploadBytes = 0,
   uplinkBps = 50e6 / 8, downlinkBps = 100e6 / 8, mp4BytesPerSec = 0.8e6, targetSec = FARM_LIMITS.targetSec, maxPods = FARM_LIMITS.maxPods,
   pods: asked = null, tailSec = 20 } = {}) {
   const seconds = frames / fps;

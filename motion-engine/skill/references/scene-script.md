@@ -40,7 +40,7 @@ matte, masks, particles, 3D) goes on from `project.json`: SKILL.md, "Beyond the 
     { "name": "Offer", "duration": 2.4, "transition": "Camera Whip", "camera": "drift-left",
       "elements": [
         { "type": "pill", "w": 560, "h": 116, "color": "accent", "start": 0.15 },
-        { "type": "text", "text": "Opening day: 2 for 1", "role": "body", "color": "#1b120d", "start": 0.3, "enter": "pop-overshoot", "sound": "data-1" } ] },
+        { "type": "text", "text": "Opening day: 2 for 1", "role": "body", "color": "#1b120d", "start": 0.3, "enter": "pop-overshoot" } ] },
     { "name": "Close", "duration": 2.4, "transition": "Gradient Glow Stack", "background": { "shader": "silk", "look": "sunset" },
       "camera": { "move": "cm-quiet-push", "dof": { "focus": "street", "aperture": 50 } },
       "elements": [
@@ -67,24 +67,34 @@ matte, masks, particles, 3D) goes on from `project.json`: SKILL.md, "Beyond the 
   (px; the other follows the file's shape) or `fit` cover | contain
   (default: a video covers the frame, a picture sits at 70 % of contain), `rotate` (deg). A video also takes
   `startAt` (s into the file) and `volume` (0–100, default muted). No entrance unless you set `enter`.
+- **html**: an HTML page as a layer — an interface (a product screen, an app window, a dashboard, a chat, a code editor) or a shot
+  only code draws. The page: `html` (the whole document, written here: `"<!doctype html><html>…</html>"`, up to 512 KB) or `src`
+  (a page file in the folder's assets/ as `asset:<page>.html`); `page`: its own size [width, height] in px (the frame's without
+  it), which the layer fits into the frame; `w` or `h` (px) or `fit` cover | contain; `startAt` (s into the page), `rotate`.
+  The engine draws the page itself, frame by frame on the video's clock: nothing is recorded first. It needs Chrome 157 or
+  newer (`doctor` says). The page's CSS animations, `requestAnimationFrame`, timers, `performance.now()` and videos follow the video's time. Its own files go beside it (`<img src="img/logo.png">`), or name any file of the folder as `asset:<name>`.
+  A transparent background lets the layers behind show; keep the words a person will change (titles, captions, a price) as
+  text elements over the page, not in it. No entrance unless you set `enter`.
 - **Keyframes on any element** — your own motion: `"keyframes": { "x": [[0, -400], [0.8, 0, "Smooth Glide"]], "scale": [[0, 0.9], [2, 1.05]] }`
   — tracks x, y (px offsets from `at`), scale, rotate (deg), opacity (0–1); each key [seconds into the element, value, easing of the
   segment after it — Smooth Glide, AE Smooth, Expo Out, Power, Punch, Apple Out, Back Out, Elastic, Linear …]. They replace an entrance's keys on the same track;
   one key holds that value for the whole element.
 - **Every element**: `start` / `end` (s within its scene; default: staggered 0.12 s, to the scene's end), `enter` / `exit` (keyframe presets, `direction` up | down | left | right
-  for directional ones), `effects`: [{ "id", "params"? }], `sound` (played at its start), `id`, `label` (its name in the page's options), `opacity` (0–1),
+  for directional ones), `effects`: [{ "id", "params"? }], `id`, `label` (its name in the page's options), `opacity` (0–1),
   `z` (px of depth, + toward the viewer, default 0: a real camera's dolly, orbit and depth of field separate layers by it), `locked`: true
   (the scene's camera doesn't move it: a logo, a caption). Keyframes also take a `z` track.
 - **Scene**: `duration` (s), `transition` into it (default Cross Fade, 0.6 s; `transitionDuration`), `transitionOptions` (the
   transition's own settings, e.g. Circular Wipe's `point` { x, y } (% of the frame from its top-left: 50, 50 is the centre) and `feather`; every option: `npx greenlight-motion schema transitions`.
   A transition's vivid colours, such as Circular Wipe's beam, take the accent unless you set them; over a light backdrop Circular
   Wipe's glowing beam is off, since it flares there, unless you set `beam`), `camera` (below; default push-in),
-  `background` (overrides style), `sounds`: [{ "sfx", "at" }]. Script-level `sound`: auto (default: a whoosh on each transition and
-  on the first headline, from the GreenLight sound library, which the CLI downloads into assets/sounds/ when it builds) | none (nothing from the library: when
-  nothing may be downloaded, use `music` with a file you made).
+  `background` (overrides style).
   **A transition overlaps the scenes on both sides**, so the video lasts the scenes' durations added up MINUS every
   transition: five 3 s scenes with the default 0.6 s transitions run 15 − 4 × 0.6 = 12.6 s. To hit a length, add the
   transitions back to the scenes (`script` prints the total).
+- **Sound**: the script adds none and the engine has no sounds of its own. A film's sounds and music are files, chosen in the
+  order the design rules give (references/video-design.md, Sound): what the user gave or named, then their own library or
+  files, then generated with a tool they have or found in an open source. Music goes in `music` (below); a sound effect is an
+  audio clip at the second of its event, added after the script with `apply` (`events` gives the seconds).
 - **camera** — a quick move of the whole scene: none | push-in | pull-out | drift-left | drift-right | drift-up. Or a REAL camera that films the scene's elements in 3D (the
   Video Editor's own camera layer; the scene's backdrop stays put, so its edge never shows). One of:
   - `{ "move": id }` — a camera move from the catalogue (or just `"camera": "cm-quiet-push"`), spread over the scene;
@@ -213,7 +223,7 @@ the first version and check every version against it.
 
 **Transitions** (★ = preferred): None · ★ Cross Fade · Push · Parallax · Wipe · Zoom In · Zoom Out · ★ Advanced Zoom · ★ Advanced Movement · 3D Carousel · Louver Flip · ★ Circular Wipe · ★ Pixel Blocks · ★ Camera Whip · ★ Zoom Ruler · ★ Gradient Glow Stack · ★ Gradient Map · Scale Swap · Side by Side · Dip to Black · Radial Wipe
 
-**Camera moves** (`camera.move`; spread over the camera's length): `cm-quiet-push` Quiet Push (Cinematic) · `cm-swoop-dive` Swoop Dive (Cinematic) · `cm-corkscrew` Corkscrew (Cinematic) · `cm-fast-orbit` Fast Orbit (Cinematic) · `cm-lateral-glide` Lateral Glide (Cinematic) · `cm-parallax-arc` Parallax Arc (Cinematic) · `cm-arc-closeup` Arc Close-Up (Cinematic) · `cm-slingshot` Slingshot (Editorial) · `cm-step-zoom` Step Zoom (Editorial) · `cm-handheld-breath` Handheld Breath (Editorial) · `cm-soft-land` Soft Land (Editorial) · `cm-documentary-follow` Documentary Follow (Editorial) · `cm-weave-run` Weave Run (Energy) · `cm-s-curve-drift` S-Curve Drift (Energy) · `cm-macro-sweep` Macro Sweep (Energy) · `cm-punch-through` Punch Through (Energy) · `cm-orbit-pulse` Orbit Pulse (Loops) · `cm-float` Float (Loops) · `cm-figure-eight` Figure Eight (Loops) · `cm-rack-to-near` Rack to Near (Focus) · `cm-rack-to-far` Rack to Far (Focus) · `cm-focus-chase` Focus Chase (Focus) · `cm-macro-bloom` Macro Bloom (Focus) · `cm-grand-reveal` Grand Reveal (Cinematic)
+**Camera moves** (`camera.move`; spread over the camera's length): `cm-quiet-push` Quiet Push (Cinematic) · `cm-swoop-dive` Swoop Dive (Cinematic) · `cm-corkscrew` Corkscrew (Cinematic) · `cm-fast-orbit` Fast Orbit (Cinematic) · `cm-lateral-glide` Lateral Glide (Cinematic) · `cm-parallax-arc` Parallax Arc (Cinematic) · `cm-arc-closeup` Arc Close-Up (Cinematic) · `cm-push-in` Push In (Cinematic) · `cm-orbit-hold` Orbit Hold (Cinematic) · `cm-rise-and-reveal` Rise & Reveal (Cinematic) · `cm-slingshot` Slingshot (Editorial) · `cm-step-zoom` Step Zoom (Editorial) · `cm-handheld-breath` Handheld Breath (Editorial) · `cm-soft-land` Soft Land (Editorial) · `cm-documentary-follow` Documentary Follow (Editorial) · `cm-weave-run` Weave Run (Energy) · `cm-s-curve-drift` S-Curve Drift (Energy) · `cm-macro-sweep` Macro Sweep (Energy) · `cm-punch-through` Punch Through (Energy) · `cm-whip` Whip (Energy) · `cm-orbit-pulse` Orbit Pulse (Loops) · `cm-float` Float (Loops) · `cm-figure-eight` Figure Eight (Loops) · `cm-rack-to-near` Rack to Near (Focus) · `cm-rack-to-far` Rack to Far (Focus) · `cm-focus-chase` Focus Chase (Focus) · `cm-macro-bloom` Macro Bloom (Focus) · `cm-grand-reveal` Grand Reveal (Cinematic)
 
 **Camera rigs** (`camera.rig`; the fields you can override: type orbit | dolly | crane | pushIn | truck | spiral | handheld | follow, aim center | path, radius 100–20000, height -8000–8000, startAngle -360–360, sweep -720–720, rise -8000–8000, distance -20000–20000, turns 0.25–8, tilt -80–80, roll -180–180, amplitude 0–2000, frequency 0–40): `heroOrbit` Hero Orbit (orbit) · `slowReveal` Slow Reveal (orbit) · `turntable` Turntable (orbit) · `craneDown` Crane Down (crane) · `riseReveal` Rise & Reveal (crane) · `pushIn` Push In (pushIn) · `pullBack` Pull Back (dolly) · `truckLeft` Truck Left (truck) · `productSpiral` Product Spiral (spiral) · `handheldDrift` Handheld Drift (handheld) · `droneFollow` Drone Follow (follow) · `chaseCam` Chase Cam (follow)
 
@@ -221,32 +231,7 @@ the first version and check every version against it.
 
 **Overlay effects** (`effects`): `glow`, ★ `bloom`, `auraBlur`, `gradientBeam`, ★ `gradientSweep`, `gradientGlow`, `fractalNoise`, ★ `rgbSplit`, `glitch`, `scanlines`, `flashBlink`, `vhs`, `fisheye`, `opticsCompensation`, `vignette`, ★ `echo`, `timeshift`, `radialBlur`, ★ `radialFastBlur`, `sharpen`, `mirror`, `waveWarp`, `warpStyles`, `shockwave`, `waveLines`, `waveRipple`, `fill`, `shapeRulers`, `copyColor`, `curves`, `turbulentDisplace`, `alphaChoker`, `gooey`, `extract`, ★ `colorama`, `posterize`, ★ `halftone`, ★ `fastCameraWiggle`, ★ `lightRays`, `lightSweep`, `longShadow`, `outlineBands`, `kaleidoscope`, `crtMatrix`, `pixelate`, `vectorFieldWarp`, `pixelStretch`, `neonGlow`, `edgeDetect`, `doubleExposure`, ★ `filmStock`, `fastBlur`, `gridLines`, `strip`, `ascii`, `objectDither`, `objectIsolines`, `objectWindow`, `objectSlitScan`, `objectCurtain`, `objectGrid`, `objectContour`, `objectNodes`, `objectLinks`, `objectFacets`, `objectMeasure`
 
-**Layer effects** (`effects`): `mockupFrame`, ★ `runningGlow`, `depthMap`, `depth3d`, `depthScan`, `fresnelRim`, ★ `motionBlur`, `posterizeTime`, ★ `motionTrail`, `autoFill`, ★ `repetile`, `regionDistort`, `bend`, `cornerPin`, `meshWarp`, `bezierWarp`, `rig`, ★ `droste`, `pryzm`, ★ `glass`, `chromaKey`, `layerMask`
+**Layer effects** (`effects`): `mockupFrame`, ★ `runningGlow`, `depthMap`, `depth3d`, `depthScan`, `depthKey`, `fresnelRim`, ★ `motionBlur`, `posterizeTime`, ★ `motionTrail`, `autoFill`, ★ `repetile`, `regionDistort`, `bend`, `cornerPin`, `meshWarp`, `bezierWarp`, `rig`, ★ `droste`, `pryzm`, ★ `glass`, `chromaKey`, `layerMask`
 
 Effect params: references/video-effects.md.
-
-**Sounds** (`sound`, `sounds[].sfx`):
-- Ambient Transition: ambient-transition-22 (5s)
-- Bass Drop: cinematic-transition-13 (2.5s), sd-low-06 (8s), sd-low-hi-04 (8s)
-- Bleep: digital-bleep-01 (0.286s)
-- Bubble: bubble-07 (1.565s), bubble-08 (2.061s), bubble-10 (0.906s), bubble-23 (1.071s)
-- Camera: camera-focus-and-shutter (1.022s), camera-focus-beep (0.283s), camera-power-switch (0.48s)
-- Cartoon Sound: cartoon-sound-17 (4s)
-- Click: keyboard-click-02 (0.294s), selection-data-click (0.68s)
-- Crystal: crystal-swoosh (2.715s)
-- Cyber Transition: cyber-transition-20 (1.353s)
-- Data: data-1 (0.454s), data-6 (0.388s), data-8 (2.841s), data-9 (1.716s), data-11 (2.848s), data-12 (2.072s), data-14 (2.233s)
-- Foley: disk-mechanism-close (0.939s), mechanical-insert (0.491s), metal-movement-low (1.022s), paper-flap-01 (1.278s), paper-flap-02 (0.929s), paper-turn-01 (0.672s), rustle-whoosh (0.971s), stretched-leather-02 (1.5s), tiny-mechanism-assembling-fast (0.789s)
-- Foley & Ambience: flash (0.967s)
-- Full Screen Transition: big-transition-whoosh (2.465s)
-- Gears (single): small-gears-13 (1.5s), small-gears-16 (1.022s)
-- Glitch: glitch-transition-06 (0.806s)
-- Notifications and Buttons: notifications-and-buttons-16 (1s), sfx-confirmation (4s), sfx-failure (0.265s), sfx-message-01 (0.159s), sfx-message-05 (0.75s), sfx-notification-01 (2.4s), sfx-notification-08 (2.3s), sfx-payment (1.323s)
-- SFX Transition: cinematic-rewind-short (1.056s), sfx-message-03 (0.174s), simple-transition-08 (3.557s), simple-transition-13 (3s)
-- Strobe: strobe-transition-22 (1s)
-- Swoosh: soft-swoosh (1.848s), standard-swoosh (1.335s)
-- Text: keyboard-writing-02 (2.904s), machine-writing-01 (3.924s), pen-writing-tick (0.429s)
-- Tiles: tiles-07 (1.473s), tiles-08 (0.979s)
-- Whoosh: airy-whoosh-02 (2.944s), liquid-transition-whoosh (1.76s), resonant-light-whoosh (3.203s), whoosh-3 (0.469s), whoosh-13 (1.99s), whoosh-38 (1.263s)
-- Whoosh / Additional: whoosh-05 (2.116s)
 

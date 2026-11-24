@@ -143,6 +143,13 @@ export const KF_PROPS = [
   { label: 'scnBrightness', displayLabel: 'Scan Brightness', group: 'Effects', placeholder: '125', unit: '%', type: 'number', min: 0, max: 300, step: 1 },
   { label: 'scnSource', displayLabel: 'Original Image', group: 'Effects', placeholder: '0', unit: '%', type: 'number', min: 0, max: 100, step: 1 },
   { label: 'scnAmount', displayLabel: 'Scan Amount', group: 'Effects', placeholder: '100', unit: '%', type: 'number', min: 0, max: 100, step: 1 },
+  // Depth Matte (depthKeyLayer.js) — AE-style depth keying & rotoscoping.
+  { label: 'dkDepth', displayLabel: 'Matte Depth Cut', group: 'Effects', placeholder: '50', unit: '%', type: 'number', min: 0, max: 100, step: 0.5 },
+  { label: 'dkBandWidth', displayLabel: 'Matte Band Width', group: 'Effects', placeholder: '18', unit: '%', type: 'number', min: 1, max: 100, step: 0.5 },
+  { label: 'dkFeather', displayLabel: 'Matte Feather', group: 'Effects', placeholder: '6', unit: '%', type: 'number', min: 0, max: 50, step: 0.5 },
+  { label: 'dkChoke', displayLabel: 'Matte Choke', group: 'Effects', placeholder: '0', unit: 'px', type: 'number', min: -10, max: 10, step: 0.25 },
+  { label: 'dkMix', displayLabel: 'Matte Mix', group: 'Effects', placeholder: '100', unit: '%', type: 'number', min: 0, max: 100, step: 1 },
+  { label: 'dkFollowOffset', displayLabel: 'Follow Z Offset', group: 'Effects', placeholder: '0', unit: '%', type: 'number', min: -50, max: 50, step: 0.5 },
   // Fresnel Rim (fresnelRimLayer.js) — the Depth pack's rim light. `frSpeed`
   // stays static for the same reason as scnSpeed: the sweep integrates it.
   { label: 'frIntensity', displayLabel: 'Rim Intensity', group: 'Effects', placeholder: '2.2', type: 'number', min: 0, max: 6, step: 0.05 },

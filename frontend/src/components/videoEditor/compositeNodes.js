@@ -640,6 +640,57 @@ export function createDepthStampNodeMaterial() {
   return material;
 }
 
+export function createFootageDepthStampNodeMaterial() {
+  const u = {
+    uDepth: makeSampler(),
+    uColor: makeSampler(),
+    uHasColor: uniform(0),
+    uResolution: uniform(new THREE.Vector2(1, 1)),
+    uFxOrigin: uniform(new THREE.Vector2(0.5, 0.5)),
+    uFxAxisX: uniform(new THREE.Vector2(0.5, 0)),
+    uFxAxisY: uniform(new THREE.Vector2(0, 0.5)),
+    uFxHom: uniform(new THREE.Matrix3()),
+    uFxHomInv: uniform(new THREE.Matrix3()),
+    uInvert: uniform(0),
+    uDepthNearM: uniform(0.4),
+    uDepthFarM: uniform(8.0),
+    uCamNear: uniform(1),
+    uCamFar: uniform(100000),
+  };
+  const fxLocal = (uvn) => {
+    const h = u.uFxHomInv.mul(vec3(uvn.x, uvn.y, 1.0)).toVar();
+    return select(h.z.lessThan(1e-6), vec2(-1e3, -1e3), h.xy.div(tslMax(h.z, 1e-6)));
+  };
+  const material = new THREE.MeshBasicNodeMaterial();
+  material.fragmentNode = Fn(() => {
+    const uvn = screenCoordinate.xy.div(tslMax(vec2(1.0, 1.0), u.uResolution));
+    const colA = u.uColor.sample(uv()).a;
+    Discard(u.uHasColor.greaterThan(0.5).and(colA.lessThan(0.01)));
+    const p = fxLocal(uvn);
+    Discard(p.x.lessThan(0.0).or(p.x.greaterThan(1.0)).or(p.y.lessThan(0.0)).or(p.y.greaterThan(1.0)));
+    return vec4(0.0);
+  })();
+  material.depthNode = Fn(() => {
+    const uvn = screenCoordinate.xy.div(tslMax(vec2(1.0, 1.0), u.uResolution));
+    const p = clamp(fxLocal(uvn), 0.0, 1.0);
+    const raw0 = clamp(u.uDepth.sample(p).r, 0.0, 1.0);
+    const raw = select(u.uInvert.greaterThan(0.5), raw0.oneMinus(), raw0);
+    const invNear = float(1.0).div(tslMax(float(0.05), u.uDepthNearM));
+    const invFar = float(1.0).div(tslMax(float(0.1), u.uDepthFarM));
+    const invDist = mix(invFar, invNear, raw);
+    const distPx = float(1000.0).div(tslMax(float(1e-4), invDist));
+    const z = clamp(distPx, u.uCamNear.mul(1.01), u.uCamFar.mul(0.99));
+    return clamp(u.uCamFar.mul(z.sub(u.uCamNear)).div(u.uCamFar.sub(u.uCamNear).mul(z)), 0.0, 0.99999);
+  })();
+  material.colorWrite = false;
+  material.transparent = false;
+  material.uniforms = u;
+  material.depthTest = true;
+  material.depthWrite = true;
+  material.forceSinglePass = true;
+  return material;
+}
+
 /**
  * (gaps1) A model pass filmed by a world Scene's orthographic camera writes depth that runs straight with distance; the compositor and the
  * world's plate keep depth as a perspective camera with the same near/far writes it. This rewrites one into the other, pixel for pixel

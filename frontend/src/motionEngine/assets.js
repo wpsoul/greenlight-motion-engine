@@ -24,9 +24,14 @@
  * - A page GreenLight Dash itself serves (a review card on a board) says so (setServerFiles): its
  *   `/media/...` and `/hdr/...` are real files at that address, so those requests go out as they
  *   do from the same card opened as a file. `/api/...` stays the engine's.
+ * - An HTML layer's page (`mediaType: "html"`, `url: "asset:<page>.html"`) keeps its reference in the
+ *   project: the live layer loads the page's text through htmlPages.js, never as a texture. A clip
+ *   with a bake (`prerender`) plays the bake; one without is drawn live.
  */
 
 import { setPackageAssetResolver } from '../components/videoEditor/packageAssetUrls';
+import { installHtmlPages, htmlPageVersion, setHtmlLivePages } from './htmlPages';
+import { isInlinePage } from './htmlPageText';
 
 // What counts as an asset reference in a project (strings are rewritten when they start so).
 const PROJECT_REF_PREFIXES = ['/media/', '/hdr/', 'asset:', 'motion-engine-unbundled:'];
@@ -81,6 +86,9 @@ setPackageAssetResolver((url) => {
   return ref.startsWith('asset:plugins/') && activeResolver ? activeResolver.url(ref) : null;
 });
 const missingRefs = new Set();
+
+// HTML layers: the live layer asks here for a page that is one of this page's own files (htmlPages.js)
+installHtmlPages({ resolver: () => activeResolver, claims: (ref) => isProjectRef(ref) && !onServer(ref) });
 
 // ── plugins: the install lists, answered from the page's own assets ──
 const PLUGIN_KINDS = {
@@ -265,6 +273,8 @@ export function setActiveResolver(resolver) {
 /** A copy of PROJECT with every asset reference replaced by a URL the browser can texture. */
 export async function resolveProject(project, resolver) {
   const unresolved = new Set();
+  const livePages = new Set();    // html clips with no bake: drawn live (htmlPages.js)
+  const bakedPages = new Set();   // html clips that play their bake
   const walk = async (value) => {
     if (isProjectRef(value)) {
       if (onServer(value)) return value;
@@ -275,13 +285,21 @@ export async function resolveProject(project, resolver) {
     }
     if (Array.isArray(value)) return Promise.all(value.map(walk));
     if (value && typeof value === 'object') {
+      // an html clip's page is read as text and run (htmlPages.js): its `url` stays the reference, which names the page
+      const page = value.mediaType === 'html' && ((isProjectRef(value.url) && !onServer(value.url)) || isInlinePage(value.url)) ? value.url : null;
       const out = {};
-      for (const [k, v] of Object.entries(value)) out[k] = await walk(v);
+      for (const [k, v] of Object.entries(value)) out[k] = page && k === 'url' ? v : await walk(v);
+      if (page && value.prerender?.url) bakedPages.add(page);
+      else if (page) {
+        livePages.add(page);
+        if (!(await htmlPageVersion(page, resolver))) unresolved.add(page);
+      }
       return out;
     }
     return value;
   };
   const resolved = await walk(project);
+  setHtmlLivePages(livePages, bakedPages);
   for (const ref of unresolved) missingRefs.add(ref);
   return resolved;
 }

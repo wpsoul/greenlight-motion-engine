@@ -60,13 +60,17 @@ export const SEQUENCE_MAX_DEPTH = 4;
 // ── Container clips ──
 // A container owns a private nested timeline (`clip.sequence = { clips, channels }`)
 // that pre-renders to an offscreen target and then composites as one ordinary
-// layer. Two kinds share that plumbing:
+// layer. Three kinds share that plumbing:
 //   'sequence' — the nested timeline plays as authored (CapCut compound clip)
 //   'grid'     — the nested channels are laid out by a rule (see gridLayout.js);
 //                one channel per cell, the grid owns each member's PRS
+//   'take'     — Houdini-style sequence switcher: holds `clip.takes = [sequenceClip, ...]`,
+//                `clip.activeTakeId`, `clip.ripple` (default true), and mirrors the
+//                active variant onto `clip.sequence` + `clip.duration` so every render,
+//                warm-up, and export path works automatically.
 // Every nested-render, media warm-up, GC, paste-remap and export path keys off
 // isContainerClip so a new container type never has to re-walk them.
-export const CONTAINER_MEDIA_TYPES = new Set(['sequence', 'grid']);
+export const CONTAINER_MEDIA_TYPES = new Set(['sequence', 'grid', 'take']);
 
 export const isContainerClip = (clip) =>
   !!clip && CONTAINER_MEDIA_TYPES.has(clip.mediaType) && !!clip.sequence;
@@ -74,6 +78,11 @@ export const isContainerClip = (clip) =>
 export const GRID_MEDIA_TYPE = 'grid';
 
 export const isGridClip = (clip) => clip?.mediaType === GRID_MEDIA_TYPE && !!clip.sequence;
+
+export const TAKE_MEDIA_TYPE = 'take';
+
+export const isTakeClip = (clip) =>
+  clip?.mediaType === TAKE_MEDIA_TYPE && Array.isArray(clip.takes);
 
 export const TransitionType = {
   NONE: 'None',

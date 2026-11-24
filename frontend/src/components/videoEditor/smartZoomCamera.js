@@ -1,4 +1,4 @@
-// Smart Zoom in the editor (PLANS/SCREEN_RECORDER_SMOOTH_MOTION_PLAN.md Phase 1) — the camera panel's Zoom mode.
+// Smart Zoom in the editor — the camera panel's Zoom mode.
 //
 // A camera item in mode 'smartZoom' (the Movement tab "Zoom") zooms in over ZOOM RANGES:
 //   item.smartZoom = { clipId, preset, ranges? }
@@ -14,7 +14,7 @@
 //
 // The camera simulates in TIMELINE time (a cut or a speed change never jumps it); its targets live in the recording's
 // SOURCE time. Outside the recording's items the camera rests (zoom 1, centred).
-import { CAMERA_DEFAULTS, autoRanges, buildCameraPlan, evalCamera, presetById, takeFromEventTrack } from './smartZoom.js';
+import { CAMERA_DEFAULTS, ZOOM_ZONE_MAX_MS, autoRanges, buildCameraPlan, evalCamera, presetById, takeFromEventTrack, zoomZoneMs } from './smartZoom.js';
 import { getTimelineDuration, getTimelineLayout, mapTimelineToSource } from './speedUtils.js';
 import { sanitizeCameraRef } from './cameraTargets.js';
 
@@ -28,6 +28,9 @@ export const ZOOM_MIN = 1.05;
 export const ZOOM_MAX = 4;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
+
+const zoneField = (key, v) => (v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v)) && Number(v) >= 0
+  ? { [key]: Math.round(Math.min(ZOOM_ZONE_MAX_MS, Number(v))) } : {});
 
 /** Zoom ranges as saved: known fields, in range, sorted by start. undefined for "not a list" (= automatic). */
 export function sanitizeZoomRanges(list) {
@@ -55,6 +58,9 @@ export function sanitizeZoomRanges(list) {
       ...(p ? { point: p } : {}),
       // (camlayer) what a zoom on a posed camera (a 3D Scene's shot) turns to and follows: a Scene object "@<id>", a layer, a point
       ...(sanitizeCameraRef(r.target) ? { target: sanitizeCameraRef(r.target) } : {}),
+      // its ease zones (smartZoom.zoomZoneMs): set off this long before the start / be back at rest this long after the end
+      ...zoneField('leadMs', r.leadMs),
+      ...zoneField('releaseMs', r.releaseMs),
       ...(r.disabled ? { disabled: true } : {}),
     });
   }
@@ -156,7 +162,7 @@ const planCache = new Map(); // key → { track, plan }
 const CACHE_MAX = 24;
 
 const rangesKey = (list) => (list
-  ? list.map((r) => `${r.id}:${r.startMs}:${r.endMs}:${r.zoom || ''}:${r.mode || ''}:${r.point ? `${r.point.x},${r.point.y}` : ''}:${r.disabled ? 1 : 0}:${r.target ? JSON.stringify(r.target) : ''}`).join(';')
+  ? list.map((r) => `${r.id}:${r.startMs}:${r.endMs}:${r.zoom || ''}:${r.mode || ''}:${r.point ? `${r.point.x},${r.point.y}` : ''}:${r.disabled ? 1 : 0}:${r.target ? JSON.stringify(r.target) : ''}:${r.leadMs ?? ''}:${r.releaseMs ?? ''}`).join(';')
   : 'auto');
 const emptyTake = (durationMs) => ({ durationMs, width: 1920, height: 1080, moves: { t: [], x: [], y: [], s: [] }, shapes: ['arrow'], clicks: [] });
 
@@ -216,8 +222,9 @@ export function smartZoomFrame(item, channels, clipsMap, layoutFor, time) {
 
 /**
  * (camlayer) A Zoom camera's state at this frame for a posed camera (projectCamera.js applyZoomLens): the zoom's spring (`zoom`, ≥ 1),
- * the point of the frame it centres (`cx`, `cy`, 0..1, of the camera's view before the zoom), and the range with a `target` nearest in
- * time with how far the zoom has come into it (`share`, 0..1: the zoom's own progress to the range's zoom). Null without a plan.
+ * the point of the frame it centres (`cx`, `cy`, 0..1, of the camera's view before the zoom), and the governing range's `target` (null:
+ * the range aims by cx/cy) with how far the zoom has come into it (`share`, 0..1). Between two ranges: `target2`, `share2`, `mix`.
+ * Null without a plan.
  */
 export function smartZoomLensState(item, frame) {
   if (item?.cameraMoveMode !== SMART_ZOOM_MODE) return null;
@@ -226,18 +233,78 @@ export function smartZoomLensState(item, frame) {
   const c = evalCamera(sz.plan, sz.timeMs, {});
   const out = { zoom: c.zoom, cx: c.cx, cy: c.cy, target: null, share: 0 };
   const src = sz.sourceMs;
-  const targets = (item.smartZoom?.ranges || []).filter((r) => r.target && !r.disabled);
-  if (targets.length && Number.isFinite(src)) {
-    let best = null, gap = Infinity;
-    for (const r of targets) {
-      const g = src < r.startMs ? r.startMs - src : src > r.endMs ? src - r.endMs : 0;
-      if (g < gap) { gap = g; best = r; }
+  // Every range takes part: one with a target turns the camera to it, one without aims by its own point (cx, cy: what
+  // the preview drag sets). Only targets were looked at once, so a range without one borrowed its neighbour's target and
+  // dragging it did nothing.
+  const ranges = (item.smartZoom?.ranges || []).filter((r) => !r.disabled).sort((a, b) => a.startMs - b.startMs);
+  if (ranges.some((r) => r.target) && Number.isFinite(src)) {
+    const shareOf = (r) => {
+      if (!r.target) return 0;
+      const zr = Math.max(1, Number(r.zoom) > 0 ? Number(r.zoom) : num(sz.plan.settings?.zoom, 1));
+      return zr > 1 + 1e-6 ? clamp((c.zoom - 1) / (zr - 1), 0, 1) : (c.zoom > 1 + 1e-6 ? 1 : 0);
+    };
+    const inside = ranges.find((r) => src >= r.startMs && src <= r.endMs);
+    const prev = inside ? null : ranges.filter((r) => r.endMs < src).pop() || null;
+    const next = inside ? null : ranges.find((r) => r.startMs > src) || null;
+    if (inside || !prev || !next || (!prev.target && !next.target)) {
+      const r = inside || (prev && next ? null : prev || next);
+      out.target = r?.target || null;
+      out.share = r ? shareOf(r) : 0;
+    } else {
+      // Between two zooms the turn hands over from the last zoom's target to the next one's as a blend, never a step:
+      // across the rest between their ease zones (the previous one's release, the next one's lead), or, where those
+      // zones overlap, across the overlap. Choosing the nearer range here made the aim jump at the gap's middle
+      // while the camera was still coming back from the last zoom.
+      const zones = new Map((sz.plan.zones || []).map((z) => [z.id, z]));
+      const relEnd = prev.endMs + num(zones.get(prev.id)?.releaseMs, 0);
+      const leadStart = next.startMs - num(zones.get(next.id)?.leadMs, 0);
+      let a = relEnd;
+      let b = leadStart;
+      if (!(b - a > 1)) {
+        a = Math.max(prev.endMs, leadStart);
+        b = Math.min(next.startMs, relEnd);
+        if (!(b - a > 1)) { a = prev.endMs; b = next.startMs; }
+      }
+      const u = clamp((src - a) / Math.max(1, b - a), 0, 1);
+      out.target = prev.target || null;
+      out.share = shareOf(prev);
+      out.target2 = next.target || null;
+      out.share2 = shareOf(next);
+      out.mix = u * u * (3 - 2 * u);
     }
-    const zr = Math.max(1, Number(best.zoom) > 0 ? Number(best.zoom) : num(sz.plan.settings?.zoom, 1));
-    out.target = best.target;
-    out.share = zr > 1 + 1e-6 ? clamp((c.zoom - 1) / (zr - 1), 0, 1) : (c.zoom > 1 + 1e-6 ? 1 : 0);
   }
   return out;
+}
+
+/** Each zoom range's ease zones in ms of its own time (smartZoom.zoomZoneMs) for the Motion preset `presetId`:
+ *  Map id → { leadMs, releaseMs, settleMs }. */
+export function zoomZonesFor(ranges, presetId) {
+  const settings = { ...CAMERA_DEFAULTS, ...presetById(presetId).camera };
+  return new Map((ranges || []).map((r) => [r.id, zoomZoneMs(r, settings)]));
+}
+
+/** range → its ease zones under preset `presetId` (a range not in `zones`, such as one about to be added, gets the
+ *  preset's own). For addZoomRange / moveZoomRange's `zoneOf`. */
+export function zoomZoneFn(zones, presetId) {
+  const settings = { ...CAMERA_DEFAULTS, ...presetById(presetId).camera };
+  return (r) => zones?.get?.(r?.id) || zoomZoneMs(r || {}, settings);
+}
+
+/** The most a range's `leadMs` / `releaseMs` may be without easing into its neighbours' zones (ms), and the least
+ *  release the spring allows (`minReleaseMs`). */
+export function zoomZoneRoom(ranges, id, zoneOf) {
+  const list = (ranges || []).slice().sort((a, b) => a.startMs - b.startMs);
+  const i = list.findIndex((r) => r.id === id);
+  if (i < 0) return null;
+  const r = list[i];
+  const own = zoneOf(r);
+  const prev = list[i - 1];
+  const next = list[i + 1];
+  return {
+    maxLeadMs: Math.max(0, Math.min(ZOOM_ZONE_MAX_MS, prev ? r.startMs - prev.endMs - num(zoneOf(prev).releaseMs, 0) : r.startMs)),
+    maxReleaseMs: Math.max(num(own.settleMs, 0), Math.min(ZOOM_ZONE_MAX_MS, next ? next.startMs - num(zoneOf(next).leadMs, 0) - r.endMs : ZOOM_ZONE_MAX_MS)),
+    minReleaseMs: num(own.settleMs, 0),
+  };
 }
 
 /** (camlayer) Whether a Zoom camera has a range with a target (it is a 3D shot's zoom: a turn and a lens). */
@@ -273,10 +340,13 @@ export function zoomRangesOf(item, recordingClip) {
 }
 
 /** Each range where it plays on the timeline (seconds): one entry per stretch of the edit it falls in, so a range a
- *  split cuts in two shows as two blocks with the same id. `n` is its number (1-based). */
-export function zoomRangesOnTimeline(ranges, edit) {
+ *  split cuts in two shows as two blocks with the same id. `n` is its number (1-based). With `zones`
+ *  (zoomZonesFor) a block also carries its ease zones on the timeline: `leadSec` before its start, `releaseSec` after
+ *  its end (0 where the block is cut there). */
+export function zoomRangesOnTimeline(ranges, edit, zones = null) {
   const out = [];
   (ranges || []).forEach((r, i) => {
+    const zone = zones?.get?.(r.id) || null;
     for (const p of edit || []) {
       const a = Math.max(r.startMs, p.sourceStartMs);
       const b = Math.min(r.endMs, p.sourceEndMs);
@@ -288,6 +358,8 @@ export function zoomRangesOnTimeline(ranges, edit) {
         endSec: (p.outputStartMs + (b - p.sourceStartMs) / p.timeScale) / 1000,
         clippedStart: a > r.startMs,
         clippedEnd: b < r.endMs,
+        leadSec: zone && !(a > r.startMs) ? num(zone.leadMs, 0) / p.timeScale / 1000 : 0,
+        releaseSec: zone && !(b < r.endMs) ? num(zone.releaseMs, 0) / p.timeScale / 1000 : 0,
       });
     }
   });
@@ -311,12 +383,17 @@ const nextZoomId = (list) => {
 };
 
 /** A new range starting at source ms `atMs`, the default length but never into its neighbour (or past `limitMs`).
- *  → { ranges, range }, or null when it would land on a range or has no room. */
-export function addZoomRange(ranges, atMs, { lengthMs = ZOOM_RANGE_DEFAULT_MS, limitMs = Infinity } = {}) {
+ *  With `zoneOf` (range → { leadMs, releaseMs }, zoomZonesFor) it also keeps out of the neighbours' ease zones and
+ *  keeps its own out of theirs. → { ranges, range }, or null when it would land on a range or has no room. */
+export function addZoomRange(ranges, atMs, { lengthMs = ZOOM_RANGE_DEFAULT_MS, limitMs = Infinity, zoneOf = null } = {}) {
   const list = (ranges || []).slice().sort((a, b) => a.startMs - b.startMs);
   if (!Number.isFinite(atMs) || list.some((r) => atMs >= r.startMs && atMs < r.endMs)) return null;
+  const zone = (r) => (zoneOf ? zoneOf(r) || {} : {});
+  const prev = list.filter((r) => r.endMs <= atMs).pop();
+  const own = zone({ id: '__new__' });
+  if (prev && atMs - num(own.leadMs, 0) < prev.endMs + num(zone(prev).releaseMs, 0)) return null; // in the last one's release
   const next = list.find((r) => r.startMs > atMs);
-  const end = Math.min(atMs + lengthMs, next ? next.startMs : Infinity, limitMs);
+  const end = Math.min(atMs + lengthMs, next ? next.startMs - num(zone(next).leadMs, 0) - num(own.releaseMs, 0) : Infinity, limitMs);
   if (end - atMs < ZOOM_RANGE_MIN_MS) return null;
   const range = { id: nextZoomId(list), startMs: Math.round(atMs), endMs: Math.round(end), mode: 'follow' };
   return { ranges: [...list, range].sort((a, b) => a.startMs - b.startMs), range };
@@ -324,13 +401,24 @@ export function addZoomRange(ranges, atMs, { lengthMs = ZOOM_RANGE_DEFAULT_MS, l
 
 /** Moves / resizes range `id` to [startMs, endMs] (either may be omitted), kept between its neighbours, inside
  *  [0, limitMs] and at least ZOOM_RANGE_MIN_MS long. A move (both edges) keeps the length. */
-export function moveZoomRange(ranges, id, { startMs, endMs }, { limitMs = Infinity } = {}) {
+export function moveZoomRange(ranges, id, { startMs, endMs }, { limitMs = Infinity, zoneOf = null } = {}) {
   const list = (ranges || []).slice().sort((a, b) => a.startMs - b.startMs);
   const i = list.findIndex((r) => r.id === id);
   if (i < 0) return list;
   const r = list[i];
-  const lo = i > 0 ? list[i - 1].endMs : 0;
-  const hi = i + 1 < list.length ? list[i + 1].startMs : limitMs;
+  // With zoneOf (range → { leadMs, releaseMs }) a range keeps its lead out of the last range's release and its release
+  // out of the next range's lead, so two zooms never ease over each other.
+  const zone = (x) => (zoneOf ? zoneOf(x) || {} : {});
+  const own = zone(r);
+  let lo = i > 0 ? list[i - 1].endMs + num(zone(list[i - 1]).releaseMs, 0) + num(own.leadMs, 0) : 0;
+  let hi = i + 1 < list.length ? list[i + 1].startMs - num(zone(list[i + 1]).leadMs, 0) - num(own.releaseMs, 0) : limitMs;
+  // Neighbours already easing into this range (an older project, a release made longer): too little room to keep
+  // the zones apart falls back to the plain neighbour limits rather than squeezing the range.
+  const need = Number.isFinite(startMs) && Number.isFinite(endMs) ? r.endMs - r.startMs : ZOOM_RANGE_MIN_MS;
+  if (hi - lo < need) {
+    lo = i > 0 ? list[i - 1].endMs : 0;
+    hi = i + 1 < list.length ? list[i + 1].startMs : limitMs;
+  }
   let s = Number.isFinite(startMs) ? startMs : r.startMs;
   let e = Number.isFinite(endMs) ? endMs : r.endMs;
   if (Number.isFinite(startMs) && Number.isFinite(endMs)) {

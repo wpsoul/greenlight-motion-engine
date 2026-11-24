@@ -405,3 +405,16 @@ body.cl-c.cl-stack .rv-src .rv-kbd { display: inline-flex; }
   body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-icon { width: 30px; min-width: 30px; }
   body.cl-c.cl-stack:not(.original) #app .glm-transport .glm-time { margin-left: 0; padding: 0 2px; }
 }
+
+/* (chatswitch) a 3D film's Draft 3D | Final 3D (worldSwitch.js, review.css .rv-w3d) in the chat layout's play row: before the time in a
+   row (the time's own margin given to it); in the grid (the time | ⇤ ‹ ▶ › ⇥ | Loop) in Loop's cell, before it; on a phone (< 600 px)
+   on a line of its own at the row's right end, the row 32 px taller for it (only with a 3D film: body.rv-w3d-on) */
+body.cl-c:not(.original) #app .glm-transport .rv-w3d { order: 3; }
+body.cl-c:not(.cl-stack):not(.original) #app .glm-transport .rv-w3d ~ .glm-time { margin-left: 0; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .rv-w3d button { min-width: 0; min-height: 0; }
+body.cl-c.cl-stack:not(.original) #app .glm-transport .rv-w3d { grid-row: 1; grid-column: 3; justify-self: end; margin: 0 40px 0 0; }
+@media (max-width: 599px) {
+  body.cl-c.cl-stack:not(.original) #app .glm-transport .rv-w3d { grid-row: 2; grid-column: 1 / -1; margin: 0 2px 0 0; }
+  body.cl-c.cl-a.cl-stack.rv-w3d-on { --cl-trans: 88px; }
+  body.cl-c.cl-stack.rv-w3d-on:not(.original) #app .glm-transport { grid-template-rows: 44px 34px; align-content: center; }
+}

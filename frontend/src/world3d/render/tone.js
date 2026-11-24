@@ -206,6 +206,10 @@ export function hdrGreyJS(view, v, look = {}) {
 export const srgbToLinear = lazy(() => Fn(([c]) => mix(c.div(12.92), pow(max(c, vec3(0)).add(0.055).div(1.055), vec3(2.4)), step(0.04045, c)))
   .setLayout({ name: 'glSrgbToLinear', type: 'vec3', inputs: [{ name: 'c', type: 'vec3' }] }));
 
+/** (screensharp2) Display light laid over a filmed picture: `toned` display sRGB (0-1), `light` linear display light (a live screen's page
+ *  in its own colours, screenLayer.js); display sRGB back. */
+export const addDisplayLight = lazy(() => Fn(([toned, light]) => veToSRGB(clamp(srgbToLinear(clamp(toned, 0, 1)).add(light), 0, 1))));
+
 /** The HDR view's gain over the SDR picture at a pixel: `m` its brightest channel of scene light before the exposure, `film` the SDR view
  *  (linear colour, exposure) -> display sRGB, `u` the knee's uniforms { vk, k, slope }. 1 at and below the knee. */
 export function hdrGain(m, exposure, film, u) {

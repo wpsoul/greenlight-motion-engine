@@ -249,7 +249,7 @@
     window.RV_PARTS = byKey[first].parts?.length ? byKey[first].parts : (FILMS.find(f => f.parts?.length)?.parts || []);
     const project = mounted ? await projectOf(first) : shell();
     $('#loading')?.remove();
-    G.mountStudio(document.getElementById('app'), { project, assets: resolver, chat: { full: true } });
+    G.mountStudio(document.getElementById('app'), { project, assets: resolver, chat: { full: true }, camera: true });
     (function start() {
       if (!window.RV?.ready() || !wrapped?.ready || !$('.glm-top') || !$('.hl-tl')) { setTimeout(start, 100); return; }
       showParts(cur());

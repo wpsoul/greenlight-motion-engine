@@ -21,9 +21,16 @@
 export const FRAME_GUARD_RETRIES = 2;
 
 /** The reasons a frame is drawn again, in the report's order. */
-export const GUARD_REASONS = Object.freeze(['empty', 'device', 'samples', 'error']);
+export const GUARD_REASONS = Object.freeze(['device', 'timeout', 'error', 'samples', 'corrupt', 'empty']);
 
-const CODES = { empty: 'FRAME_EMPTY', device: 'GPU_DEVICE_LOST', samples: 'TRACE_INCOMPLETE', error: 'RENDER_FAILED' };
+const CODES = {
+  device: 'GPU_DEVICE_LOST',
+  timeout: 'FRAME_TIMEOUT',
+  error: 'RENDER_FAILED',
+  samples: 'TRACE_INCOMPLETE',
+  corrupt: 'FRAME_CORRUPT',
+  empty: 'FRAME_EMPTY',
+};
 
 /**
  * The spread of an RGBA sample (Uint8 bytes, 4 per pixel): its darkest and brightest value per channel. `pixels` = how many were read.
@@ -65,14 +72,168 @@ export function emptyKind(spread, { tolerance = 1 } = {}) {
   return 'flat';
 }
 
+const STRIPE_MAX_SAMPLES = 96;
+
+function scanStripeAxis(rgba, width, height, horizontal) {
+  const major = horizontal ? height : width;
+  const minor = horizontal ? width : height;
+  const M = Math.min(minor, STRIPE_MAX_SAMPLES);
+  const pos = new Int32Array(M);
+  for (let k = 0; k < M; k += 1) pos[k] = Math.min(minor - 1, Math.floor(((k + 0.5) * minor) / M));
+  const idx = (s, p) => (horizontal ? (s * width + p) * 4 : (p * width + s) * 4);
+
+  const U = new Float32Array(major * M);
+  const V = new Float32Array(major * M);
+  const C = new Float32Array(major * M);
+  const A = new Uint8Array(major * M);
+  const sliceAlong = new Float32Array(major);
+
+  for (let s = 0; s < major; s += 1) {
+    const base = s * M;
+    let alongSum = 0;
+    let alongN = 0;
+    for (let k = 0; k < M; k += 1) {
+      const p = pos[k];
+      const i = idx(s, p);
+      const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2], a = rgba[i + 3];
+      const u = r - g;
+      const v = b - 0.5 * (r + g);
+      U[base + k] = u;
+      V[base + k] = v;
+      C[base + k] = Math.max(r, g, b) - Math.min(r, g, b);
+      A[base + k] = a;
+      if (a >= 16) {
+        if (p + 1 < minor) {
+          const ni = idx(s, p + 1);
+          if (rgba[ni + 3] >= 16) {
+            const nu = rgba[ni] - rgba[ni + 1];
+            const nv = rgba[ni + 2] - 0.5 * (rgba[ni] + rgba[ni + 1]);
+            alongSum += Math.hypot(u - nu, v - nv);
+            alongN += 1;
+          }
+        }
+        if (k > 0 && A[base + k - 1] >= 16) {
+          alongSum += Math.hypot(u - U[base + k - 1], v - V[base + k - 1]);
+          alongN += 1;
+        }
+      }
+    }
+    sliceAlong[s] = alongN ? alongSum / alongN : 0;
+  }
+
+  const sliceCross = new Float32Array(Math.max(1, major - 1));
+  const transitions = [];
+  for (let s = 0; s < major - 1; s += 1) {
+    const b0 = s * M;
+    const b1 = (s + 1) * M;
+    let valid = 0, jumpCount = 0, coherentJumpCount = 0;
+    let crossSum = 0, duSum = 0, dvSum = 0, jumpEnergySum = 0;
+    for (let k = 0; k < M; k += 1) {
+      if (A[b0 + k] < 16 && A[b1 + k] < 16) continue;
+      valid += 1;
+      const du = U[b1 + k] - U[b0 + k];
+      const dv = V[b1 + k] - V[b0 + k];
+      const cJump = Math.hypot(du, dv);
+      const maxC = Math.max(C[b0 + k], C[b1 + k]);
+      crossSum += cJump;
+      if (cJump >= 75 && maxC >= 55) {
+        jumpCount += 1;
+        duSum += du;
+        dvSum += dv;
+        jumpEnergySum += cJump;
+        const prev0 = k > 0 ? Math.hypot(U[b0 + k] - U[b0 + k - 1], V[b0 + k] - V[b0 + k - 1]) : 0;
+        const next0 = k + 1 < M ? Math.hypot(U[b0 + k] - U[b0 + k + 1], V[b0 + k] - V[b0 + k + 1]) : 0;
+        const prev1 = k > 0 ? Math.hypot(U[b1 + k] - U[b1 + k - 1], V[b1 + k] - V[b1 + k - 1]) : 0;
+        const next1 = k + 1 < M ? Math.hypot(U[b1 + k] - U[b1 + k + 1], V[b1 + k] - V[b1 + k + 1]) : 0;
+        if (Math.min(Math.max(prev0, next0), Math.max(prev1, next1)) <= cJump * 0.4) coherentJumpCount += 1;
+      }
+    }
+    sliceCross[s] = valid ? crossSum / valid : 0;
+    if (!valid || !jumpCount) continue;
+    const cohFrac = coherentJumpCount / valid;
+    const avgJump = jumpEnergySum / jumpCount;
+    // Directional net-jump gate rejects checkerboards whose opposite-phase cells cancel out across a boundary.
+    const netFrac = Math.hypot(duSum, dvSum) / jumpEnergySum;
+    const minSideAlong = Math.min(sliceAlong[s], sliceAlong[s + 1]);
+    if (cohFrac >= 0.35 && avgJump >= 85 && netFrac >= 0.5 && minSideAlong <= avgJump * 0.35) {
+      transitions.push({ s, cohFrac, avgJump, du: duSum / jumpCount, dv: dvSum / jumpCount, minSideAlong });
+    }
+  }
+
+  const anisoTrans = [];
+  for (const t of transitions) {
+    const lo = Math.max(0, t.s - 2);
+    const hi = Math.min(major - 1, t.s + 3);
+    let wCross = 0, wAlong = 0;
+    for (let q = lo; q <= hi; q += 1) {
+      if (q < major - 1) wCross += sliceCross[q];
+      wAlong += sliceAlong[q];
+    }
+    const stripeClean = t.minSideAlong <= t.avgJump * 0.15 && t.avgJump * t.cohFrac >= 75;
+    if (wCross / Math.max(1, wAlong) >= 2.2 || stripeClean) anisoTrans.push(t);
+  }
+
+  let reversals = 0, activeCross = 0, activeAlong = 0;
+  for (let i = 0; i < anisoTrans.length; i += 1) {
+    const t = anisoTrans[i];
+    activeCross += t.avgJump * t.cohFrac;
+    activeAlong += t.minSideAlong;
+    if (i > 0) {
+      const p = anisoTrans[i - 1];
+      if (p.du * t.du + p.dv * t.dv < 0 || p.du * t.du < -1600 || p.dv * t.dv < -1600) reversals += 1;
+    }
+  }
+
+  const transRatio = anisoTrans.length / Math.max(1, major - 1);
+  const revRatio = reversals / Math.max(1, major - 2);
+  const localAniso = activeCross / Math.max(1, activeAlong);
+  const score = anisoTrans.length ? (activeCross / anisoTrans.length) / 255 : 0;
+  const hit = anisoTrans.length >= 5
+    && reversals >= 4
+    && (transRatio >= 0.15 || (anisoTrans.length >= 8 && revRatio >= 0.10) || (major >= 64 && reversals >= 12))
+    && localAniso >= 2.5
+    && score >= 0.25;
+  if (!hit) return null;
+  return {
+    axis: horizontal ? 'horizontal' : 'vertical',
+    ratio: Math.min(1, Math.round(transRatio * 1000) / 1000),
+    score: Math.round(score * 1000) / 1000,
+  };
+}
+
+export function sameStripePicture(a, b, { maxMeanDiff = 6 } = {}) {
+  if (!a || !b || !a.length || a.length !== b.length) return false;
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i + 3 < a.length; i += 4) {
+    sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+    count += 3;
+  }
+  return count > 0 && (sum / count) <= maxMeanDiff;
+}
+
+/**
+ * Detect colored horizontal or vertical GPU-load stripe corruption in an RGBA buffer, returning `{ axis, ratio, score }` or `null`.
+ */
+export function detectStripeCorruption(rgba, width, height) {
+  const w = Math.trunc(Number(width) || 0);
+  const h = Math.trunc(Number(height) || 0);
+  if (!rgba || w < 4 || h < 4 || rgba.length < w * h * 4) return null;
+  const hor = scanStripeAxis(rgba, w, h, true);
+  const ver = scanStripeAxis(rgba, w, h, false);
+  if (hor && (!ver || hor.ratio * hor.score >= ver.ratio * ver.score)) return hor;
+  return ver || null;
+}
+
 const where = (frame, time) => `${frame != null ? `frame ${frame}` : 'the frame'}${Number.isFinite(time) ? ` (${Number(time).toFixed(3)} s)` : ''}`;
 
 /**
  * What went wrong with one attempt at a frame, or null when it may leave. `facts`:
  *   error      a message: the frame's draw threw
  *   gpuReset   a message: a GPU device or context was lost or rebuilt while the frame was drawn
+ *   timedOut   truthy / ms / message: the frame timed out before finishing its draw
  *   final      { finished, minSpp, spp, why? } a Final Scene's kept picture: finished = it is the trace's finished picture
- *   plate      { kind: emptyKind of the Scene's picture as read, objects: the objects the world drew in its camera's view }
+ *   plate      { kind: emptyKind of the Scene's picture as read, objects: the objects the world drew in its camera's view, corrupt? }
  * Returns { reason, detail } (reason one of GUARD_REASONS).
  */
 export function frameFault(facts = {}) {
@@ -80,6 +241,15 @@ export function frameFault(facts = {}) {
   // a 'device' retry gives the Scene a new device (exporter: releaseLostWorld). As an 'error' its retry traced on the dead device until
   // the frame's time limit (TRACE_STALLED after 10-11 min on the bubble shot)
   if (facts.gpuReset) return { reason: 'device', detail: String(facts.gpuReset) };
+  if (facts.timedOut) {
+    const ms = Number(facts.timedOut);
+    const detail = Number.isFinite(ms) && ms >= 1000
+      ? `the frame timed out after ${Math.round(ms / 1000)} s while drawing`
+      : typeof facts.timedOut === 'string'
+        ? facts.timedOut
+        : 'the frame did not finish drawing before the timeout';
+    return { reason: 'timeout', detail };
+  }
   if (facts.error) return { reason: 'error', detail: String(facts.error) };
   const f = facts.final;
   if (f && (!f.finished || (Number.isFinite(f.minSpp) && Number.isFinite(f.spp) && f.minSpp < f.spp))) {
@@ -87,6 +257,7 @@ export function frameFault(facts = {}) {
     return { reason: 'samples', detail: f.why ? `${counts} (${f.why})` : counts };
   }
   const p = facts.plate;
+  if (p && p.corrupt && !p.corrupt.deterministic) return { reason: 'corrupt', detail: "the 3D Scene's picture had GPU stripe corruption" };
   if (p && p.kind && p.objects > 0) return { reason: 'empty', detail: `the 3D Scene's picture came out ${p.kind} while the world drew ${p.objects} object${p.objects === 1 ? '' : 's'} in view` };
   return null;
 }
@@ -104,6 +275,8 @@ export function frameVerdict(facts, attempt = 0, { retries = FRAME_GUARD_RETRIES
   const code = CODES[fault.reason];
   const tail = {
     empty: 'The picture was not handed over. Render again; if it repeats at this frame, render that part as its own range (rangeStart / rangeEnd), and check the frame with a still (render-still at this time).',
+    corrupt: 'Close other apps that use the GPU, render again, or render that part as its own range (rangeStart / rangeEnd).',
+    timeout: 'Render again; if it repeats at this frame, check the frame with a still (render-still at this time) or re-encode heavy source clips.',
     device: 'Close other apps that use the GPU (or wait for a render that runs), lower the output size or the Scene\'s samples, and render again.',
     samples: 'Lower the Scene\'s samples (rig.render.spp) or the video size, render this part in Draft, or render again with the GPU free.',
     error: 'Fix what the message names, or render that part as its own range to find the layer.',
@@ -121,10 +294,12 @@ export function frameVerdict(facts, attempt = 0, { retries = FRAME_GUARD_RETRIES
  *   finalUnfinished  a Final frame's kept repaint does not show its finished trace (as when a repaint restarted it)
  *   gpuReset         a GPU context of the page counted as lost during the frame
  *   guardOff         the frame is not checked (a broken frame reaches the file: the video check's test)
+ *   stripeCorrupt    the Scene's plate is flagged with colored GPU stripe corruption
+ *   frameTimeout     the frame is flagged as timed out before finishing its draw
  *   after            that many attempts go by first (a fault in the middle of a render)
  * Unset (always, outside the tests) arming costs one property read a frame. `fired` on the object lists what fired.
  */
-const FAULT_NAMES = ['blankWorld', 'blankPlate', 'loseWorldDevice', 'finalUnfinished', 'gpuReset', 'guardOff'];
+const FAULT_NAMES = ['blankWorld', 'blankPlate', 'loseWorldDevice', 'finalUnfinished', 'gpuReset', 'guardOff', 'stripeCorrupt', 'frameTimeout'];
 let armed = null;
 /** At the start of an attempt at a frame: the faults asked for take this attempt. */
 export function armFrameFaults() {
@@ -180,6 +355,8 @@ export function createFrameGuardLog({ keep = 20 } = {}) {
         const n = byReason[r];
         const what = {
           empty: "the 3D Scene's picture came out empty",
+          corrupt: "the 3D Scene's picture had GPU stripe corruption",
+          timeout: 'the frame timed out while drawing',
           device: 'a GPU device was lost or rebuilt',
           samples: 'the Final trace was not finished',
           error: 'its draw failed',

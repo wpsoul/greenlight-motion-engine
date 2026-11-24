@@ -6,13 +6,12 @@
  */
 import { settleWorldFrame, worldMovesBetween, finalFrameBudgetMs, worldMotionBlur, clearWorldMotion, worldHolds, reserveWorldMotion, worldDraftBlur, clearWorldDraftBlur, worldHdrOut, worldHdrFrame, worldSdrPixels, worldTakesLetters, worldRigIn, worldClockIn, primeWorldFrame, setWorldFarm, worldFarmHandoff, worldFrameFacts, releaseLostWorld, worldGuardSampling, worldHold, worldSceneOn } from '../world3dLayer';
 import { averageHandoffs } from '../farmHandoff.js';
-import { armFrameFaults, createFrameGuardLog, disarmFrameFaults, frameFaultOn, frameGuardError, frameVerdict, FRAME_GUARD_RETRIES } from '../frameGuard';
+import { armFrameFaults, createFrameGuardLog, disarmFrameFaults, frameFaultOn, frameGuardError, frameVerdict, sameStripePicture, FRAME_GUARD_RETRIES } from '../frameGuard';
 import { noteGpuReset } from '../gpuReset';
 import { createSceneLight, hdrFloatReason, sceneOnlyReason } from '../hdrScene';
 import { createHdrComposite } from '../hdrComposite';
 import { createHdrEncoder } from '../hdrEncode';
 import { text3dRunAt } from './channelRender';
-import { posterizedTimeInClip } from '../posterizeTime';
 import { PARTICLE_MEDIA_TYPE } from '../../../sim/particles/schema.js';
 import { prepareLocalEffectsFor } from '../adjustmentEffects';
 import { clampTransitionSoundCue, getAdvancedTransitionPreset, loadAdvancedTransitionPackages } from '../advancedTransitions';
@@ -27,11 +26,11 @@ import { evaluatePropertyTrack, getItemKeyframeValues, itemHasKeyframes } from '
 import { disposeHtmlLiveExportPages, htmlBlankCanvas, htmlLiveExportCanvas, htmlLiveSettleUsed, htmlLiveSupported } from '../htmlLive';
 import { preloadImagePlate } from '../imagePlate';
 import { preloadVideoPlate, videoPlateUrl } from '../videoPlate';
-import { getParenting, localPrs } from '../keyframeParenting';
+import { getParenting, localPrs, resolveItemPrs } from '../keyframeParenting';
 import { motionBlurLevelForShutter } from '../motionBlurLevels';
 import { ensureMotionTemplate, motionMediaPending, pumpMotionMedia } from '../motionTemplates';
 import { notePerfRenderer } from '../perfRegistry.js';
-import { CAMERA_KF_LABELS, perspectiveDistance, resolveCameraPose } from '../projectCamera';
+import { CAMERA_KF_LABELS, perspectiveDistance, projectFramePoint, resolveCameraPose } from '../projectCamera';
 import { resolveScaledOutputSize, resolveScaledRenderSize } from '../renderOutputSize';
 import { rigUsesWorld } from '../rig3d';
 import { getTimelineLayout } from '../speedUtils';
@@ -43,12 +42,13 @@ import { selectedBackend } from '../videoRenderer';
 import { ClipDecoder, ClipSource, SegmentedClipDecoder, SegmentedSource } from '../webcodecsClipDecoder';
 import { isWebmUrl, WebmFrameCache } from '../webmFrameCache';
 import { WebmClipDecoder, WebmSource } from '../webmClipDecoder';
-import { modelClipMovesBetween, rigKeysMove, rigKeysMoveBeyondLights, sceneMovesBetween, textAnimatorsMoveBetween } from '../worldMotion';
+import { modelClipMovesBetween, rigKeysMove, rigKeysMoveBeyondLights, sceneMovesBetween, standaloneModelMovesBetween, textAnimatorsMoveBetween } from '../worldMotion';
 import { poseMayMove } from '../modelPose';
-import { ensureSequenceState as ensureSequenceStateInEngine } from './channelStates';
+import { audioClockSongTime, hasAudioClocks, placeAudioClocks, timelineAudioItems } from '../../../world3d/audioClock.js';
+import { lipsyncMovesBetween, lipsyncProblem } from '../../../world3d/lipsync.js';
 import { resolveActiveIndex } from './compositeHelpers';
 import { calculateVideoTime, clamp01 } from './layerHelpers';
-import { getTotalDuration as getTotalDurationInEngine, releasePreviewSeekGate, seekAllVideosForTime as seekAllVideosForTimeInEngine, seekParticleObjectVideos as seekParticleObjectVideosInEngine, seekVideoAndWait as seekVideoAndWaitInEngine } from './mediaClock';
+import { getTotalDuration as getTotalDurationInEngine, releasePreviewSeekGate, seekAllVideosForTime as seekAllVideosForTimeInEngine, seekParticleObjectVideos as seekParticleObjectVideosInEngine, seekVideoAndWait as seekVideoAndWaitInEngine, visitVideosAtTime } from './mediaClock';
 import { awaitImageTextures as awaitImageTexturesInEngine, getClipExportUrl, getClipPlaybackUrl, normalizeUrl } from './mediaTextures';
 import { resolveFollow as resolveFollowInEngine, resolveParenting as resolveParentingInEngine } from './meshTransform';
 import { ensureModel3dModule as ensureModel3dModuleInEngine, ensureParticleModule as ensureParticleModuleInEngine } from './modules3d';
@@ -129,16 +129,24 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
   // A still is one render, so installed effect packages the project uses have
   // to be loaded before it (they are listed lazily).
   await prepareLocalEffectsFor(env.channels);
-  const markTexturesFresh = () => {
-    for (const cs of engine.channelStates.values()) {
-      for (const video of [cs.videos.a, cs.videos.b]) {
-        if (video.src && video.readyState >= 2) {
-          // the still's own seek landed: no preview seek of this element holds its texture back (mediaClock.releasePreviewSeekGate)
-          releasePreviewSeekGate(engine, video);
-          engine.videoFrameReady.add(video);
-          const cached = engine.videoTextureCache.get(video);
-          if (cached) { cached.texture.needsUpdate = true; cached.hadFrame = true; }
-        }
+  // A lazily-loaded MotionFast template must have its module in hand before the one render that becomes the still
+  // (exportVideo waits the same way): without it a `motion` item not yet used on this page came out blank.
+  await Promise.all([...new Set(
+    env.channels.flatMap((ch) => ch.items.map((it) => it.motionTemplateId).filter(Boolean)),
+  )].map((id) => ensureMotionTemplate(id)));
+  // `sought`: the elements the still's seek put on their frames (seekAllVideosForTime), a video inside a sequence or a template too:
+  // without its new frame taken, its texture kept the frame it last uploaded
+  const markTexturesFresh = (sought) => {
+    const videos = new Set();
+    for (const cs of engine.channelStates.values()) videos.add(cs.videos.a).add(cs.videos.b);
+    for (const video of sought || []) videos.add(video);
+    for (const video of videos) {
+      if (video.src && video.readyState >= 2) {
+        // the still's own seek landed: no preview seek of this element holds its texture back (mediaClock.releasePreviewSeekGate)
+        releasePreviewSeekGate(engine, video);
+        engine.videoFrameReady.add(video);
+        const cached = engine.videoTextureCache.get(video);
+        if (cached) { cached.texture.needsUpdate = true; cached.hadFrame = true; }
       }
     }
   };
@@ -203,8 +211,7 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
         .map((clip) => clip.url),
     )].map((url) => Promise.all([preloadImagePlate(url), preloadAnimatedImage(url)]).catch(() => null)));
     await Promise.all(videoPlateUrls(env, time).map((url) => preloadVideoPlate(url).catch(() => null)));
-    await seekAllVideosForTimeInEngine(engine, env, time);
-    markTexturesFresh();
+    markTexturesFresh(await seekAllVideosForTimeInEngine(engine, env, time));
     engine.renderFrame();
     // That render is what ASKS for the image textures (getImageTexture runs
     // inside it), so only now can the capture wait for them. A texture that
@@ -384,8 +391,7 @@ export async function captureFrameAtTime(engine, env, time, opts = {}) {
       notePerfRenderer({ w: previewSize.w || env.renderWidth, h: previewSize.h || env.renderHeight });
     }
     try {
-      await seekAllVideosForTimeInEngine(engine, env, prevTime);
-      markTexturesFresh();
+      markTexturesFresh(await seekAllVideosForTimeInEngine(engine, env, prevTime));
     } catch { /* best-effort restore */ }
     engine.renderFrame();
   }
@@ -490,7 +496,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
   // The longest one frame of a Final 3D Scene may trace in this export (world3dLayer.finalFrameBudgetMs), from its samples and the larger of
   // the composition and the output. 0 without a Final Scene, which leaves every frame's watchdog exactly as it was.
   const finalFrameMs = env.channels.reduce((most, ch) => Math.max(most, ...(ch.items || []).map((it) => (rigUsesWorld(it.rig) && it.rig?.render?.mode === 'final'
-    ? finalFrameBudgetMs(it.rig.render.spp ?? 64, Math.max(W, OW), Math.max(H, OH)) : 0))), 0);
+    ? finalFrameBudgetMs(it.rig.render.spp ?? 32, Math.max(W, OW), Math.max(H, OH)) : 0))), 0);
   // Whether the frame at this export time (the loop's clock: a range render starts at 0) has a Final Scene as its active rig.
   const finalAt = (t) => {
     const at = isPartial ? (rangeStartFrames + Math.round(t * clampedFps)) / clampedFps
@@ -1154,90 +1160,43 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     }
   };
   // Position every active video for a frame — recursing into sequence clips so
-  // their inner videos land on the mapped local time before the frame renders.
+  // their inner videos land on the mapped local time before the frame renders:
+  // mediaClock.visitVideosAtTime, the walk a still seeks its videos by too.
   //
   // Every layer is positioned AT ONCE (Promise.all), not one after another: the
   // positions are independent (one element / decoder / html page per layer),
   // and a live html page is a wait, not work — it steps and paints two
   // animation frames later. One after another, three visible pages cost three
   // of those waits per frame (≈30 ms each, measured); together they cost one.
-  const positionChannelVideosForExport = async (chs, cmap, layoutFor, states, time, depth, seeks, scope = '') => {
-    const instanceKeyOf = (it) => (scope ? `${scope}:${it.id}` : it.id);
-    const pending = [];
-    for (const channel of chs) {
-      if (channel.visible === false) continue;
-      const layout = layoutFor(channel);
-      const cs = states.get(channel.id);
-      if (!layout || !cs) continue;
-      const activeIndex = resolveActiveIndex(layout, time);
-      if (activeIndex < 0) continue;
-      const item = channel.items[activeIndex];
-      const itemLayout = layout[activeIndex];
-      const clip = cmap.get(item.clipId);
-      if (!clip) continue;
-      const timeInClip = time - itemLayout.startTime;
-
-      const inTransitionOverlap = activeIndex > 0
-        && itemLayout.overlapIn > 0
-        && timeInClip <= itemLayout.overlapIn;
-      if (inTransitionOverlap) {
-        const preset = getAdvancedTransitionPreset(item.transition);
-        const rawProgress = Math.max(0, Math.min(1, timeInClip / itemLayout.overlapIn));
-        for (const definition of preset?.media || []) {
-          if (definition?.type !== 'video' || !definition.src) continue;
-          const mediaState = env.ensureTransitionPackageMedia(cs, definition);
-          const trimStart = Math.max(0, finiteNumber(definition.trimStart, 0));
-          const trimEnd = Number.isFinite(definition.trimEnd)
-            ? Math.max(trimStart, definition.trimEnd)
-            : trimStart + itemLayout.overlapIn;
-          const sourceTime = trimStart + rawProgress * Math.max(0.001, trimEnd - trimStart);
-          pending.push(positionClip(
-            mediaState.video,
-            { id: `transition-media:${definition.id}`, name: definition.id, mediaType: 'video', url: definition.src },
-            sourceTime,
-            seeks,
-          ));
-        }
+  const exportVideoVisitors = (seeks) => ({
+    visit: (video, clip, sourceTime, instanceKey) => positionClip(video, clip, sourceTime, seeks, instanceKey),
+    // an advanced transition's own videos, in its overlap
+    onTransition: (cs, item, itemLayout, timeInClip) => {
+      const preset = getAdvancedTransitionPreset(item.transition);
+      const rawProgress = Math.max(0, Math.min(1, timeInClip / itemLayout.overlapIn));
+      const pending = [];
+      for (const definition of preset?.media || []) {
+        if (definition?.type !== 'video' || !definition.src) continue;
+        const mediaState = env.ensureTransitionPackageMedia(cs, definition);
+        const trimStart = Math.max(0, finiteNumber(definition.trimStart, 0));
+        const trimEnd = Number.isFinite(definition.trimEnd)
+          ? Math.max(trimStart, definition.trimEnd)
+          : trimStart + itemLayout.overlapIn;
+        const sourceTime = trimStart + rawProgress * Math.max(0.001, trimEnd - trimStart);
+        pending.push(positionClip(
+          mediaState.video,
+          { id: `transition-media:${definition.id}`, name: definition.id, mediaType: 'video', url: definition.src },
+          sourceTime,
+          seeks,
+        ));
       }
-
-      // Posterize Time: a posterized layer's media sits on its held step (the same
-      // clock channelRender gives the layer).
-      const layerTimeInClip = posterizedTimeInClip(item, timeInClip, itemLayout.duration);
-      if (isContainerClip(clip) && depth < SEQUENCE_MAX_DEPTH) {
-        const st = ensureSequenceStateInEngine(engine, item.id, clip);
-        if (st) {
-          const localTime = calculateVideoTime(item, Math.max(0, layerTimeInClip));
-          pending.push(positionChannelVideosForExport(
-            clip.sequence.channels, st.clipsMap, (ch) => st.layouts.get(ch.id), st.channelStates, localTime, depth + 1, seeks,
-            instanceKeyOf(item),
-          ));
-        }
-        continue;
-      }
-
-      if (clip.mediaType !== 'video') continue;
-      const useVideoA = activeIndex % 2 === 0;
-      const activeVideo = useVideoA ? cs.videos.a : cs.videos.b;
-      pending.push(positionClip(activeVideo, clip, calculateVideoTime(item, layerTimeInClip), seeks, instanceKeyOf(item)));
-
-      const inOverlap = activeIndex > 0 && itemLayout.overlapIn > 0 && timeInClip <= itemLayout.overlapIn;
-      if (inOverlap) {
-        const prevItem = channel.items[activeIndex - 1];
-        const prevLayout = layout[activeIndex - 1];
-        const prevClip = cmap.get(prevItem.clipId);
-        if (prevClip?.mediaType === 'video') {
-          const prevTimeInClip = Math.max(0, Math.min(prevLayout.duration, time - prevLayout.startTime));
-          const previousVideo = useVideoA ? cs.videos.b : cs.videos.a;
-          pending.push(positionClip(previousVideo, prevClip, calculateVideoTime(prevItem, prevTimeInClip), seeks, instanceKeyOf(prevItem)));
-        }
-      }
-    }
-    await Promise.all(pending);
-  };
+      return Promise.all(pending);
+    },
+  });
   const decodeAllVideosForTime = async (time) => {
     const seeks = [];
-    await positionChannelVideosForExport(
-      env.channels, env.clipsMap, (ch) => env.layoutMap.get(ch.id), engine.channelStates, time, 0, seeks
+    await visitVideosAtTime(
+      engine, env.channels, env.clipsMap, (ch) => env.layoutMap.get(ch.id), engine.channelStates, time, exportVideoVisitors(seeks),
     );
     seeks.push(seekParticleObjectVideosInEngine(engine, env, time));
     await Promise.all(seeks);
@@ -1406,6 +1365,28 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       // (incl. adjustment-layer zoom/pan) on the active top-level items, and the
       // same inside every active sequence clip.
       const layoutFor = (ch) => env.layoutMap.get(ch.id);
+      // (lipsync) A speaking mouth (pose.speech) moves only while its voice's mouth changes: its clock's lipsync read where the voice's
+      // item plays on the timeline (the clocks placed as the world places them, on the timeline's own seconds). A held pause is still and
+      // its frame renders sharp, the picture its averaged sub-frames would make. Whatever this cannot read (no lipsync, a clock on a file,
+      // a clock on the loudness alone) counts as moving, as before.
+      const speechPlaced = new WeakMap();
+      let speechItems = null;
+      const speechClocks = (scene) => {
+        if (!hasAudioClocks(scene)) return null;
+        let placed = speechPlaced.get(scene);
+        if (!placed) {
+          speechItems ||= timelineAudioItems(env.channels, env.clipsMap, layoutFor);
+          placed = placeAudioClocks(scene.clocks, { items: speechItems, clips: [...env.clipsMap.values()], sceneStart: 0 });
+          speechPlaced.set(scene, placed);
+        }
+        return placed;
+      };
+      const speechMoves = (scene, ta, tb) => (speech) => {
+        const def = speechClocks(scene)?.[speech?.clock];
+        if (!def?.audio?.placed || !def.lipsync || lipsyncProblem(def.lipsync)) return undefined;
+        const at = (t) => audioClockSongTime(def.audio, t);
+        return lipsyncMovesBetween(def.lipsync, at(ta), at(tb), at((ta + tb) / 2));
+      };
       // A sequence's own timeline over one output frame's shutter: its camera clip, and
       // each live inner layer's keyed transform, speed ramp, particles, live page or
       // nested sequence (down to the 4-level nesting limit). Times map in as the
@@ -1478,8 +1459,10 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
         // (its keys on the Scene's own clock, from its clip's start: rig3d.js sceneTimeAt; worldMovesBetween turns timeline times itself)
         // (mblur5) the frame's own Scene's clock across its whole shutter, past a cut too (world3dLayer.js worldClockIn)
         const clock = worldClockIn(engine, time);
+        // (a Scene object's speech reads its voice on the timeline's seconds: speechMoves)
+        const scenePoseMoves = (pose, a, b) => poseMayMove(pose, a, b, { speech: speechMoves(rigNow.scene, t0, t1) });
         if (inWorld && sceneMovesBetween(rigNow.scene, clock(t0), clock(t1),
-          { runtime: () => worldMovesBetween(t0, t1, time), sampleTrack, poseMoves: poseMayMove, fieldsMove })) return true;
+          { runtime: () => worldMovesBetween(t0, t1, time), sampleTrack, poseMoves: scenePoseMoves, fieldsMove })) return true;
         for (const channel of env.channels) {
           if (channel.visible === false) continue;
           const layout = env.layoutMap.get(channel.id);
@@ -1504,7 +1487,8 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           if (clip.mediaType === 'model3d') {
             if (item.model3dConfig?.animation?.clip && modelClipMovesBetween(item.model3dConfig.animation,
               engine.model3d?.modelAnimationClips?.(clip, item) ?? null, t0 - entry.startTime, t1 - entry.startTime)) return true;
-            if (item.model3dConfig?.pose && poseMayMove(item.model3dConfig.pose, t0 - entry.startTime, t1 - entry.startTime)) return true;
+            if (item.model3dConfig?.pose && poseMayMove(item.model3dConfig.pose, t0 - entry.startTime, t1 - entry.startTime,
+              { speech: inWorld ? speechMoves(rigNow.scene, t0, t1) : null })) return true;
             if (inWorld && !channel.cameraLocked && item.model3dConfig?.physics === 'falls' && worldMovesBetween(t0, t1, time) !== false) return true;
           }
           // Same for an html clip drawn live: its page animates inside a still
@@ -1581,12 +1565,15 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           // a model the world draws moves in the world (its keys, its clip, its pose, a fall: posed at each time of the shutter); one it does
           // not draw (its own pass) moves outside it
           const worldModel = clip.mediaType === 'model3d' && worldHolds(item.id);
-          if (clip.mediaType === 'model3d' && !worldModel) {
-            if (item.model3dConfig?.animation?.clip && modelClipMovesBetween(item.model3dConfig.animation,
-              engine.model3d?.modelAnimationClips?.(clip, item) ?? null, t0 - entry.startTime, t1 - entry.startTime)) return true;
-            if (item.model3dConfig?.pose && poseMayMove(item.model3dConfig.pose, t0 - entry.startTime, t1 - entry.startTime)) return true;
-            if (item.model3dConfig?.physics === 'falls') return true;
-          }
+          if (standaloneModelMovesBetween({
+            item,
+            clip,
+            worldModel,
+            modelClips: clip.mediaType === 'model3d' && !worldModel ? (engine.model3d?.modelAnimationClips?.(clip, item) ?? null) : null,
+            localStart: t0 - entry.startTime,
+            localEnd: t1 - entry.startTime,
+            poseMayMove,
+          })) return true;
           if (clip.htmlSource && htmlLiveMode !== 'off' && htmlLiveSupported()) return true;
           if (getParenting(item)) {
             const pa = resolveParentingInEngine(engine, env.parentIndex, item, t0)?.prs;
@@ -1602,6 +1589,135 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           if (!worldModel && itemHasKeyframes(item) && keyedPoseMoves(item, entry, t0, t1)) return true;
         }
         return false;
+      };
+      // (cheapblur) How far the frame's picture travels on screen across its shutter, in px: the largest travel of a layer's
+      // frame-sized box (its centre and corners, turned and scaled as the layer is, at its depth) through the camera at the
+      // shutter's two ends, a sequence's inside scaled as the sequence is drawn. A frame that moves less than a pixel renders
+      // once (its blur could not be seen) and a slower one takes a sub-frame a pixel of travel, up to the Blur level's samples.
+      // Before, any frame moving 0.005 px took them all: a slow camera drift made every frame of a film 16 renders (a 10 s camera
+      // film: 588 s against 47 s without blur). What it cannot measure keeps the level's samples (Infinity): a Scene, a model, a
+      // particle system, a live page, a MotionFast layer, letters a Text Animator moves, a tracked or nested-parented layer, a
+      // layer inside a transition, a layer passing the camera.
+      const numOr = (v, d) => { const n = Number.parseFloat(v); return Number.isFinite(n) ? n : d; };
+      const NO_TRANSITION = /^(none)?$/i;
+      const halfW = W / 2;
+      const halfH = H / 2;
+      // A grid over the layer's box (its own size when it has one, a shape's; else the frame's). Only the points seen in the frame
+      // at either end count: a corner far off screen moves a lot under a push-in and nobody sees it.
+      const GRID = 7;
+      const MARGIN = 2;
+      const seen = (p) => p && p.x >= -MARGIN && p.x <= W + MARGIN && p.y >= -MARGIN && p.y <= H + MARGIN;
+      const boxGrid = (prs, pose, bw, bh) => {
+        const c = Math.cos(prs.rz || 0);
+        const s = Math.sin(prs.rz || 0);
+        const sx = numOr(prs.sx, 1);
+        const sy = numOr(prs.sy, 1);
+        const out = [];
+        for (let i = 0; i < GRID; i += 1) {
+          for (let j = 0; j < GRID; j += 1) {
+            const x = (i / (GRID - 1) - 0.5) * bw * sx;
+            const y = (j / (GRID - 1) - 0.5) * bh * sy;
+            out.push(projectFramePoint(pose, W, H, halfW + prs.px + x * c - y * s, halfH - (prs.py + x * s + y * c), prs.pz || 0));
+          }
+        }
+        return out;
+      };
+      const layerBox = (item, clip) => (clip?.mediaType === 'shape' && item?.shapeSizeUnit === 'px'
+        && numOr(item.shapeWidthPx, 0) > 0 && numOr(item.shapeHeightPx, 0) > 0
+        ? [numOr(item.shapeWidthPx, W), numOr(item.shapeHeightPx, H)] : [W, H]);
+      // the most a seen point of the layer moved (Infinity when a seen point crossed the camera's plane), and how large the frame's
+      // width is drawn at the end (a sequence's inside moves by its own travel times that)
+      const boxTravel = (prsA, prsB, poseA, poseB, bw, bh) => {
+        const a = boxGrid(prsA, poseA, bw, bh);
+        const b = boxGrid(prsB, poseB, bw, bh);
+        let most = 0;
+        for (let i = 0; i < a.length; i += 1) {
+          if (!seen(a[i]) && !seen(b[i])) continue;
+          if (!a[i] || !b[i]) return { travel: Infinity, scale: 1 };
+          most = Math.max(most, Math.hypot(a[i].x - b[i].x, a[i].y - b[i].y));
+        }
+        // a turn about X or Y foreshortens the layer, which its grid shows only in part: count the turn over the layer's reach
+        const tilt = Math.max(Math.abs((prsA.rx || 0) - (prsB.rx || 0)), Math.abs((prsA.ry || 0) - (prsB.ry || 0)));
+        const reach = (Math.max(bw, bh) / 2) * Math.max(1, Math.abs(numOr(prsB.sx, 1)), Math.abs(numOr(prsB.sy, 1)));
+        const left = projectFramePoint(poseB, W, H, halfW + prsB.px - (bw / 2) * numOr(prsB.sx, 1), halfH - prsB.py, prsB.pz || 0);
+        const right = projectFramePoint(poseB, W, H, halfW + prsB.px + (bw / 2) * numOr(prsB.sx, 1), halfH - prsB.py, prsB.pz || 0);
+        const scale = left && right ? Math.hypot(right.x - left.x, right.y - left.y) / Math.max(1, bw) : 1;
+        return { travel: most * 1.15 + tilt * reach, scale };
+      };
+      const inTransition = (channel, layout, ta, tb) => {
+        for (let i = 0; i < layout.length; i += 1) {
+          const it = channel.items?.[i];
+          const e = layout[i];
+          if (!it || !e) continue;
+          const cross = it.transition && !NO_TRANSITION.test(String(it.transition)) ? numOr(it.transitionDuration, 0.6) : 0;
+          if (cross > 0 && tb >= e.startTime - cross && ta <= e.startTime + cross) return true;
+          const tin = it.transitionInType && !NO_TRANSITION.test(String(it.transitionInType)) ? numOr(it.transitionInDuration, 0.5) : 0;
+          if (tin > 0 && tb >= e.startTime && ta <= e.startTime + tin) return true;
+          const tout = it.transitionOutType && !NO_TRANSITION.test(String(it.transitionOutType)) ? numOr(it.transitionOutDuration, 0.5) : 0;
+          if (tout > 0 && tb >= e.endTime - tout && ta <= e.endTime) return true;
+        }
+        return false;
+      };
+      const ownPrsAt = (item, entry, t) => {
+        const d = entry.endTime - entry.startTime;
+        const kf = itemHasKeyframes(item) && d > 0 ? getItemKeyframeValues(item, clamp01((t - entry.startTime) / d)) : null;
+        return localPrs(item, kf, W, H);
+      };
+      // one timeline's travel (the project's, or a sequence's inside on its own clock), in its own px
+      const timelineTravel = (channels, clipsMap, layoutOf, index, ta, tb, depth) => {
+        if (depth > SEQUENCE_MAX_DEPTH) return Infinity;
+        const frame = { width: W, height: H };
+        const camA = resolveCameraPose(channels, clipsMap, layoutOf, ta, frame);
+        const camB = resolveCameraPose(channels, clipsMap, layoutOf, tb, frame);
+        if (Boolean(camA) !== Boolean(camB)) return Infinity;   // entering or leaving a camera clip
+        const mid = (ta + tb) / 2;
+        let most = 0;
+        for (const channel of channels) {
+          if (channel.visible === false || channel.kind === 'camera') continue;
+          const layout = layoutOf(channel);
+          if (!layout) continue;
+          if (inTransition(channel, layout, ta, tb)) return Infinity;
+          const ai = resolveActiveIndex(layout, mid);
+          if (ai < 0) continue;
+          const item = channel.items[ai];
+          const entry = layout[ai];
+          const clip = clipsMap.get(item?.clipId);
+          if (!clip || clip.mediaType === 'audio' || clip.mediaType === 'camera') continue;
+          if (rigUsesWorld(item.rig) || clip.mediaType === 'model3d' || clip.mediaType === 'motion' || clip.mediaType === PARTICLE_MEDIA_TYPE
+            || clip.htmlSource || item.motionFollow) return Infinity;
+          if (clip.mediaType === 'text' && textAnimatorsMoveBetween(item, entry.startTime, ta, tb, evaluatePropertyTrack)) return Infinity;
+          if (!index && getParenting(item)) return Infinity;
+          const viaIndex = (t) => (index ? resolveItemPrs(index, item.id, t, { W, H, evalKeyframes: getItemKeyframeValues }) : null);
+          const prsA = viaIndex(ta) || ownPrsAt(item, entry, ta);
+          const prsB = viaIndex(tb) || ownPrsAt(item, entry, tb);
+          const locked = channel.cameraLocked === true;
+          const [bw, bh] = layerBox(item, clip);
+          const { travel, scale } = boxTravel(prsA, prsB, locked ? null : camA, locked ? null : camB, bw, bh);
+          if (!Number.isFinite(travel)) return Infinity;
+          let inner = 0;
+          if (clip.mediaType === 'sequence' && clip.sequence) {
+            const innerChannels = Array.isArray(clip.sequence.channels) ? clip.sequence.channels : [];
+            const innerClips = new Map((clip.sequence.clips || []).map((c) => [c.id, c]));
+            const layouts = new Map(innerChannels.map((ch) => [ch.id, getTimelineLayout(ch.items || [], { unsnapped: ch.unsnapped })]));
+            const a = calculateVideoTime(item, Math.max(0, ta - entry.startTime));
+            const b = calculateVideoTime(item, Math.max(0, tb - entry.startTime));
+            inner = timelineTravel(innerChannels, innerClips, (ch) => layouts.get(ch.id), null, a, b, depth + 1) * scale;
+            if (!Number.isFinite(inner)) return Infinity;
+          }
+          most = Math.max(most, travel + inner);
+        }
+        return most;
+      };
+      const MOTION_SAMPLE_STEP_PX = 1;
+      // the sub-frames this frame takes: the level's own when its motion cannot be measured, else one a pixel of travel
+      const samplesFor = (time) => {
+        const t0 = time - shutterWindow / 2;
+        const t1 = time + shutterWindow / 2;
+        if (rigKeysMove(engine.activeRigAt?.(t0), engine.activeRigAt?.(t1))) return level.samples;
+        let travel = Infinity;
+        try { travel = timelineTravel(env.channels, env.clipsMap, layoutFor, env.parentIndex || null, t0, t1, 1); } catch { travel = Infinity; }
+        if (!Number.isFinite(travel)) return level.samples;
+        return Math.max(1, Math.min(level.samples, Math.ceil(travel / MOTION_SAMPLE_STEP_PX)));
       };
       // (filmbugs) and only where a Scene layer is on the timeline (worldSceneOn): past its clip nothing of the world is in the frame
       const finalWorldAt = (time) => {
@@ -1673,6 +1789,11 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           if (!farmFrames && !hdrAccumulation && finalWorldAt(time)) {
             if (await renderHeldWorldFrame(time)) return;
           }
+          // (cheapblur) a sub-frame a pixel of travel, up to the level's samples; under a pixel the frame is drawn once
+          const samples = samplesFor(time);
+          if (samples <= 1) { motionBlurInfo.sharp += 1; motionBlurInfo.passes += 1; await renderFrameAtTime(time); return; }
+          if (samples < level.samples) motionBlurInfo.fewer += 1;
+          motionBlurInfo.passes += Math.max(2, Math.min(32, samples));
           motionBlurInfo.accumulated += 1;
           accumulatedNow = true;
           // every sub-frame at its own time, the footage at the frame's (renderFrameAtTime); (smallfix) and a Scene's objects shown or
@@ -1680,14 +1801,14 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
           engine.shutterFrameTime = time;
           // (hdr2) and in float, each sub-frame's own float composite added in at its weight: the frame keeps its light
           const hdrSub = hdrAccumulation;
-          hdrSub?.beginAccumulation(blurSamples);
+          hdrSub?.beginAccumulation(Math.max(2, Math.min(32, samples)));
           try {
             await pipeline.renderAccumulated(hdrSub
               ? async (t) => { await renderFrameAtTime(t, time); await hdrSub.subFrame(!!sceneLight?.checkDue()); }
               : (t) => renderFrameAtTime(t, time), time, {
               fps: clampedFps,
               shutter: level.shutter,
-              samples: level.samples,
+              samples,
               maxTime,
             });
           } finally {
@@ -1732,7 +1853,7 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
             return averageHandoffs(subs);
           };
         }
-        motionBlurInfo = { label: level.label, samples: level.samples, hasMotion: frameHasMotion, traced: 0, accumulated: 0, averaged: 0, held: 0 };
+        motionBlurInfo = { label: level.label, samples: level.samples, hasMotion: frameHasMotion, traced: 0, accumulated: 0, averaged: 0, held: 0, sharp: 0, fewer: 0, passes: 0 };
         console.warn('[export] motion blur accumulation enabled ('
           + level.label + ' — shutter ' + level.shutter + '°, ' + level.samples + ' samples; html pages step at '
           + htmlLivePageFps + ' fps)');
@@ -1841,25 +1962,50 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
     // anyway; a Scene's picture costs a 32 x 32 sample of it, drawn and sent for reading as the plate fills (worldGuardSampling), so
     // the check finds it read and does not wait on the GPU (world3dLayer.worldFrameFacts).
     const frameGuardLog = createFrameGuardLog();
+    const stripeSamples = new Map();
     worldGuardSampling(true);
     const timelineFrame = (t) => (isPartial ? rangeStartFrames + Math.round(t * clampedFps)
       : pieceFrames ? pieceFrames[Math.min(pieceFrames.length - 1, Math.round(t * clampedFps))] : Math.round(t * clampedFps));
-    const checkFrame = async (i, t, attempt, { error = null, since = 0, resets = 0 } = {}) => {
+    const checkFrame = async (i, t, attempt, { error = null, since = 0, resets = 0, timedOut = false, timeoutMs = 0, stillRunning = false } = {}) => {
       const frame = timelineFrame(t);
       const time = frame / clampedFps;
       if (frameFaultOn('gpuReset')) noteGpuReset();
+      const stripeCorrupt = frameFaultOn('stripeCorrupt');
+      const timeoutFault = frameFaultOn('frameTimeout');
       const unchecked = frameFaultOn('guardOff');
       disarmFrameFaults();
       if (unchecked) return { ok: true };
-      const facts = (await worldFrameFacts(engine, { since, time })) || {};
+      const rawFacts = timedOut
+        ? await Promise.race([
+          worldFrameFacts(engine, { since, time, stripeCorrupt }),
+          new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+        ])
+        : await worldFrameFacts(engine, { since, time, stripeCorrupt });
+      const facts = rawFacts || {};
+      if (timedOut || timeoutFault) facts.timedOut = timeoutMs || true;
+      if (stripeCorrupt) facts.plate = { ...(facts.plate || {}), corrupt: { ...(facts.plate?.corrupt || { axis: 'horizontal', ratio: 1, score: 1 }), injected: true } };
+      if (facts.plate?.corrupt && !facts.plate.corrupt.deterministic && !facts.plate.corrupt.injected) {
+        const prevSample = stripeSamples.get(frame);
+        const curSample = facts.plate.sample;
+        if (attempt > 0 && prevSample && curSample && sameStripePicture(prevSample, curSample)) {
+          facts.plate.corrupt = { ...facts.plate.corrupt, deterministic: true };
+          console.warn(`[frame guard] frame ${frame} (${time.toFixed(3)} s) repeated identical stripes on retry — accepting deterministic striped scene`);
+        } else if (curSample) {
+          stripeSamples.set(frame, curSample);
+        }
+      }
       if (error && !error.finalStall) facts.error = String(error?.message || error);
       // a rebuilt compositor draws on a new canvas this render does not hold: no retry on it
       const rebuilt = engine.renderer !== renderer;
       if (rebuilt) facts.gpuReset = "the compositor's GPU device was lost and the compositor rebuilt";
       else if (gpuResetCount() !== resets && !facts.gpuReset) facts.gpuReset = 'a GPU context of the page was lost';
-      const verdict = frameVerdict(facts, rebuilt ? FRAME_GUARD_RETRIES : attempt, { frame, time });
-      if (verdict.ok) return verdict;
-      if (verdict.fail) throw frameGuardError(verdict);
+      // Only retry Draft frames after frame 0 on timeouts, and never while the previous renderFrameAtTime is still in flight.
+      const isFinalScene = !!facts.final || engine.activeRigAt?.(time)?.render?.mode === 'final';
+      const timeoutBlocked = !facts.gpuReset && Boolean(facts.timedOut) && (i === 0 || isFinalScene || stillRunning);
+      const retryLimit = rebuilt || timeoutBlocked ? 0 : FRAME_GUARD_RETRIES;
+      const verdict = frameVerdict(facts, rebuilt || timeoutBlocked ? retryLimit : attempt, { retries: retryLimit, frame, time });
+      if (verdict.ok) { stripeSamples.delete(frame); return verdict; }
+      if (verdict.fail) { stripeSamples.delete(frame); throw frameGuardError(verdict); }
       frameGuardLog.note(verdict.retry, { frame, time, detail: verdict.detail });
       console.warn(`[frame guard] frame ${frame} (${time.toFixed(3)} s) is drawn again (${verdict.retry}): ${verdict.detail}`);
       if (verdict.retry === 'device') releaseLostWorld();
@@ -2043,8 +2189,8 @@ export async function exportVideo(engine, env, format = 'mp4', onProgress, signa
       }
     }
     // (mblur) how the blurred frames were made: traced once with the motion (a Final Scene's world), or accumulated sub-frames
-    if (motionBlurInfo && (motionBlurInfo.traced || motionBlurInfo.accumulated || motionBlurInfo.averaged || motionBlurInfo.held)) {
-      console.warn(`[export] motion blur: ${motionBlurInfo.traced} frame(s) traced once with their motion, ${motionBlurInfo.held} traced once under 2D sub-frames, ${motionBlurInfo.averaged} Draft frame(s) averaged in light, ${motionBlurInfo.accumulated} accumulated from ${motionBlurInfo.samples} sub-frames`);
+    if (motionBlurInfo && (motionBlurInfo.traced || motionBlurInfo.accumulated || motionBlurInfo.averaged || motionBlurInfo.held || motionBlurInfo.sharp)) {
+      console.warn(`[export] motion blur: ${motionBlurInfo.traced} frame(s) traced once with their motion, ${motionBlurInfo.held} traced once under 2D sub-frames, ${motionBlurInfo.averaged} Draft frame(s) averaged in light, ${motionBlurInfo.accumulated} accumulated from up to ${motionBlurInfo.samples} sub-frames (${motionBlurInfo.fewer} with fewer, a sub-frame a pixel of travel), ${motionBlurInfo.sharp} moving under a pixel drawn once; ${motionBlurInfo.passes} renders for these frames`);
     }
 
     // Hand the result back to the caller (download + board copy happen there).

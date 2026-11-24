@@ -18,6 +18,7 @@ import { cameraLayerShot } from './cameraLayerShot';
 import { travel } from '../../world3d/cameraPath.js';
 import { getCameraDofSettings } from './projectCamera';
 import { normalizeRig, resolveRigAt, sceneTimeAt, shutterEntries, sphericalFromVector } from './rig3d';
+import { findBlockingMuteRigAt } from './rigAiVideo.js';
 import { WORLD_UNITS, worldCamera, worldLens, worldLiveValues, worldMatrix, worldSceneFromRig, worldSteer } from './world3dScene.js';
 import { resolveActiveIndex } from './engine/compositeHelpers';
 import { liveSceneSurfaces } from './liveLayers';
@@ -27,6 +28,7 @@ import { isAutoFillEnabled, resolveAutoFillParams } from './autoFillLayer';
 import { isModelFxOverlay, isWorldModelFx, LEAVES_WORLD_FX_IDS, modelLeavesWorldAt, NOT_IN_WORLD_FX_IDS } from './model3dFxCatalog';
 import { flatLettersViewMatrix, glyphArrays, glyphIdOf, lettersOnParent, worldFlatLetters, worldParentOf, worldTextLayers, worldTextLetters } from './world3dText';
 import { sampleField } from '../../world3d/keys.js';
+import { hasAudioClocks, placeAudioClocks, timelineAudioItems, withWorldClocks } from '../../world3d/audioClock.js';
 import { meshStoreKey } from '../../world3d/meshKey.js';
 // (physcam) the camera as a device: its auto-exposure's meter and filter, the picture-only fields taken in place
 import { AE_STEP, aeAt, aeGrid, aeSpec, splitCameraFilm, withDevice } from '../../world3d/render/deviceCamera.js';
@@ -37,6 +39,7 @@ import { hasLayerFilters, worldFxEffects, worldFxList } from './world3dFx';
 import { getItemKeyframeValues, integratePathRate, itemHasKeyframes } from './gsapTransitions';
 import { posterizedTimeInClip } from './posterizeTime';
 import { sceneObjectMatrix } from './modelPose';
+import { heldModelMatrix, orderModelPoses } from './handPose';
 import { createScenePoser } from './scenePose.js';
 import { probeWebGpuAdapter, selectedBackend } from './videoRenderer.js';
 import { browserHandoffClock, createWorldHandoff } from './worldHandoff.js';
@@ -45,8 +48,9 @@ import { frameFaultPlan, noticeWatch } from './worldFrameGuard.js';
 import { localPrs } from './keyframeParenting';
 import { isText3dLayer } from './text3d.js';
 import { alignShutterLetters } from './shutterLetters.js';
-import { emptyKind, frameFaultOn, pixelSpread } from './frameGuard.js';
+import { detectStripeCorruption, emptyKind, frameFaultOn, pixelSpread } from './frameGuard.js';
 import { readTargetPixels } from './readTargetPixels';
+import { subjectBounds } from '../../world3d/multiView.js';
 
 // Where the world's files are (world3d.js, its eval / rigid / sim bundles and the denoiser weights): world3d/ next to the page in the
 // app. A host that loads the engine from somewhere else (the motion engine from a CDN, a chat frame whose page has no address of its
@@ -82,7 +86,8 @@ const state = { load: null, loadShown: false, loadTimer: null, loadListeners: ne
   // project switches (worldProjectChanged),
   // taken when a build starts
   builtKey: null, builtItems: null, builtNodes: null, hidden: null, builtGeneration: 0, generation: 0,
-  plateGeneration: -1, // the generation whose frame the plate holds; -1 is none
+  plateGeneration: -1, // the generation whose finished frame the plate holds; -1 is none
+  previewGeneration: -1, previewMeta: null, solidPreview: null, // loading preview (background / unstyled clay) while a fresh or switched Scene builds
   poseKey: null, posed: null, final: false, filming: false, filmedPose: null, traceOptions: null, touched: 0, pumping: false, fresh: false,
   plate: null,        // { texture, target, material, scene, width, height, camera }
   // (badframes) while a render's frames are checked (worldGuardSampling): the plate's sample drawn and its read started as the plate fills
@@ -95,7 +100,19 @@ const state = { load: null, loadShown: false, loadTimer: null, loadListeners: ne
   frameFaults: 0, faultTimer: null, noticeWatch: null,
   // (hdr2) an HDR render's float composite of the frame just drawn (worldReplay): the world draws nothing, and its layer shows `texture`
   replay: null,
+  // (multiview) temporary diagnostic camera override `{ at, target, up, fov }` in world metres for multi-angle still checks, and whether
+  // those captures film a Final Scene in Draft (filmsFinal)
+  diagnosticCamera: null, diagnosticDraft: false,
+  // (audio clocks) the timeline's items with sound, listed for the timeline they were read from (prepareWorldFrame placeClocks), and the model
+  // module the world's built scene was handed to
+  audioItems: null, sceneSourceFor: null,
 };
+// (multiview) a Scene filmed in Final: not while diagnostic views are drawn in Draft (setWorldDiagnosticView), which needs no rebuild
+const filmsFinal = (rig) => rig?.render?.mode === 'final' && !state.diagnosticDraft
+  && rig?.prerenderLook !== 'clay' && rig?.prerenderLook !== 'blocking';
+const rigWantsNoWorldText = (env) => (env?.channels || []).some(
+  (ch) => ch?.kind === 'rig' && (ch.items || []).some((it) => it?.rig?.excludeWorldText),
+);
 // (engine100) a notice that shows one stage for 20 s says so once, with what the world is waiting on; a world built and waiting on its
 // first picture is asked for a frame, in case nothing else will (worldFrameGuard.js)
 state.noticeWatch = noticeWatch({ onStuck: (stage, ms) => {
@@ -123,6 +140,10 @@ export function worldSceneOn(engine, time) {
   return (engine?.rigEntries || []).some((e) => at >= e.startTime - 1e-6 && at <= e.endTime + 1e-6);
 }
 const renderingNow = (engine) => !!engine.exporting || typeof window.__videoRender !== 'undefined';
+/** (audio clocks) A Rig's scene as the editor reads its objects' places and poses its rigs: with the clocks the world baked, so a layer riding
+ *  an object an audio clock drives moves as the object does in the world. The scene itself when it has no audio clock. */
+const worldClocksScene = (scene) => withWorldClocks(scene, state.host?.scene);
+const builtScene = () => state.host?.scene ?? null;
 
 // A render's frame reads the world's canvas only as its first read since a rendering update (worldHandoff.js).
 const worldHandoff = createWorldHandoff(browserHandoffClock());
@@ -243,6 +264,9 @@ export function worldSceneReport({ inspect = false, critique = false, objects = 
   if (critique && state.ready && state.host.critique) {
     try { report.critique = state.host.critique({ objects }); } catch (error) { report.critique = { error: String(error?.message || error) }; }
   }
+  if (critique && state.ready && state.host.world?.simWorld?.report) {
+    report.sims = state.host.world.simWorld.report;
+  }
   return report;
 }
 
@@ -293,7 +317,7 @@ const isPlainPicture = (item) => (item?.filterBlur || 0) === 0 && !item?.filterH
 
 /** 3D Text in a world Scene (world3dText.js): the world lays effects, colour filters and Grow Fill on model layers only, so a text layer
  *  that carries any of them keeps its own pass, where they run as always, and takes its place in the world by depth. */
-export const textKeepsOwnPass = (item) => isAutoFillEnabled(item) || !!item?.effects?.some?.((e) => isModelFxOverlay(e) || !e?.muted)
+export const textKeepsOwnPass = (item) => isAutoFillEnabled(item) || !!item?.effects?.some?.((e) => isModelFxOverlay(e) || e?.enabled !== false)
   || !isPlainPicture(item);
 
 /** The blur, a flat effect and the six that move the picture off the surface (LEAVES_WORLD_FX_IDS, while one is live) run inside a model's
@@ -304,7 +328,7 @@ export const textKeepsOwnPass = (item) => isAutoFillEnabled(item) || !!item?.eff
  *  when the layer carries one of them. */
 export const modelKeepsOwnPass = (item, at = null) => isBlurred(item)
   || !!item?.effects?.some?.((e) => !isWorldModelFx(e) && !NOT_IN_WORLD_FX_IDS.has(e?.id) && !LEAVES_WORLD_FX_IDS.has(e?.id)
-    && (isModelFxOverlay(e) || !e?.muted))
+    && (isModelFxOverlay(e) || e?.enabled !== false))
   || (!!at && !!item?.effects?.some?.((e) => LEAVES_WORLD_FX_IDS.has(e?.id)) && modelLeavesWorldAt(item, at()));
 
 /** A model layer's effect liveness context at `time`, read on the layer's own clock as its pass reads it (channelRender: Posterize Time,
@@ -408,7 +432,7 @@ function requestHost(engine, W, H) {
   const gpu = typeof navigator !== 'undefined' && !!navigator.gpu;
   const where = gpu && worldResolver ? Promise.resolve().then(worldResolver) : null;
   state.loading = (gpu ? (where ? where.then(() => import(/* @vite-ignore */ hostUrl())) : import(/* @vite-ignore */ hostUrl())) : Promise.reject(new Error('navigator.gpu is not present')))
-    .then((m) => m.createWorldHost({ width: W, height: H, oidnWeights: weightsUrl(), oidnWeightsLarge: weightsUrl('large'), guestUrl: worldFileUrl('world3d-eval.js'), rigidUrl: worldFileUrl('world3d-rigid.js'), simUrl: worldFileUrl('world3d-sim.js'), texGraphUrl: worldFileUrl('world3d-texgraph.js') }))
+    .then((m) => m.createWorldHost({ width: W, height: H, oidnWeights: weightsUrl(), oidnWeightsLarge: weightsUrl('large'), nativeOidnUrl: '/api/world3d/oidn', guestUrl: worldFileUrl('world3d-eval.js'), rigidUrl: worldFileUrl('world3d-rigid.js'), simUrl: worldFileUrl('world3d-sim.js'), texGraphUrl: worldFileUrl('world3d-texgraph.js') }))
     .then((host) => {
       state.host = host;
       // (robust) the preview's world lost its GPU device: loaded again on a new one (recoverLostPreview)
@@ -432,6 +456,7 @@ function requestHost(engine, W, H) {
 // the scene, so an effect never rebuilds the world.
 function collectModels(engine, env, time, mod) {
   const models = [], materials = {}, parts = [], fx = [], grow = [];
+  const blockingMuted = findBlockingMuteRigAt(env.channels, (ch) => env.layoutMap.get(ch.id), time);
   for (const channel of env.channels) {
     if (channel.visible === false || channel.cameraLocked || !channel.items?.length) continue;
     const layout = env.layoutMap.get(channel.id);
@@ -439,7 +464,7 @@ function collectModels(engine, env, time, mod) {
     if (index < 0) continue;
     const item = channel.items[index];
     const clip = env.clipsMap.get(item?.clipId);
-    if (clip?.mediaType !== 'model3d' || !mod.getModelObject(item.id) || modelKeepsOwnPass(item, () => modelFxLiveAt(item, layout[index], time))) continue;
+    if (clip?.mediaType !== 'model3d' || (blockingMuted && item.aiRole !== 'composite') || !mod.getModelObject(item.id) || modelKeepsOwnPass(item, () => modelFxLiveAt(item, layout[index], time))) continue;
     const url = mod.resolveModelUrlFor(item, clip);
     const physics = item.model3dConfig?.physics;
     const rigid = physics === 'falls' ? { rigid: true } : physics === 'solid' ? { rigid: { fixed: true } } : {};
@@ -463,7 +488,8 @@ function collectModels(engine, env, time, mod) {
     if (url && !url.startsWith('model-primitive:')) {
       // (rigging) a file's skeleton made in the project goes with it: the world binds its own copy the same way
       const skeleton = item.model3dConfig?.skeleton && typeof item.model3dConfig.skeleton === 'object' ? { skeleton: item.model3dConfig.skeleton } : {};
-      models.push(mod.isSplatUrl(url) ? { id: item.id, name: channel.name, splat: url, ...rigid } : { id: item.id, name: channel.name, url, ...rigid, ...skeleton });
+      const skinning = item.model3dConfig?.skinning ? { skinning: item.model3dConfig.skinning } : {};
+      models.push(mod.isSplatUrl(url) ? { id: item.id, name: channel.name, splat: url, ...rigid } : { id: item.id, name: channel.name, url, ...rigid, ...skeleton, ...skinning });
       // A splat has no surface for a mask; its effects need a pass of their own in the world first.
       if (live.length && !mod.isSplatUrl(url)) fx.push({ itemId: item.id, objects: [item.id], effects: live });
       if (growFill && !mod.isSplatUrl(url)) grow.push({ itemId: item.id, growFill, objects: [item.id], parts: false });
@@ -520,23 +546,187 @@ async function loadMeshFile(object) {
   };
 }
 
-async function buildScene(engine, scene, parts, backdrop) {
+/** Camera and backdrop pose for loading previews (background + unstyled clay), matching `poseWorld` so there is no jump when Draft lands. */
+function initialPreviewPose(engine, time, rig, backdrop, excludeIds) {
+  const { w: W, h: H } = engine.videoSize;
+  const sceneT = sceneTimeAt(rigEntriesOf(engine), time);
+  const locked = engine.worldActive;
+  const proxy = !locked && engine.cameraPose ? cameraProxyFromPose(engine.cameraPose, W, H) : null;
+  const ownCamera = !!rig?.scene?.camera;
+  const rest = (H * 0.5) / Math.tan((28 * Math.PI) / 180 / 2);
+  const camera = ownCamera ? null : worldCamera(proxy, rest);
+  const steer = ownCamera && proxy ? worldSteer(proxy, rest) : null;
+  const objects = backdrop ? { backdrop: worldMatrix(backdrop.matrix) } : {};
+  return { camera, steer, freeCamera: !ownCamera, time: sceneT, objects, excludeIds };
+}
+
+/** Copies a loading preview frame (sky/background or unstyled clay) from the world canvas into the compositor plate and repaints. */
+function commitLoadingPreview(engine, generation, meta) {
+  if (!meta || generation !== state.generation || state.plateGeneration === generation || state.releasing || !state.host || !engine?.renderer) return;
+  const p = ensurePlate(meta.width, meta.height, engine.renderer);
+  const r = engine.renderer;
+  const bands = meta.bands || 2;
+  const m = p.material;
+  m.uniforms.uHandoff.value = p.texture;
+  m.uniforms.uNear.value = engine.camera?.near ?? 1;
+  m.uniforms.uFar.value = engine.camera?.far ?? 100000;
+  m.uniforms.uPicY.value.set(1 / bands, (bands - 1) / bands);
+  m.uniforms.uBandY.value.set(1 / bands, (bands - 2) / bands);
+  m.uniforms.uMaskY.value.set(1 / bands, 0);
+  const worldNear = meta.near || WORLD_NEAR, worldFar = meta.far || WORLD_FAR;
+  m.uniforms.uWorldNear.value = worldNear;
+  m.uniforms.uWorldRatio.value = worldFar / worldNear;
+  m.uniforms.uK1.value = 0;
+  const tanHalf = Math.tan(((meta.fov || 28) * Math.PI) / 360);
+  m.uniforms.uLens.value.set(2 * tanHalf * (meta.width / Math.max(1, meta.height)), 2 * tanHalf);
+  if (m.uniforms.uSoften) {
+    m.uniforms.uSoften.value = 0;
+    m.uniforms.uBlack.value = 0;
+    m.uniforms.uGrain.value = 0;
+    m.uniforms.uSharpen.value = 0;
+    m.uniforms.uBlackTint.value.set(1, 1, 1);
+    m.uniforms.uTexel.value.set(1 / Math.max(1, meta.width), 1 / Math.max(1, bands * meta.height));
+  }
+  p.texture.needsUpdate = true;
+  const before = r.getRenderTarget(), autoClear = r.autoClear;
+  const slicing = meta.slicing || null;
+  const slices = slicing ? slicing.n : 1;
+  try {
+    for (let k = 0; k < slices; k += 1) {
+      if (slicing) {
+        if (k > 0) { state.host.world.drawPreviewSlice?.(k); p.texture.needsUpdate = true; }
+        const tall = bands * slicing.band;
+        const sv = meta.height / tall, o = 1 - (meta.height - k * slicing.rows + slicing.pad) / tall;
+        m.uniforms.uPicY.value.set(sv, o);
+        m.uniforms.uBandY.value.set(sv, o - 1 / bands);
+        m.uniforms.uMaskY.value.set(sv, o - 2 / bands);
+        if (m.uniforms.uTexel) m.uniforms.uTexel.value.set(1 / Math.max(1, meta.width), 1 / tall);
+        const a = k * slicing.rows, b = Math.min(meta.height, (k + 1) * slicing.rows);
+        p.sliceGeometry ??= p.fullGeometry.clone();
+        const pos = p.sliceGeometry.attributes.position, uvs = p.sliceGeometry.attributes.uv;
+        for (const [i, top] of [[0, true], [1, true], [2, false], [3, false]]) {
+          const row = top ? a : b;
+          pos.setY(i, 1 - (2 * row) / meta.height);
+          uvs.setY(i, 1 - row / meta.height);
+        }
+        pos.needsUpdate = true; uvs.needsUpdate = true;
+        for (const mesh of p.meshes) mesh.geometry = p.sliceGeometry;
+      }
+      r.autoClear = k === 0;
+      r.setRenderTarget(p.target);
+      r.render(p.scene, p.camera);
+    }
+  } finally {
+    if (slicing) for (const mesh of p.meshes) mesh.geometry = p.fullGeometry;
+    r.setRenderTarget(before);
+    r.autoClear = autoClear;
+  }
+  const range = meta.viewRange || null;
+  state.previewGeneration = generation;
+  state.previewMeta = {
+    viewDistance: range ? ((range.near + range.far) / 2) / WORLD_UNITS : (engine.videoSize.h * 0.5) / Math.tan((14 * Math.PI) / 180),
+    viewRange: range ? { near: range.near / WORLD_UNITS, far: range.far / WORLD_UNITS } : null,
+  };
+  if (!engine.isPlaying && !engine.exporting) engine.renderFrame?.();
+}
+
+/** Tiny reusable 2x2 solid display-colour texture for frame-0 background before the world bundle or HDRI finishes loading. */
+function solidBackgroundTexture(r8, g8, b8, fullW, fullH) {
+  const key = `${r8},${g8},${b8}`;
+  if (!state.solidPreview) {
+    const data = new Uint8Array([r8, g8, b8, 255, r8, g8, b8, 255, r8, g8, b8, 255, r8, g8, b8, 255]);
+    const tex = new THREE.DataTexture(data, 2, 2, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.colorSpace = THREE.NoColorSpace;
+    tex.magFilter = tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    state.solidPreview = { key, texture: tex };
+  } else if (state.solidPreview.key !== key) {
+    const data = new Uint8Array([r8, g8, b8, 255, r8, g8, b8, 255, r8, g8, b8, 255, r8, g8, b8, 255]);
+    state.solidPreview.texture.image.data.set(data);
+    state.solidPreview.texture.needsUpdate = true;
+    state.solidPreview.key = key;
+  }
+  state.solidPreview.texture.userData.fullW = fullW;
+  state.solidPreview.texture.userData.fullH = fullH;
+  return state.solidPreview.texture;
+}
+
+/**
+ * What the Scene layer shows while a fresh or switched 3D Scene is still loading (editor preview only; never on exports/stills):
+ * first the rendered background or unstyled clay preview plate if available, else the scene's solid background colour on frame 0
+ * (leaving cyclorama scenes to `renderRigLayer` and transparent-sky scenes transparent).
+ */
+export function worldLoadingPreview(engine, rig) {
+  if (!engine || renderingNow(engine) || engine.worldFrameReady || !isWorldRig(rig) || rig?.muteBlocking === true || worldBlockedOn(engine) || state.failed) return null;
+  if (state.previewGeneration === state.generation && state.plate?.renderer === engine.renderer) {
+    return {
+      texture: state.plate.target.texture,
+      depthTexture: state.plate.target.depthTexture,
+      viewDistance: state.previewMeta?.viewDistance ?? null,
+      viewRange: state.previewMeta?.viewRange ?? null,
+    };
+  }
+  if (rig.cyclorama?.shape && rig.cyclorama.shape !== 'none') return null;
+  const { w: W, h: H } = engine.videoSize || { w: 1920, h: 1080 };
+  const env = rig.scene?.env;
+  const bg = env?.background;
+  if (typeof bg === 'string' && bg !== 'env' && bg !== 'none') {
+    const c = new THREE.Color();
+    try { c.set(bg); } catch { return null; }
+    const srgb = { r: 0, g: 0, b: 0 };
+    c.getRGB(srgb, THREE.SRGBColorSpace);
+    return {
+      texture: solidBackgroundTexture(Math.round(srgb.r * 255), Math.round(srgb.g * 255), Math.round(srgb.b * 255), W, H),
+      depthTexture: null, viewDistance: null, viewRange: null,
+    };
+  }
+  if ((bg === 'env' || bg === undefined) && env?.opaque && Array.isArray(env?.flat) && env.flat.length >= 3) {
+    const exp = (Number.isFinite(rig.exposure) ? rig.exposure : 1) * (Number.isFinite(env.intensity) ? env.intensity : 1);
+    const toByte = (v) => {
+      const lin = Math.max(0, Number(v) || 0) * exp;
+      const mapped = lin / (1 + lin);
+      const s = mapped <= 0.0031308 ? 12.92 * mapped : 1.055 * (mapped ** (1 / 2.4)) - 0.055;
+      return Math.max(0, Math.min(255, Math.round(s * 255)));
+    };
+    return { texture: solidBackgroundTexture(toByte(env.flat[0]), toByte(env.flat[1]), toByte(env.flat[2]), W, H), depthTexture: null, viewDistance: null, viewRange: null };
+  }
+  return null;
+}
+
+async function buildScene(engine, scene, parts, backdrop, { generation = state.generation, time = 0, rig = null, excludeIds = null } = {}) {
   const { host } = state;
+  if (!state.load) reportLoad({ stage: 'objects' });
   // Placement arrives with each frame's pose, so the arrays themselves stand at the origin.
   const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   if (backdrop) host.setBaked('backdrop', { ...backdrop, matrix: IDENTITY });
   for (const { id, part } of parts) host.setBaked(id, { ...part, matrix: IDENTITY });
+  const wantsPreview = !renderingNow(engine) && state.plateGeneration !== generation;
+  const previewPose = wantsPreview ? initialPreviewPose(engine, time, rig, backdrop, excludeIds) : null;
+  const hdriPromise = scene.env.hdri && !scene.env.sky ? host.loadHdri(scene.env.hdri) : Promise.resolve();
+  let clayStarted = false;
+  const bgPreview = wantsPreview ? hdriPromise.then(async () => {
+    if (clayStarted || generation !== state.generation || state.plateGeneration === generation || state.releasing) return;
+    const meta = await host.renderPreviewBackground?.(scene, previewPose);
+    if (!clayStarted && meta) commitLoadingPreview(engine, generation, meta);
+  }).catch(() => {}) : Promise.resolve();
   await Promise.all([
-    ...scene.objects.filter((o) => o.model).map((o) => host.loadModel(o.model)),
-    ...scene.objects.filter((o) => o.splat).map((o) => host.loadSplat(o.splat)),
+    ...(scene.objects || []).filter((o) => o.model).map((o) => host.loadModel(o.model)),
+    ...[...new Set((scene.objects || []).flatMap((o) => [o.splat, ...(Array.isArray(o.graph) ? o.graph.filter((n) => n?.op === 'splat' && typeof n.source === 'string').map((n) => n.source) : [])]).filter(Boolean))].map((u) => host.loadSplat(u)),
+    // (audio clocks) each song once, however many clocks read it
+    ...[...new Set(Object.values(scene.clocks || {}).map((c) => c?.audio?.url).filter(Boolean))].map((u) => host.loadAudio?.(u)).filter(Boolean),
     // (screensharp) kept by where the geometry is in its file (meshKey.js), not by `baked`: converted models all name theirs m0_0, …
-    ...scene.objects.filter((o) => o.mesh).map(async (o) => { host.setBaked(meshStoreKey(o), await loadMeshFile(o)); }),
-    ...(scene.env.hdri ? [host.loadHdri(scene.env.hdri)] : []),
+    ...(scene.objects || []).filter((o) => o.mesh).map(async (o) => { host.setBaked(meshStoreKey(o), await loadMeshFile(o)); }),
+    hdriPromise,
   ]);
+  clayStarted = true;
+  await bgPreview;
   host.world.onProgress = (stage, done, total) => reportLoad({ stage, done, total });
   // (mblur2) a render with motion blur: the sims' Draft draws are built taking the time drawn (reserveWorldMotion)
   if (state.shiftWanted) host.world.wantMotionShift?.();
-  state.sceneWarnings = (await host.setScene(scene)) || [];
+  state.sceneWarnings = (await host.setScene(scene, wantsPreview
+    ? { preview: previewPose, onPreview: (meta) => commitLoadingPreview(engine, generation, meta) }
+    : undefined)) || [];
   // (mblur) a render with motion blur: the trace's kernels are built with the shutter's code from the first (reserveWorldMotion)
   if (state.motionWanted) host.world.reserveMotion?.();
   reportLoad({ stage: 'frame' });
@@ -647,7 +837,10 @@ export function prepareWorldFrame(engine, env, time) {
   engine.worldMaskKeys = masks.keys;
   state.maskSets = masks.sets;
   const rig = engine.activeRigAt?.(time);
-  if (!isWorldRig(rig) || worldBlockedOn(engine) || state.failed) return false;
+  if (!isWorldRig(rig) || worldBlockedOn(engine) || state.failed) {
+    if (!state.building && !state.loading && state.load && state.load.stage !== 'final') reportLoad(null);
+    return false;
+  }
   // (filmbugs) a render's frame with no Scene layer on the timeline: no world picture in it, none drawn or traced (worldSceneOn)
   if (renderingNow(engine) && !worldSceneOn(engine, time)) return false;
   // (filmbugs) a held frame (worldHold): the world's picture of the frame's own time, traced once with its shutter, stays as drawn while the
@@ -666,6 +859,8 @@ export function prepareWorldFrame(engine, env, time) {
   const { w: W, h: H } = engine.videoSize;
   if (!state.host) { requestHost(engine, W, H); return false; }
   if (!mod?.cycloramaArrays) return false;
+  // (audio clocks) a model layer's pose reads Scene objects with the clocks the world baked: handed over once per model module
+  if (state.sceneSourceFor !== mod) { mod.setWorldSceneSource?.(builtScene); state.sceneSourceFor = mod; }
   // (mblur5) the Scene layer this frame lays the world out for (a render's shutter takes its poses of it: worldShowsSceneAt)
   state.sceneItem = resolveRigAt(rigEntriesOf(engine), time)?.itemId ?? null;
 
@@ -675,7 +870,22 @@ export function prepareWorldFrame(engine, env, time) {
   // (mblur3) for the Rig's keyed lights at the other times of a shutter (shutterLive)
   state.liveOptions = options;
   // (the Rig as it rests too: a scene's own environment follows the Rig's environment keys from it, world3dScene.js)
-  const { look: sceneLook, exposure = 1, ...structure } = worldSceneFromRig(rig, { ...options, resting: resolveRigAt(rigEntriesOf(engine), time)?.rig });
+  const blockingMuted = findBlockingMuteRigAt(env.channels, (ch) => env.layoutMap.get(ch.id), time);
+  const sceneRigInput = blockingMuted ? { ...rig, muteBlocking: true } : rig;
+  const { look: sceneLook, exposure = 1, ...structure } = worldSceneFromRig(sceneRigInput, { ...options, resting: resolveRigAt(rigEntriesOf(engine), time)?.rig });
+  // (audio clocks) a clock on a clip or on the timeline reads the item it names where that item plays: its start, trim and speed, on the
+  // Scene's own clock (the timeline's less its item's start, rig3d.js sceneTimeAt). The items are listed again only when the timeline changes.
+  const placeClocks = (sc) => {
+    if (!hasAudioClocks(sc) || typeof env?.clipsMap?.get !== 'function') return;
+    const a = state.audioItems;
+    if (!a || a.channels !== env.channels || a.clipsMap !== env.clipsMap || a.layoutMap !== env.layoutMap) {
+      state.audioItems = { channels: env.channels, clipsMap: env.clipsMap, layoutMap: env.layoutMap,
+        items: timelineAudioItems(env.channels, env.clipsMap, (ch) => env.layoutMap?.get(ch.id)), clips: [...env.clipsMap.values()] };
+    }
+    const { items, clips } = state.audioItems;
+    sc.clocks = placeAudioClocks(sc.clocks, { items, clips, sceneStart: resolveRigAt(rigEntriesOf(engine), time)?.startTime ?? 0 });
+  };
+  placeClocks(structure);
   // (vfx) a Scene filmed into footage with the footage's softness lays the footage's grain on where its picture joins the footage, after
   // that softness (compositeNodes.js): the world's own pass then films without it, or the blur would take most of it away
   const plateGrain = Number(sceneLook?.soften) > 0 && Number(sceneLook?.grain) > 0 ? Math.min(2, Number(sceneLook.grain)) : 0;
@@ -685,10 +895,11 @@ export function prepareWorldFrame(engine, env, time) {
   const scene = { ...structure, look, exposure };
   // Film settings change a shader's numbers, so a slider must not rebuild the world. Nor does a Rig's key: it moves the lights, the
   // environment and the backdrop's paint on every frame, which the world takes in place, so the key is the Rig as it rests.
-  const resting = resolveRigAt(rigEntriesOf(engine), time)?.rig;
-  const keyed = !!resting && resting !== rig;
+  const restingRaw = resolveRigAt(rigEntriesOf(engine), time)?.rig;
+  const resting = blockingMuted && restingRaw ? { ...restingRaw, muteBlocking: true } : restingRaw;
+  const keyed = !!restingRaw && restingRaw !== rig;
   const restingScene = keyed ? worldSceneFromRig(resting, options) : null;
-  if (restingScene) { delete restingScene.look; delete restingScene.exposure; }
+  if (restingScene) { delete restingScene.look; delete restingScene.exposure; placeClocks(restingScene); }
   // (physcam) the camera's picture-only fields (its device, auto-exposure, noise, compensation, distortion, ISO, shutter) are taken in place
   // (WorldRenderer.setCameraFilm below), never a rebuild
   const key = JSON.stringify(withoutCameraFilm(restingScene || structure));
@@ -730,11 +941,14 @@ export function prepareWorldFrame(engine, env, time) {
     // A world left at the previous project's frame (Keyboard pillows, portrait) built the next one's shaders and Draft measures at that
     // size and resized after: the night desk after the clover film came out 0.1 level off its fresh picture everywhere
     state.host.world.setSize(Math.max(1, Math.round(W)), Math.max(1, Math.round(H)));
-    buildScene(engine, scene, parts, backdrop)
+    const excludeIds = new Set([...nodes.values()].flat());
+    buildScene(engine, scene, parts, backdrop, { generation, time, rig, excludeIds })
       .then(() => { state.ready = true; state.sceneError = null; state.builtKey = key; state.builtItems = items; state.builtNodes = nodes; state.builtGeneration = generation; })
       .catch((e) => {
         // The scene is wrong, not the renderer: say so on the Scene, keep the Rig's own passes, and try again on the next edit.
         state.ready = false;
+        state.previewGeneration = -1;
+        state.previewMeta = null;
         reportLoad(null);
         state.sceneError = String(e?.message || e);
         console.warn('[world3d] scene failed:', e);
@@ -775,7 +989,7 @@ export function prepareWorldFrame(engine, env, time) {
   // 3D Text lays its letters out while its channel draws (world3dText.js), so a frame with letters in the world is posed and drawn once
   // every channel has (finishWorldFrame). The preview does it once this world has a picture of its own to fall back on. A world bundle
   // built before letters could stand in it keeps them in their own pass; flat text (textInWorld) needs one that takes cards.
-  const textLayers = state.host.world.setLetters
+  const textLayers = state.host.world.setLetters && !rigWantsNoWorldText(env)
     ? worldTextLayers(env, time, { keepsOwnPass: textKeepsOwnPass, activeIndex: resolveActiveIndex }).filter((l) => !l.flat || state.host.world.setFlatLetters)
     : [];
   if (textLayers.length && (state.plateGeneration === state.generation || engine.exporting || state.filming || RENDER_PAGE)) {
@@ -886,11 +1100,12 @@ function meterSamples(engine, env, time, rig, m, spec, start, ks, rendering) {
       let nodePoses = {};
       if (rigged) {
         state.scenePoser ||= createScenePoser();
-        nodePoses = state.scenePoser.pose(rig.scene, sk, (id) => world.rigInfo(id)).nodePoses;
+        nodePoses = state.scenePoser.pose(worldClocksScene(rig.scene), sk, (id) => world.rigInfo(id)).nodePoses;
       }
       world.setPose({ camera: null, steer, objects: withBackdropAt(engine, rigAt, t, models?.objects), lens: null, time: sk,
         nodePoses: { ...(models?.nodePoses || {}), ...nodePoses }, ...(models?.morphs ? { morphs: models.morphs } : {}) });
-      const physical = physicalExposure({ ...cam, iso: sampleField(cam, 'iso', sk, rig.scene), shutter: sampleField(cam, 'shutter', sk, rig.scene), fStop: sampleField(cam, 'fStop', sk, rig.scene) }) ?? 1;
+      const camScene = worldClocksScene(rig.scene);
+      const physical = physicalExposure({ ...cam, iso: sampleField(cam, 'iso', sk, camScene), shutter: sampleField(cam, 'shutter', sk, camScene), fStop: sampleField(cam, 'fStop', sk, camScene) }) ?? 1;
       // the Rig's own exposure and its environment's (the world's base exposure, world3dScene.js), times the camera's own
       const rigT = rigAt(t);
       const rigExposure = Number.isFinite(rigT?.exposure) && rigT.exposure > 0 ? rigT.exposure : 1;
@@ -1024,10 +1239,11 @@ function poseWorld(engine, time, rig, models, parts, backdrop) {
   const proxy = !locked && engine.cameraPose ? cameraProxyFromPose(engine.cameraPose, W, H) : null;
   // A scene that names its own camera films from it, keys included. Delete it to hand the shot to the Camera layer.
   const ownCamera = !!rig.scene?.camera;
-  host.world.freeCamera = !ownCamera;
+  const diag = state.diagnosticCamera ? diagnosticPose(state.diagnosticCamera) : null;
+  host.world.freeCamera = diag ? true : !ownCamera;
   const rest = (H * 0.5) / Math.tan((28 * Math.PI) / 180 / 2);
-  const camera = ownCamera ? null : worldCamera(proxy, rest);
-  const steer = ownCamera && proxy ? worldSteer(proxy, rest) : null;
+  const camera = diag || (ownCamera ? null : worldCamera(proxy, rest));
+  const steer = diag ? null : (ownCamera && proxy ? worldSteer(proxy, rest) : null);
   const objects = {};
   for (const m of models) {
     if (m.url || m.splat) { const e = mod.modelWorldMatrix(m.id); if (e) objects[m.id] = worldMatrix(e); }
@@ -1057,7 +1273,7 @@ function poseWorld(engine, time, rig, models, parts, backdrop) {
   // (rigging) Scene objects with a skeleton and a pose: posed here through the same pipeline, the world takes their joints' matrices
   if (host.world.rigInfo && rig.scene && Array.isArray(rig.scene.objects) && rig.scene.objects.some((o) => o?.skeleton && o?.pose)) {
     state.scenePoser ||= createScenePoser();
-    const posed = state.scenePoser.pose(rig.scene, sceneT, (id) => host.world.rigInfo(id));
+    const posed = state.scenePoser.pose(worldClocksScene(rig.scene), sceneT, (id) => host.world.rigInfo(id));
     for (const [id, arr] of Object.entries(posed.nodePoses)) { nodePoses[id] = arr; poseSig = signFloats(poseSig, arr); }
     for (const [id, a] of posed.attachments) held.set(id, a);
   }
@@ -1065,10 +1281,28 @@ function poseWorld(engine, time, rig, models, parts, backdrop) {
   for (const id of state.heldIds || []) if (!held.has(id)) held.set(id, { matrix: null, weight: 0 });
   if (held.size) state.heldIds = new Set(held.keys());
   for (const [id, a] of held) {
-    const own = sceneObjectMatrix(rig.scene, id, sceneT);
-    if (!own) continue;
-    objects[id] = heldMatrix(rig.scene, id, own, a, sceneT);
-    poseSig = signFloats(poseSig, objects[id]);
+    const own = sceneObjectMatrix(worldClocksScene(rig.scene), id, sceneT);
+    if (own) {
+      objects[id] = heldMatrix(worldClocksScene(rig.scene), id, own, a, sceneT);
+      poseSig = signFloats(poseSig, objects[id]);
+      continue;
+    }
+    if (objects[id]) {
+      objects[id] = heldModelMatrix(objects[id], a, WORLD_UNITS);
+      poseSig = signFloats(poseSig, objects[id]);
+      continue;
+    }
+    const modelParts = parts.filter((p) => p.itemId === id);
+    if (modelParts.length) {
+      const e = mod.modelWorldMatrix(id);
+      if (e) {
+        const heldBase = new THREE.Matrix4().fromArray(heldModelMatrix(worldMatrix(e), a, WORLD_UNITS));
+        for (const { id: partId, part } of modelParts) {
+          objects[partId] = heldBase.clone().multiply(new THREE.Matrix4().fromArray(part.matrix)).elements;
+          poseSig = signFloats(poseSig, objects[partId]);
+        }
+      }
+    }
   }
   // The Scene's own surfaces that show a layer of the timeline or a video (a material's `screen`, a card of kind "layer"): drawn here
   // when their source shows another picture, worn by the world (liveLayers.js). A scene with none costs one lookup.
@@ -1077,7 +1311,8 @@ function poseWorld(engine, time, rig, models, parts, backdrop) {
   // Moving nothing must not cost a frame, or a resting trace would start over on every repaint.
   if (backdrop) objects.backdrop = worldMatrix(backdrop.matrix);
   const D = (H * 0.5) / Math.tan((28 * Math.PI) / 180 / 2);
-  const lens = ownCamera ? null : worldLens(getCameraDofSettings(engine.cameraPose, D), W, camera.fov, W / H);
+  // (multiview) a diagnostic view films sharp through the renderer's `pinhole`: a lens here would be written into the scene's own camera
+  const lens = diag || ownCamera ? null : worldLens(getCameraDofSettings(engine.cameraPose, D), W, camera.fov, W / H);
   // (smallfix) a sub-frame of the export's motion blur (engine.shutterFrameTime, exporter.js): the objects' `visible` keys at the frame's time
   // (enginebugs) on the Scene's own clock, as the world reads its keys
   const visibleAt = Number.isFinite(engine.shutterFrameTime) ? sceneTimeAt(rigEntriesOf(engine), engine.shutterFrameTime) : null;
@@ -1087,7 +1322,7 @@ function poseWorld(engine, time, rig, models, parts, backdrop) {
   if (poseKey !== state.poseKey) {
     state.poseKey = poseKey;
     state.touched = performance.now();
-    host.world.setPose({ camera, steer, objects, lens, time: sceneT, nodePoses, ...(morphs ? { morphs } : null), ...(visibleAt != null ? { visibleAt } : null) });
+    host.world.setPose({ camera, steer, objects, lens, time: sceneT, nodePoses, pinhole: !!diag, ...(morphs ? { morphs } : null), ...(visibleAt != null ? { visibleAt } : null) });
   }
   // A Scene that films from its own camera films a model's own pass from it too (a model out of the world, by one of the six, a blur or
   // a flat effect), so the model stands where the world would show it. The world's units are the editor's px times WORLD_UNITS.
@@ -1179,9 +1414,11 @@ export async function worldFarmHandoff(engine) {
   if (!world || !state.ready || !engine.worldFrameReady || state.farm) throw new Error('[FARM_NO_WORLD] the 3D Scene did not draw this frame');
   return world.readHandoff();
 }
-/** A render's farm frames: { base: URL prefix of `<n>.png` / `<n>.json`, fps }, or null when the render traces at home. */
+/** A render's farm frames: { base: URL prefix of `<n>.png` / `<n>.json`, fps, runs? }, or null when the render traces at home. `runs`
+ *  (farmfix): the [first, last] runs of frames the farm traced (its plan's), so no frame past them is asked for. */
 export function setWorldFarm(source) {
-  state.farm = source && source.base ? { base: String(source.base), fps: Math.max(1, Number(source.fps) || 30), cache: new Map() } : null;
+  const runs = Array.isArray(source?.runs) && source.runs.length ? source.runs.map((r) => [Number(r?.[0]), Number(r?.[1])]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b)) : null;
+  state.farm = source && source.base ? { base: String(source.base), fps: Math.max(1, Number(source.fps) || 30), cache: new Map(), runs } : null;
   state.farmFrame = null;
 }
 const farmFrameNumber = (time) => Math.round(time * state.farm.fps);
@@ -1217,7 +1454,10 @@ async function farmFrameSettle(engine) {
   try { frame = await farmFrameLoad(n); } catch (e) { throw Object.assign(e, { finalStall: true }); }
   // the next ones, while this one composites: only frames the farm traced (a Final Scene's); (filmbugs) the frames after the last of a
   // Final Scene (a flat shot over a Draft Scene, the end) are home frames, which the farm never had: asking for them was a 404 each
-  for (let k = 1; k <= 3; k += 1) if (farmTraced(engine, (n + k) / state.farm.fps)) farmFrameLoad(n + k).catch(() => {});
+  // (farmfix) and only frames the farm has (its plan's runs, when the render gave them): the frame at the film's end time is past the
+  // film's last frame, and was asked for after the last one (a 404 each composite)
+  const farmHas = (k) => !state.farm.runs || state.farm.runs.some(([a, b]) => k >= a && k <= b);
+  for (let k = 1; k <= 3; k += 1) if (farmHas(n + k) && farmTraced(engine, (n + k) / state.farm.fps)) farmFrameLoad(n + k).catch(() => {});
   if (frame.width !== state.host.world.width || frame.height !== state.host.world.height * frame.bands) {
     throw Object.assign(new Error(`[FARM_FRAME_SIZE] farm frame ${n} is ${frame.width}×${frame.height}; this render's Scene draws at ${state.host.world.width}×${state.host.world.height}`), { finalStall: true });
   }
@@ -1264,14 +1504,14 @@ function drawWorldFrameNow(engine, time, rig, models, parts, backdrop, fx = [], 
   // (octane2) what the Scene shows (render.passes) and the masks the timeline's world mattes ask for
   host.world.setPasses?.(rig.render?.passes, state.maskSets);
   const shown = rig.render?.passes?.show;
-  state.passNote = rig.render?.mode !== 'final' && ['diffuse', 'specular', 'emission'].includes(shown)
+  state.passNote = !filmsFinal(rig) && ['diffuse', 'specular', 'emission'].includes(shown)
     ? `render.passes.show "${shown}" is a light pass, which only Final traces: Draft shows the picture (set render.mode "final")` : null;
   // Off in the preview unless the Scene asks, and always in a render: speed is for the person watching. The render page has nobody
   // watching, and its stills are taken away like its renders: there they stay on.
   host.world.setRasterShadows(rig.render?.draftShadows === true || !!engine.exporting || RENDER_PAGE);
   // On the render page a Final Scene's every kept frame is traced (settleWorldFrame) and its warm-up only loads: no Draft is drawn for it
   // (WorldRenderer.setDraftUnused).
-  host.world.setDraftUnused?.(RENDER_PAGE && rig.render?.mode === 'final');
+  host.world.setDraftUnused?.(RENDER_PAGE && filmsFinal(rig));
   // (engine100b) Final's own exposure over Draft's: the render's alone. The environment's exposure is in the film's already (the scene's
   // exposure, worldSceneFromRig: the Rig's times its environment's), and taken here again it was squared in Final (env exposure 2: Final
   // 4x, Draft 2x), as the Motion Engine's player never did
@@ -1279,7 +1519,7 @@ function drawWorldFrameNow(engine, time, rig, models, parts, backdrop, fx = [], 
   // Final 3D waits until hands stop: scrubbing stays in Draft, and the trace comes back right after.
   // A render's traced frame stays until the pose moves on: more repaints follow it before the frame is read.
   // Only a Final render's own repaints: a Draft render later in the same page, at a pose a Final frame once had, is drawn, not that trace.
-  const filming = state.filming || (state.filmedPose === poseKey && rig.render?.mode === 'final');
+  const filming = state.filming || (state.filmedPose === poseKey && filmsFinal(rig));
   // (robust) a preview Final stopped on a GPU failure (worldStatus) traces nothing until Final is turned on again
   host.world.setTrace(filming || (state.final && !state.finalFailed && !state.finalStarting && !engine.isPlaying && !engine.exporting && performance.now() - state.touched > 180 && !state.hidden?.length));
   // A WebGPU canvas is blank again once it has been shown, so the plate only reads frames drawn in this same task.
@@ -1313,7 +1553,7 @@ function drawWorldFrameNow(engine, time, rig, models, parts, backdrop, fx = [], 
     if (engine.exporting && frameFaultOn('blankWorld')) { host.world.renderer.setRenderTarget(null); host.world.renderer.clear(); drew = undefined; }
     else drew = host.world.frame({ wait: !atOnce, settle: !atOnce });
     if (drew === false) state.fresh = false;
-    else if (state.load?.stage === 'frame') reportLoad(null);
+    else if (state.load && state.load.stage !== 'final') reportLoad(null);
   }
   // ... as this frame drew it: Final's trace has its own exposure, environment and no contact shadows (worldLookFor).
   if (engine.worldLook) engine.worldLook = worldLookFor(host.world, rig, engine.worldLook.lookOf, engine.worldLook.exposure);
@@ -1335,7 +1575,7 @@ export function handWorldText(engine, item, run, transform, flat = null) {
   const d = state.deferred;
   if (!d || !engine.worldTakesText) return false;
   // (animtools) a layer riding a Scene object (`worldParent`): that object's place at this frame
-  const parent = parentMatrixAt(engine, d.rig?.scene || state.host?.scene, item, d.time);
+  const parent = parentMatrixAt(engine, worldClocksScene(d.rig?.scene) || state.host?.scene, item, d.time);
   if (flat) {
     if (!state.host?.world.setFlatLetters) return false;
     d.flat.set(item.id, { run, transform, opacity: flat.opacity ?? 1, parent });
@@ -1409,7 +1649,7 @@ export function worldTakesLetters(engine, channel, item, clip) {
  *  letter that changes its glyph inside the shutter): the frame is then rendered as sub-frames. (mblur6) A letter that fades or changes
  *  colour there: `looks` 'tint' (Final) hands each time the letter's brightest look and its tint at that time, 'own' (Draft) its own look. */
 function shutterLetters(engine, env, textAt, time, times, looks = 'tint') {
-  if (!textAt || !env?.channels || !state.host?.world?.setLetters || !engine.model3d?.glyphGeometry) return null;
+  if (!textAt || !env?.channels || !state.host?.world?.setLetters || !engine.model3d?.glyphGeometry || rigWantsNoWorldText(env)) return null;
   const layersAt = (t) => worldTextLayers(env, t, { keepsOwnPass: textKeepsOwnPass, activeIndex: resolveActiveIndex }).filter((l) => !l.flat);
   const own = layersAt(time);
   const all = [...new Set([time, ...times])].sort((a, b) => a - b);
@@ -1486,6 +1726,8 @@ export function worldLayerResult(engine) {
   if (state.fresh) {
     state.fresh = false;
     state.plateGeneration = state.generation;
+    state.previewGeneration = -1;
+    state.previewMeta = null;
     const r = engine.renderer;
     p.material.uniforms.uNear.value = engine.camera?.near ?? 1;
     p.material.uniforms.uFar.value = engine.camera?.far ?? 100000;
@@ -1684,7 +1926,7 @@ export function worldGuardSampling(on) {
  *  (what the world drew in view: shown objects in the camera's frustum, +1 for an opaque background) }, `final` { finished,
  *  minSpp, spp, why } for a Final Scene in a render, `gpuReset` when the world's own device was lost since `since` (performance.now()),
  *  and `error` when the picture could not be read back. */
-export async function worldFrameFacts(engine, { since = 0, time = null } = {}) {
+export async function worldFrameFacts(engine, { since = 0, time = null, stripeCorrupt = false } = {}) {
   const { host } = state;
   if (!host || !state.ready || !engine.worldFrameReady || state.farm || state.replay) return null;
   const world = host.world;
@@ -1698,7 +1940,7 @@ export async function worldFrameFacts(engine, { since = 0, time = null } = {}) {
   // as that Final Scene's ("the trace was off for the kept picture", three times, the render stopped)
   const rig = engine.activeRigAt?.(Number.isFinite(time) ? time : engine.currentTime);
   const rendering = engine.exporting || typeof window.__videoRender !== 'undefined';
-  if (rendering && rig?.render?.mode === 'final') {
+  if (rendering && filmsFinal(rig)) {
     const finished = !!world.traceWanted && !!world.traceFinished && !world.traceDirty && (world.traced?.value ?? 0) > 0.5;
     out.final = { finished, minSpp: Number.isFinite(world.minSpp) ? world.minSpp : null, spp: world.trace?.spp ?? null,
       why: finished ? null : !world.traceWanted ? 'the trace was off for the kept picture' : world.traceDirty ? 'the trace started over before the picture was kept' : 'the trace had not finished' };
@@ -1720,7 +1962,33 @@ export async function worldFrameFacts(engine, { since = 0, time = null } = {}) {
       // every sampled point one value and something in view: the whole plate decides (a near-empty picture is not a blank read)
       if (objects > 0) kind = emptyKind(pixelSpread(await readTargetPixels(r, p.target, p.width, p.height)));
     }
-    out.plate = { kind, objects };
+    let corrupt = null;
+    let corruptSample = null;
+    const stripeFault = stripeCorrupt || frameFaultOn('stripeCorrupt');
+    if (!kind || stripeFault) {
+      const sampleCorrupt = detectStripeCorruption(sample, PLATE_SAMPLE, PLATE_SAMPLE);
+      if (sampleCorrupt || stripeFault) {
+        const fullPixels = await readTargetPixels(r, p.target, p.width, p.height).catch(() => null);
+        corrupt = fullPixels ? detectStripeCorruption(fullPixels, p.width, p.height) : sampleCorrupt;
+        if (corrupt && !stripeFault) {
+          if (fullPixels?.length) {
+            const nPx = Math.floor(fullPixels.length / 4);
+            const take = Math.min(nPx, 1024);
+            const step = Math.max(1, Math.floor(nPx / take));
+            const snap = new Uint8Array(Math.ceil(nPx / step) * 4);
+            for (let pi = 0, oi = 0; pi < nPx && oi + 3 < snap.length; pi += step, oi += 4) {
+              const si = pi * 4;
+              snap[oi] = fullPixels[si]; snap[oi + 1] = fullPixels[si + 1]; snap[oi + 2] = fullPixels[si + 2]; snap[oi + 3] = fullPixels[si + 3];
+            }
+            corruptSample = snap;
+          } else if (sample?.length) {
+            corruptSample = new Uint8Array(sample);
+          }
+        }
+        if (stripeFault) corrupt = { ...(corrupt || { axis: 'horizontal', ratio: 1, score: 1 }), injected: true };
+      }
+    }
+    out.plate = { kind, objects, ...(corrupt ? { corrupt } : {}), ...(corruptSample ? { sample: corruptSample } : {}) };
   }
   return out;
 }
@@ -1881,6 +2149,8 @@ export function releaseWorld() {
   const { host, plate } = state;
   if (plate) { plate.target.dispose(); plate.shadowTarget.dispose(); plate.texture.dispose(); plate.material.dispose(); plate.shadowMaterial.dispose(); }
   state.plate = null; state.plateGeneration = -1;
+  state.previewGeneration = -1; state.previewMeta = null;
+  state.solidPreview?.texture?.dispose(); state.solidPreview = null;
   state.farmTexture?.dispose(); state.farmTexture = null; state.farmFrame = null; state.plateFarm = null;
   state.meshFiles = null;
   state.lettersShown = null; state.flatShown = null; state.deferred = null;
@@ -2080,6 +2350,11 @@ async function settleWorldFrameNow(engine, { fps = null, prime = false, handoff:
     engine.renderFrame();
     await worldSettled(engine);
   }
+  // (rigai) an AI video's @video1 prerender is the Scene and nothing else: a Scene that did not build would encode the empty background
+  // and send it to a paid model as the shot, so that render stops with why. Other renders keep the Rig's own passes, as before.
+  if (rig?.prerenderLook && state.sceneError && !state.ready && renderingNow(engine)) {
+    throw Object.assign(new Error(`[GEOMETRY_FAILED] The 3D Scene did not build for the AI video prerender: ${String(state.sceneError).slice(0, 400)}`), { finalStall: true, code: 'GEOMETRY_FAILED' });
+  }
   if (!state.host || !state.ready) return false;
   // (gaps1) a render whose picture the world's GPU cannot draw (its canvas is the picture over its depth, twice as tall): every target
   // would be invalid and the Scene black. Stop the render with the reason, as a frame that never finishes tracing stops it.
@@ -2096,7 +2371,7 @@ async function settleWorldFrameNow(engine, { fps = null, prime = false, handoff:
   const exposed = !prime && await meterSettle(engine);
   // (night run 2026-11-10) a Draft render waits for this build's measure of the sky behind its walls (WorldRenderer.envVisReady), so its
   // frame has it; a set that closes nothing has it at once
-  const sky = rig.render?.mode !== 'final' && !!(await state.host.world.envVisReady?.());
+  const sky = !filmsFinal(rig) && !!(await state.host.world.envVisReady?.());
   // A render lands on every frame exactly, however far the fluid has to step to get there.
   // (enginebugs2) and a 3D Text layer's letters whose Scene material is baked on each glyph (#letterMaterial, an object-space graph):
   // until their bakes land the letters wear their own colours, and a still taken meanwhile (a fresh render page, which hands the letters
@@ -2108,13 +2383,13 @@ async function settleWorldFrameNow(engine, { fps = null, prime = false, handoff:
   const rendering = engine.exporting || typeof window.__videoRender !== 'undefined';
   // A render's warm-up of a Final Scene starts the tracer's own start in workers (WorldRenderer.prepareTrace: BVHs, tangents, the
   // environment's tables) while the page goes on warming up; the first trace below waits for it and the tracer reads what they made.
-  if (prime && rig.render?.mode === 'final' && rendering) state.host.world.prepareTrace?.();
+  if (prime && filmsFinal(rig) && rendering) state.host.world.prepareTrace?.();
   // (robust) a GPU program of this world that this GPU did not compile (a tracer kernel, a material, a pass): the render stops now with
   // its name, in Draft as in Final, never after a frame's whole time limit (the warm-up's capture too: it built the programs)
   if (rendering) await stopOnFailedProgram(state.host.world);
   // A still's next repaint is the frame that is kept: the world's canvas must not have been read since the last rendering update, or that
   // read's picture is what the compositor gets (worldHandoff.js). Waited for first, so the caller repaints after it.
-  if (rig.render?.mode !== 'final' || !rendering || prime) return (!!handoff && await worldHandoffReady(handoff)) || !wasReady || rebuilt || volumes || sky || exposed;
+  if (!filmsFinal(rig) || !rendering || prime) return (!!handoff && await worldHandoffReady(handoff)) || !wasReady || rebuilt || volumes || sky || exposed;
   const w = state.host.world;
   // (gaps1) a Final picture with more pixels than the path tracer's per-pixel buffers hold: say so before it fails inside the tracer
   const traceTooBig = w.traceSizeError?.();
@@ -2151,7 +2426,7 @@ export function worldMotionBlur(engine, { time, window, maxTime = Infinity, came
   const world = state.host?.world;
   const rig = engine.activeRigAt?.(time);
   state.motionLetters = null;
-  if (!isWorldRig(rig) || rig.render?.mode !== 'final' || !world?.setMotionBlur || !state.ready || state.building || state.failed
+  if (!isWorldRig(rig) || !filmsFinal(rig) || !world?.setMotionBlur || !state.ready || state.building || state.failed
     || worldBlockedOn(engine) || state.builtGeneration !== state.generation || !world.motionBlurPossible() || !worldShowsSceneAt(engine, time)) return false;
   const { w: W, h: H } = engine.videoSize;
   const ownCamera = !!rig.scene?.camera;
@@ -2182,7 +2457,7 @@ export function worldMotionBlur(engine, { time, window, maxTime = Infinity, came
     let nodePoses = {};
     if (rigged) {
       state.scenePoser ||= createScenePoser();
-      nodePoses = state.scenePoser.pose(rig.scene, clock(t), (id) => world.rigInfo(id)).nodePoses;
+      nodePoses = state.scenePoser.pose(worldClocksScene(rig.scene), clock(t), (id) => world.rigInfo(id)).nodePoses;
     }
     // (mblur3) the model layers the world draws, posed at that time (their keys, clips and poses)
     const models = env ? worldModelsAt(engine, env, t, rigAt, clock) : null;
@@ -2265,7 +2540,7 @@ export async function primeWorldFrame(engine, time, window = 0) {
   }
   // (on the Scene's own clock, as the world reads its graphs' times); (mblur6) the Rig's keys on their numbers too
   const at = worldClockIn(engine, time)(time);
-  if (window > 0 && rig.render?.mode !== 'final' && state.ready && !state.building) {
+  if (window > 0 && !filmsFinal(rig) && state.ready && !state.building) {
     const graphsAt = rigGraphsAt(engine, time, window);
     if (!graphsAt || state.host.world.rigGraphsTakeable?.(graphsAt)) await state.host.world.shutterGraphs?.(at - window / 2, at + window / 2, graphsAt);
   }
@@ -2298,7 +2573,7 @@ function worldModelsAt(engine, env, t, rigAt = (u) => engine.activeRigAt?.(u), c
   const rig = rigAt(t);
   if (!mod?.poseModelLayer || !mod.modelWorldMatrix || !rig || engine.worldActive) return null;
   const { w, h } = engine.videoSize;
-  let any = false;
+  const pending = [];
   for (const channel of env.channels) {
     if (channel.visible === false || channel.cameraLocked || !channel.items?.length) continue;
     const layout = env.layoutMap.get(channel.id);
@@ -2313,17 +2588,22 @@ function worldModelsAt(engine, env, t, rigAt = (u) => engine.activeRigAt?.(u), c
     const kf = itemHasKeyframes(item) ? getItemKeyframeValues(item, progress) : null;
     // (enginebugs2) turned as the world turns its objects, as the frame's own pose (channelRender.js prePoseWorldModels);
     // (mblur5b) on the frame's own Scene clock (`clock`, held at that Scene's end past a cut)
-    mod.poseModelLayer({ item, clip, prs: localPrs(item, kf, w, h, { sceneTurn: true }), sceneTurn: true, W: w, H: h, time: Math.max(0, inClip), sceneTime: clock(t), rig, frameToken: null, screens: false });
-    any = true;
+    pending.push({ item, clip, prs: localPrs(item, kf, w, h, { sceneTurn: true }), sceneTurn: true, W: w, H: h, time: Math.max(0, inClip), sceneTime: clock(t), rig, frameToken: null, screens: false, env });
   }
-  if (!any) return null;
+  if (!pending.length) return null;
+  mod.clearHeldModelMatrices?.();
+  for (const opts of orderModelPoses(pending, env.channels)) mod.poseModelLayer(opts);
   const { models, parts } = collectModels(engine, env, t, mod);
+  const held = new Map();
+  for (const m of models) {
+    for (const [id, a] of mod.modelAttachments?.(m.id) || []) held.set(id, a);
+  }
   const objects = {}, nodePoses = {};
   let morphs = null;
   for (const m of models) {
     if (m.rigid || !(m.url || m.splat)) continue;
     const e = mod.modelWorldMatrix(m.id);
-    if (e) objects[m.id] = worldMatrix(e);
+    if (e) objects[m.id] = held.has(m.id) ? heldModelMatrix(worldMatrix(e), held.get(m.id), WORLD_UNITS) : worldMatrix(e);
     if (!m.url) continue;
     const pose = mod.modelNodePose(m.id);
     if (pose) nodePoses[m.id] = pose;
@@ -2334,7 +2614,12 @@ function worldModelsAt(engine, env, t, rigAt = (u) => engine.activeRigAt?.(u), c
   for (const { id, itemId, part } of parts) {
     if (rigidParts.has(id)) continue;
     const e = mod.modelWorldMatrix(itemId);
-    if (e) objects[id] = worldMatrix(new THREE.Matrix4().fromArray(e).multiply(new THREE.Matrix4().fromArray(part.matrix)).elements);
+    if (e) {
+      const base = held.has(itemId)
+        ? new THREE.Matrix4().fromArray(heldModelMatrix(worldMatrix(e), held.get(itemId), WORLD_UNITS))
+        : new THREE.Matrix4().fromArray(worldMatrix(e));
+      objects[id] = base.multiply(new THREE.Matrix4().fromArray(part.matrix)).elements;
+    }
   }
   return { objects, nodePoses, morphs };
 }
@@ -2407,7 +2692,7 @@ export function worldDraftBlur(engine, { time, window, samples, maxTime = Infini
   const world = state.host?.world;
   const rig = engine.activeRigAt?.(time);
   state.motionLetters = null;
-  if (!isWorldRig(rig) || rig.render?.mode === 'final' || !world?.draftShutterPossible || !state.ready || state.building || state.failed
+  if (!isWorldRig(rig) || filmsFinal(rig) || !world?.draftShutterPossible || !state.ready || state.building || state.failed
     || worldBlockedOn(engine) || state.builtGeneration !== state.generation || !world.draftShutterPossible() || !worldShowsSceneAt(engine, time)) return false;
   const { w: W, h: H } = engine.videoSize;
   const ownCamera = !!rig.scene?.camera;
@@ -2438,7 +2723,7 @@ export function worldDraftBlur(engine, { time, window, samples, maxTime = Infini
     let nodePoses = {};
     if (rigged) {
       state.scenePoser ||= createScenePoser();
-      nodePoses = state.scenePoser.pose(rig.scene, clock(t), (id) => world.rigInfo(id)).nodePoses;
+      nodePoses = state.scenePoser.pose(worldClocksScene(rig.scene), clock(t), (id) => world.rigInfo(id)).nodePoses;
     }
     const models = env ? worldModelsAt(engine, env, t, rigAt, clock) : null;
     live?.at(t);
@@ -2662,4 +2947,56 @@ export function worldObjectFacts() {
   const byId = new Map((scene?.objects || []).map((o) => [o.id, o]));
   const objects = (state.host.inspect().objects || []).map(({ id, bbox }) => ({ id, bbox, shift: (t) => travel(byId.get(id), byId, t, scene) }));
   return { now: state.host.world.time || 0, aspect: state.host.world.camera?.aspect || 16 / 9, objects, scene, freeCamera: !!state.host.world.freeCamera };
+}
+
+function diagnosticPose(view) {
+  if (!view?.at || !view?.target) return null;
+  const eye = new THREE.Vector3(...view.at);
+  const tgt = new THREE.Vector3(...view.target);
+  const up = new THREE.Vector3(...(view.up || [0, 1, 0]));
+  const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(eye, tgt, up));
+  return { position: [eye.x, eye.y, eye.z], quaternion: q.toArray(), fov: view.fov ?? 32 };
+}
+
+/** Temporarily override the world camera with `{ at, target, up, fov }` (in metres/degrees) for diagnostic still angles; `draft`: a Final
+ *  Scene is filmed in Draft meanwhile (filmsFinal). Null restores both. The pose films sharp without touching the scene's camera
+ *  (poseWorld: WorldRenderer.setPose `pinhole`), so its depth of field is the same in every later still and render of the page. */
+export function setWorldDiagnosticView(cam = null, { draft = false } = {}) {
+  state.diagnosticCamera = cam ? { ...cam } : null;
+  state.diagnosticDraft = !!draft;
+  state.poseKey = null;
+}
+
+/** The box `{ min, max, ids }` (metres) the diagnostic views frame, over the objects as they stand now: the `objects` named, or the
+ *  Scene's subject without its set (world3d/multiView.js subjectBounds: no backdrop, floors, walls, rooms or objects hidden by their
+ *  `visible` keys). Null before the Scene is built or when nothing has a box. */
+export function worldSubjectBounds({ objects = null } = {}) {
+  if (!state.ready || !state.host) return null;
+  const r = state.host.inspect?.() || {};
+  return subjectBounds(r.objects, { named: objects, hidden: (r.hiddenByKeys || []).map((h) => h.id) });
+}
+
+/** (simcritique) For a still's critique: every set's numbers (worldSims.probes: live, dead, NaN, faulted, max speed, bounds, the bricks
+ *  wanted past a pool) of the sims in their clip at timeline `time`, each row with its frame's own clip time `t` (the pre-roll negative).
+ *  The sims are stepped back to that time first: the capture drew the page's own frame again after the still. Null with no sims. */
+export async function worldSimProbes(timelineTime) {
+  const sims = state.ready ? state.host?.world?.simWorld : null;
+  if (!sims?.items?.length) return null;
+  const t = sceneTimeAt(state.engine?.rigEntries, Math.max(0, Number(timelineTime) || 0));
+  await sims.settleAt(t);
+  const shown = new Set(sims.items.filter((it) => sims.showing(it, t)).map((it) => it.id));
+  const rows = (await state.host.simProbes()).filter((row) => shown.has(row.sim));
+  return rows.map((row) => {
+    const plan = sims.items.find((x) => x.id === row.sim)?.plan;
+    return plan && Number.isFinite(row.frame) ? { ...row, t: +(row.frame / plan.fps - plan.clip.preroll).toFixed(4) } : row;
+  });
+}
+
+/** (Track 6.5) Pre-tonemap linear HDR snapshot from the active WorldRenderer (`256x144` floats). */
+export async function worldLinearHdrFrame() {
+  return state.ready && state.host?.world?.readLinearHdrFrame ? state.host.world.readLinearHdrFrame() : null;
+}
+
+export function worldReleaseHdrScope() {
+  state.host?.world?.disposeScopeReadback?.();
 }
